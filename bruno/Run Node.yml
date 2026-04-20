@@ -1,0 +1,41 @@
+info:
+  name: Run Node
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{HOST}}/run-node"
+  body:
+    type: json
+    data: |-
+      {
+        "graph": {
+        "nodes": [
+          {
+            "id": "a",
+            "code": "x = 1\ny = z + 2",
+            "outputs": ["x", "y"]
+          },
+          {
+            "id": "b",
+            "code": "z = x + y",
+            "outputs": ["z"]
+          }
+        ],
+        "edges": [
+          { "fromNode": "a", "toNode": "b" }
+        ]
+      },
+        "nodeId": "a",
+        "inputs": {
+          "z": 20000
+        }
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

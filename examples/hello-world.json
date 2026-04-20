@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    {
+      "id": "a",
+      "code": "import time\ntime.sleep(3)\nx = 1\ny = x + 2\nprint(\"Hello, world!\")",
+      "outputs": ["x", "y"]
+    },
+    {
+      "id": "b",
+      "code": "import pandas as pd\nx=[1,2,3]\ny=[4,5,6]\ndf = pd.DataFrame(dict(x=x, y=y))\nprint(df)",
+      "outputs": []
+    }
+  ],
+  "edges": [
+    { "fromNode": "a", "toNode": "b" }
+  ]
+}

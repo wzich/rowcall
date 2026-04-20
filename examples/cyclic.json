@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {
+      "id": "a",
+      "code": "x = 1\ny = 2",
+      "outputs": ["x", "y"]
+    },
+    {
+      "id": "b",
+      "code": "x = x + 1",
+      "outputs": ["x"]
+    },
+    {
+      "id": "c",
+      "code": "y = 2y",
+      "outputs": ["y"]
+    },
+    {
+      "id": "d",
+      "code": "z = x + y",
+      "outputs": ["z"]
+    }
+  ],
+  "edges": [
+    { "fromNode": "a", "toNode": "b" },
+    { "fromNode": "a", "toNode": "c" },
+    { "fromNode": "b", "toNode": "d" },
+    { "fromNode": "c", "toNode": "a" }
+  ]
+}

@@ -1,0 +1,24 @@
+info:
+  name: Load Graph by Path
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{HOST}}/inspect"
+  body:
+    type: json
+    data: |-
+      {
+        "source": {
+          "type": "path",
+          "path": "examples/hello-world.json"
+        }
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

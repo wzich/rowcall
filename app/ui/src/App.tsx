@@ -1,0 +1,332 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMemo, useRef, useState } from "react";
+import type { ExecutionResponse } from "../../../types.ts";
+import {
+  availableGraphSources,
+  defaultGraphSource,
+  describeGraphSource,
+  encodeGraphSource,
+  getGraphSourceByValue,
+} from "./api/graphSources.ts";
+import { Canvas } from "./components/Canvas.tsx";
+import {
+  type ExecutionDisplayState,
+  type GraphInspectorModel,
+  InspectorPanel,
+  type NodeInspectorBadge,
+  type NodeInspectorSelection,
+} from "./components/InspectorPanel.tsx";
+import {
+  runNodeMutationOptions,
+  runToNodeMutationOptions,
+} from "./query/executionMutations.ts";
+import {
+  inspectedGraphQueryOptions,
+  InspectGraphQueryError,
+} from "./query/graphQueries.ts";
+
+export default function App() {
+  const [selectedSource, setSelectedSource] = useState(defaultGraphSource);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
+    Record<string, ExecutionDisplayState>
+  >({});
+  const selectedSourceValue = encodeGraphSource(selectedSource);
+  const selectedSourceValueRef = useRef(selectedSourceValue);
+  selectedSourceValueRef.current = selectedSourceValue;
+  const sourceLabel = describeGraphSource(selectedSource);
+  const inspectedGraphQuery = useQuery(
+    inspectedGraphQueryOptions(selectedSource),
+  );
+
+  function markNodeExecutionRunning(
+    nodeId: string,
+    runType: ExecutionResponse["runType"],
+  ) {
+    setExecutionStateByNodeId((current) => ({
+      ...current,
+      [nodeId]: { status: "running", runType },
+    }));
+  }
+
+  function storeExecutionResponse(
+    response: ExecutionResponse,
+    targetNodeId: string,
+  ) {
+    setExecutionStateByNodeId((current) => {
+      const next = { ...current };
+      const affectedNodeIds = new Set([
+        ...response.executedNodeIds,
+        targetNodeId,
+      ]);
+
+      for (const nodeId of affectedNodeIds) {
+        next[nodeId] = {
+          status: "completed",
+          response,
+        };
+      }
+
+      return next;
+    });
+  }
+
+  function storeExecutionRequestError(error: unknown, targetNodeId: string) {
+    setExecutionStateByNodeId((current) => ({
+      ...current,
+      [targetNodeId]: {
+        status: "request_error",
+        message: error instanceof Error
+          ? error.message
+          : "The request failed before Python execution completed.",
+      },
+    }));
+  }
+
+  const runNodeMutation = useMutation({
+    ...runNodeMutationOptions(),
+    onSuccess: (response, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeExecutionResponse(response, variables.nodeId);
+    },
+    onError: (error, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeExecutionRequestError(error, variables.nodeId);
+    },
+  });
+  const runToNodeMutation = useMutation({
+    ...runToNodeMutationOptions(),
+    onSuccess: (response, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeExecutionResponse(response, variables.nodeId);
+    },
+    onError: (error, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeExecutionRequestError(error, variables.nodeId);
+    },
+  });
+  const inspectionIssues = inspectedGraphQuery.error instanceof
+      InspectGraphQueryError
+    ? inspectedGraphQuery.error.issues
+    : [];
+  const graphInspectorDetails = useMemo<GraphInspectorModel | null>(() => {
+    if (!inspectedGraphQuery.isSuccess) {
+      return null;
+    }
+
+    const inspectedGraph = inspectedGraphQuery.data;
+    const isolatedNodeIds = inspectedGraph.summary.nodeCount > 1
+      ? inspectedGraph.nodeDetails
+        .filter((detail) => detail.isSourceNode && detail.isSinkNode)
+        .map((detail) => detail.id)
+      : [];
+
+    return {
+      nodeCount: inspectedGraph.summary.nodeCount,
+      edgeCount: inspectedGraph.summary.edgeCount,
+      sourceNodeIds: inspectedGraph.summary.sourceNodeIds,
+      sinkNodeIds: inspectedGraph.summary.sinkNodeIds,
+      isolatedNodeIds,
+      sinkOutputs: inspectedGraph.summary.sinkNodeIds.map((nodeId) => {
+        const node = inspectedGraph.graph.nodes.find((item) =>
+          item.id === nodeId
+        );
+
+        return {
+          nodeId,
+          outputs: node?.outputs ?? [],
+        };
+      }),
+    };
+  }, [inspectedGraphQuery]);
+  const selectedNodeDetails = useMemo<NodeInspectorSelection | null>(() => {
+    if (!inspectedGraphQuery.isSuccess || selectedNodeId === null) {
+      return null;
+    }
+
+    const inspectedGraph = inspectedGraphQuery.data;
+    const node = inspectedGraph.graph.nodes.find((item) =>
+      item.id === selectedNodeId
+    );
+
+    if (!node) {
+      return null;
+    }
+
+    const detail = inspectedGraph.nodeDetails.find((item) =>
+      item.id === selectedNodeId
+    );
+    const badges: NodeInspectorBadge[] = [];
+    const canShowGraphPositionBadge = inspectedGraph.summary.nodeCount > 1;
+
+    if (
+      canShowGraphPositionBadge && detail?.isSourceNode &&
+      detail?.isSinkNode
+    ) {
+      badges.push("Isolated");
+    } else if (canShowGraphPositionBadge) {
+      if (detail?.isSourceNode) badges.push("Source");
+      if (detail?.isSinkNode) badges.push("Sink");
+    }
+
+    return {
+      id: node.id,
+      code: node.code,
+      outputs: node.outputs,
+      upstreamDependencies: detail?.upstreamDependencies ?? [],
+      downstreamDependencies: detail?.downstreamDependencies ?? [],
+      badges,
+    };
+  }, [inspectedGraphQuery, selectedNodeId]);
+
+  function handleSourceChange(value: string) {
+    setSelectedNodeId(null);
+    setExecutionStateByNodeId({});
+    setSelectedSource(getGraphSourceByValue(value));
+  }
+
+  function handleRunNode(nodeId: string) {
+    if (!inspectedGraphQuery.isSuccess) {
+      return;
+    }
+
+    markNodeExecutionRunning(nodeId, "run_node");
+    runNodeMutation.mutate({
+      graph: inspectedGraphQuery.data.graph,
+      nodeId,
+      inputs: {},
+      trace: false,
+      sourceValue: selectedSourceValue,
+    });
+  }
+
+  function handleRunToNode(nodeId: string) {
+    if (!inspectedGraphQuery.isSuccess) {
+      return;
+    }
+
+    markNodeExecutionRunning(nodeId, "run_to_node");
+    runToNodeMutation.mutate({
+      graph: inspectedGraphQuery.data.graph,
+      nodeId,
+      inputs: {},
+      trace: false,
+      sourceValue: selectedSourceValue,
+    });
+  }
+
+  return (
+    <div className="flex h-screen min-h-0 flex-col bg-zinc-100 text-zinc-950">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Read-only canvas
+          </p>
+          <h1 className="text-lg font-semibold">Nodebook</h1>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-zinc-600">
+          Example
+          <select
+            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-900 shadow-sm"
+            value={selectedSourceValue}
+            onChange={(event) => handleSourceChange(event.currentTarget.value)}
+          >
+            {availableGraphSources.map((item) => (
+              <option
+                key={encodeGraphSource(item.source)}
+                value={encodeGraphSource(item.source)}
+              >
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </header>
+      <main className="min-h-0 flex-1 overflow-hidden">
+        {inspectedGraphQuery.isLoading && (
+          <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+            Loading {sourceLabel}...
+          </div>
+        )}
+        {inspectedGraphQuery.isError && (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-md rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+              <h2 className="text-sm font-semibold text-red-700">
+                Could not load graph
+              </h2>
+              <p className="mt-2 text-sm text-zinc-600">
+                {sourceLabel}
+              </p>
+              <p className="mt-2 text-sm text-zinc-600">
+                {inspectedGraphQuery.error.message}
+              </p>
+              {inspectionIssues.length > 0 && (
+                <ul className="mt-3 space-y-2 text-sm text-zinc-700">
+                  {inspectionIssues.map((issue, index) => (
+                    <li
+                      key={`${issue.kind}-${issue.path ?? "graph"}-${index}`}
+                      className="rounded-md bg-red-50 px-3 py-2"
+                    >
+                      <span className="font-medium text-red-800">
+                        {issue.kind}
+                      </span>
+                      <span className="block text-zinc-700">
+                        {issue.message}
+                      </span>
+                      {issue.path && (
+                        <span className="mt-1 block text-xs text-zinc-500">
+                          Path: {issue.path}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-3 text-xs text-zinc-500">
+                {inspectionIssues.length > 0
+                  ? "These issues were returned by the /inspect validation step."
+                  : "Make sure the Deno API is running before loading the Vite UI."}
+              </p>
+            </div>
+          </div>
+        )}
+        {inspectedGraphQuery.isSuccess && graphInspectorDetails && (
+          <div className="flex h-full min-h-0">
+            <div className="min-h-0 min-w-0 flex-1">
+              <Canvas
+                key={selectedSourceValue}
+                graph={inspectedGraphQuery.data.graph}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={setSelectedNodeId}
+                onSelectionClear={() => setSelectedNodeId(null)}
+              />
+            </div>
+            <InspectorPanel
+              selectedNode={selectedNodeDetails}
+              graph={graphInspectorDetails}
+              selectedNodeExecutionState={selectedNodeId
+                ? executionStateByNodeId[selectedNodeId] ?? null
+                : null}
+              onNodeSelect={setSelectedNodeId}
+              onRunNode={handleRunNode}
+              onRunToNode={handleRunToNode}
+              onSelectionClear={() => setSelectedNodeId(null)}
+            />
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

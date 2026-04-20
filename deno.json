@@ -1,0 +1,14 @@
+{
+  "tasks": {
+    "dev": "deno run --watch --allow-read --allow-net --allow-run main.ts",
+    "cli": "deno run --allow-read --allow-run cli.ts",
+    "ui:dev": "cd app/ui && deno task dev",
+    "ui:build": "cd app/ui && deno task build",
+    "ui:preview": "cd app/ui && deno task preview"
+  },
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4.12.9",
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/cli/parse-args": "jsr:@std/cli@1/parse-args"
+  }
+}
