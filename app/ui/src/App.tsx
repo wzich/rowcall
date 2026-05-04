@@ -17,6 +17,7 @@ import {
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
 import {
+  runGraphMutationOptions,
   runNodeMutationOptions,
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
@@ -28,9 +29,15 @@ import {
 export default function App() {
   const [selectedSource, setSelectedSource] = useState(defaultGraphSource);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [inputsText, setInputsText] = useState("{}");
+  const [inputsError, setInputsError] = useState<string | null>(null);
+  const [traceEnabled, setTraceEnabled] = useState(false);
   const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
     Record<string, ExecutionDisplayState>
   >({});
+  const [graphExecutionState, setGraphExecutionState] = useState<
+    ExecutionDisplayState | null
+  >(null);
   const selectedSourceValue = encodeGraphSource(selectedSource);
   const selectedSourceValueRef = useRef(selectedSourceValue);
   selectedSourceValueRef.current = selectedSourceValue;
@@ -47,20 +54,17 @@ export default function App() {
       ...current,
       [nodeId]: { status: "running", runType },
     }));
+    setGraphExecutionState({ status: "running", runType });
   }
 
-  function storeExecutionResponse(
+  function storeExecutionResponseForNodeIds(
     response: ExecutionResponse,
-    targetNodeId: string,
+    nodeIds: Iterable<string>,
   ) {
     setExecutionStateByNodeId((current) => {
       const next = { ...current };
-      const affectedNodeIds = new Set([
-        ...response.executedNodeIds,
-        targetNodeId,
-      ]);
 
-      for (const nodeId of affectedNodeIds) {
+      for (const nodeId of new Set(nodeIds)) {
         next[nodeId] = {
           status: "completed",
           response,
@@ -71,7 +75,10 @@ export default function App() {
     });
   }
 
-  function storeExecutionRequestError(error: unknown, targetNodeId: string) {
+  function storeExecutionRequestErrorForNode(
+    error: unknown,
+    targetNodeId: string,
+  ) {
     setExecutionStateByNodeId((current) => ({
       ...current,
       [targetNodeId]: {
@@ -83,6 +90,29 @@ export default function App() {
     }));
   }
 
+  function markGraphExecutionRunning() {
+    // TODO: Revisit this full flush once the UI can stream execution plans or
+    // per-node progress; for now a graph run is treated as a global reset.
+    setExecutionStateByNodeId({});
+    setGraphExecutionState({ status: "running", runType: "run_graph" });
+  }
+
+  function storeGraphExecutionResponse(response: ExecutionResponse) {
+    setGraphExecutionState({
+      status: "completed",
+      response,
+    });
+  }
+
+  function storeGraphExecutionRequestError(error: unknown) {
+    setGraphExecutionState({
+      status: "request_error",
+      message: error instanceof Error
+        ? error.message
+        : "The request failed before Python execution completed.",
+    });
+  }
+
   const runNodeMutation = useMutation({
     ...runNodeMutationOptions(),
     onSuccess: (response, variables) => {
@@ -90,14 +120,19 @@ export default function App() {
         return;
       }
 
-      storeExecutionResponse(response, variables.nodeId);
+      storeExecutionResponseForNodeIds(response, [
+        ...response.executedNodeIds,
+        variables.nodeId,
+      ]);
+      storeGraphExecutionResponse(response);
     },
     onError: (error, variables) => {
       if (variables.sourceValue !== selectedSourceValueRef.current) {
         return;
       }
 
-      storeExecutionRequestError(error, variables.nodeId);
+      storeExecutionRequestErrorForNode(error, variables.nodeId);
+      storeGraphExecutionRequestError(error);
     },
   });
   const runToNodeMutation = useMutation({
@@ -107,14 +142,42 @@ export default function App() {
         return;
       }
 
-      storeExecutionResponse(response, variables.nodeId);
+      storeExecutionResponseForNodeIds(response, [
+        ...response.executedNodeIds,
+        variables.nodeId,
+      ]);
+      storeGraphExecutionResponse(response);
     },
     onError: (error, variables) => {
       if (variables.sourceValue !== selectedSourceValueRef.current) {
         return;
       }
 
-      storeExecutionRequestError(error, variables.nodeId);
+      storeExecutionRequestErrorForNode(error, variables.nodeId);
+      storeGraphExecutionRequestError(error);
+    },
+  });
+  const runGraphMutation = useMutation({
+    ...runGraphMutationOptions(),
+    onSuccess: (response, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeGraphExecutionResponse(response);
+      // TODO: Fold graph and node execution state into a single execution
+      // session model once streaming or run history makes this duplication hurt.
+      storeExecutionResponseForNodeIds(
+        response,
+        variables.graph.nodes.map((node) => node.id),
+      );
+    },
+    onError: (error, variables) => {
+      if (variables.sourceValue !== selectedSourceValueRef.current) {
+        return;
+      }
+
+      storeGraphExecutionRequestError(error);
     },
   });
   const inspectionIssues = inspectedGraphQuery.error instanceof
@@ -193,8 +256,49 @@ export default function App() {
 
   function handleSourceChange(value: string) {
     setSelectedNodeId(null);
+    setInputsText("{}");
+    setInputsError(null);
+    setTraceEnabled(false);
     setExecutionStateByNodeId({});
+    setGraphExecutionState(null);
     setSelectedSource(getGraphSourceByValue(value));
+  }
+
+  function parseRunInputs(): Record<string, unknown> | null {
+    const trimmedInputs = inputsText.trim();
+
+    if (trimmedInputs.length === 0) {
+      setInputsError(null);
+      return {};
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmedInputs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setInputsError(`Inputs must be valid JSON: ${message}`);
+      return null;
+    }
+
+    if (
+      typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
+    ) {
+      setInputsError("Inputs must be a JSON object.");
+      return null;
+    }
+
+    setInputsError(null);
+    return parsed as Record<string, unknown>;
+  }
+
+  function handleInputsChange(value: string) {
+    setInputsText(value);
+    setInputsError(getInputsValidationError(value));
+  }
+
+  function isInputsTextValid(): boolean {
+    return getInputsValidationError(inputsText) === null;
   }
 
   function handleRunNode(nodeId: string) {
@@ -202,12 +306,17 @@ export default function App() {
       return;
     }
 
+    const inputs = parseRunInputs();
+    if (inputs === null) {
+      return;
+    }
+
     markNodeExecutionRunning(nodeId, "run_node");
     runNodeMutation.mutate({
       graph: inspectedGraphQuery.data.graph,
       nodeId,
-      inputs: {},
-      trace: false,
+      inputs,
+      trace: traceEnabled,
       sourceValue: selectedSourceValue,
     });
   }
@@ -217,12 +326,36 @@ export default function App() {
       return;
     }
 
+    const inputs = parseRunInputs();
+    if (inputs === null) {
+      return;
+    }
+
     markNodeExecutionRunning(nodeId, "run_to_node");
     runToNodeMutation.mutate({
       graph: inspectedGraphQuery.data.graph,
       nodeId,
-      inputs: {},
-      trace: false,
+      inputs,
+      trace: traceEnabled,
+      sourceValue: selectedSourceValue,
+    });
+  }
+
+  function handleRunGraph() {
+    if (!inspectedGraphQuery.isSuccess) {
+      return;
+    }
+
+    const inputs = parseRunInputs();
+    if (inputs === null) {
+      return;
+    }
+
+    markGraphExecutionRunning();
+    runGraphMutation.mutate({
+      graph: inspectedGraphQuery.data.graph,
+      inputs,
+      trace: traceEnabled,
       sourceValue: selectedSourceValue,
     });
   }
@@ -319,9 +452,17 @@ export default function App() {
               selectedNodeExecutionState={selectedNodeId
                 ? executionStateByNodeId[selectedNodeId] ?? null
                 : null}
+              graphExecutionState={graphExecutionState}
+              inputsText={inputsText}
+              inputsError={inputsError}
+              areInputsValid={isInputsTextValid()}
+              traceEnabled={traceEnabled}
               onNodeSelect={setSelectedNodeId}
+              onInputsChange={handleInputsChange}
+              onTraceEnabledChange={setTraceEnabled}
               onRunNode={handleRunNode}
               onRunToNode={handleRunToNode}
+              onRunGraph={handleRunGraph}
               onSelectionClear={() => setSelectedNodeId(null)}
             />
           </div>
@@ -329,4 +470,25 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function getInputsValidationError(inputsText: string): string | null {
+  const trimmedInputs = inputsText.trim();
+  if (trimmedInputs.length === 0) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmedInputs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Inputs must be valid JSON: ${message}`;
+  }
+
+  if (
+    typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
+  ) {
+    return "Inputs must be a JSON object.";
+  }
+
+  return null;
 }

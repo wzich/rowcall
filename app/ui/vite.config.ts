@@ -15,6 +15,7 @@ export default defineConfig({
       "/inspect": "http://127.0.0.1:8000",
       "/run-node": "http://127.0.0.1:8000",
       "/run-to-node": "http://127.0.0.1:8000",
+      "/run-graph": "http://127.0.0.1:8000",
     },
   },
 });

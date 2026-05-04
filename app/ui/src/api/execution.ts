@@ -7,6 +7,12 @@ export type RunExecutionRequest = {
   trace?: boolean;
 };
 
+export type RunGraphRequest = {
+  graph: Graph;
+  inputs?: Record<string, unknown>;
+  trace?: boolean;
+};
+
 export class RunExecutionRequestError extends Error {
   constructor(message: string) {
     super(message);
@@ -40,6 +46,30 @@ async function runExecution(
   return await response.json() as ExecutionResponse;
 }
 
+async function runGraphExecution(
+  { graph, inputs = {}, trace = false }: RunGraphRequest,
+): Promise<ExecutionResponse> {
+  const response = await fetch("/run-graph", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      graph,
+      inputs,
+      trace,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new RunExecutionRequestError(
+      `Execution request failed with HTTP ${response.status}`,
+    );
+  }
+
+  // TODO: Move all UI/runtime contract types to a shared package or shared
+  // import boundary so inspect and execution responses cannot drift.
+  return await response.json() as ExecutionResponse;
+}
+
 export function runNode(
   request: RunExecutionRequest,
 ): Promise<ExecutionResponse> {
@@ -50,4 +80,10 @@ export function runToNode(
   request: RunExecutionRequest,
 ): Promise<ExecutionResponse> {
   return runExecution("/run-to-node", request);
+}
+
+export function runGraph(
+  request: RunGraphRequest,
+): Promise<ExecutionResponse> {
+  return runGraphExecution(request);
 }

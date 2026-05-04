@@ -1,4 +1,7 @@
 import type { ExecutionResponse } from "../../../../types.ts";
+import type { ReactNode } from "react";
+
+type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
 export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 
@@ -32,9 +35,17 @@ type InspectorPanelProps = {
   selectedNode: NodeInspectorSelection | null;
   graph: GraphInspectorModel;
   selectedNodeExecutionState: ExecutionDisplayState | null;
+  graphExecutionState: ExecutionDisplayState | null;
+  inputsText: string;
+  inputsError: string | null;
+  areInputsValid: boolean;
+  traceEnabled: boolean;
   onNodeSelect: (nodeId: string) => void;
+  onInputsChange: (value: string) => void;
+  onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
+  onRunGraph: () => void;
   onSelectionClear: () => void;
 };
 
@@ -214,6 +225,8 @@ function RunResult({
 
   const response = executionState.response;
   const nodeResult = response.resultsByNode[selectedNode.id];
+  const traceStep =
+    response.trace?.find((step) => step.nodeId === selectedNode.id) ?? null;
 
   if (!nodeResult && !response.ok) {
     const failedNodeId = response.error?.nodeId;
@@ -240,6 +253,7 @@ function RunResult({
               : `${subject} did not run because an upstream node failed.`}
           </p>
         </div>
+        <NodeTraceResult step={traceStep} />
       </section>
     );
   }
@@ -289,7 +303,20 @@ function RunResult({
           variant="danger"
         />
       </div>
+      <NodeTraceResult step={traceStep} />
     </section>
+  );
+}
+
+function NodeTraceResult({ step }: { step: ExecutionTraceStep | null }) {
+  if (!step) {
+    return null;
+  }
+
+  return (
+    <TraceDetails title="Trace" summary={`Step ${step.index}: ${step.nodeId}`}>
+      <TraceStep step={step} />
+    </TraceDetails>
   );
 }
 
@@ -306,13 +333,33 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 
 function GraphInspector({
   graph,
+  graphExecutionState,
+  inputsText,
+  inputsError,
+  traceEnabled,
+  onInputsChange,
+  onTraceEnabledChange,
   onNodeSelect,
 }: {
   graph: GraphInspectorModel;
+  graphExecutionState: ExecutionDisplayState | null;
+  inputsText: string;
+  inputsError: string | null;
+  traceEnabled: boolean;
+  onInputsChange: (value: string) => void;
+  onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
     <div className="space-y-4">
+      <RunConfigEditor
+        value={inputsText}
+        error={inputsError}
+        traceEnabled={traceEnabled}
+        onChange={onInputsChange}
+        onTraceEnabledChange={onTraceEnabledChange}
+      />
+
       <dl className="grid grid-cols-2 gap-3">
         <MetricTile label="Nodes" value={graph.nodeCount} />
         <MetricTile label="Edges" value={graph.edgeCount} />
@@ -378,6 +425,251 @@ function GraphInspector({
           />
         </section>
       )}
+
+      <GraphRunResult
+        executionState={graphExecutionState}
+        onNodeSelect={onNodeSelect}
+      />
+    </div>
+  );
+}
+
+function GraphRunResult({
+  executionState,
+  onNodeSelect,
+}: {
+  executionState: ExecutionDisplayState | null;
+  onNodeSelect: (nodeId: string) => void;
+}) {
+  if (!executionState) {
+    return null;
+  }
+
+  if (executionState.status === "running") {
+    return (
+      <section className="border-t border-zinc-200 pt-4">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+          Run Result
+        </h3>
+        <p className="mt-2 text-sm text-zinc-600">Running...</p>
+      </section>
+    );
+  }
+
+  if (executionState.status === "request_error") {
+    return (
+      <section className="border-t border-zinc-200 pt-4">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+          Run Result
+        </h3>
+        <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
+          <p className="text-sm font-medium text-red-800">
+            Could not start run
+          </p>
+          <p className="mt-1 text-sm text-red-700">
+            The request failed before Python execution completed.
+          </p>
+          <p className="mt-2 font-mono text-xs text-red-950">
+            {executionState.message}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  const response = executionState.response;
+  const finalNodeIds = response.finalNodeIds.filter((nodeId) =>
+    nodeId in response.finalOutputsByNode
+  );
+
+  return (
+    <section className="border-t border-zinc-200 pt-4">
+      <h3 className="text-xs font-semibold uppercase text-zinc-500">
+        Run Result
+      </h3>
+      <p
+        className={[
+          "mt-2 text-sm font-medium",
+          response.ok ? "text-zinc-700" : "text-red-800",
+        ].join(" ")}
+      >
+        {response.ok ? "Run succeeded" : "Run failed"}
+      </p>
+
+      {response.ok
+        ? (
+          <div className="mt-4 space-y-4">
+            <section>
+              <h4 className="text-xs font-semibold uppercase text-zinc-500">
+                Executed Nodes
+              </h4>
+              <p className="mt-2 text-sm text-zinc-700">
+                {response.executedNodeIds.length}
+              </p>
+            </section>
+
+            <section>
+              <h4 className="text-xs font-semibold uppercase text-zinc-500">
+                Final Outputs
+              </h4>
+              {finalNodeIds.length === 0
+                ? (
+                  <p className="mt-2 text-sm text-zinc-500">
+                    No final outputs.
+                  </p>
+                )
+                : (
+                  <div className="mt-2 space-y-3">
+                    {finalNodeIds.map((nodeId) => (
+                      <div key={nodeId}>
+                        <NodeIdButton
+                          nodeId={nodeId}
+                          onNodeSelect={onNodeSelect}
+                        />
+                        <JsonBlock
+                          value={response.finalOutputsByNode[nodeId]}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </section>
+
+            <GraphTraceResult response={response} />
+          </div>
+        )
+        : (
+          <>
+            <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
+              <p className="text-sm font-medium text-red-800">
+                {response.error?.message ?? "Graph execution failed."}
+              </p>
+              {response.error?.nodeId && (
+                <div className="mt-2">
+                  <p className="text-xs font-semibold uppercase text-red-700">
+                    Failed At
+                  </p>
+                  <div className="mt-1">
+                    <NodeIdButton
+                      nodeId={response.error.nodeId}
+                      onNodeSelect={onNodeSelect}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <GraphTraceResult response={response} />
+          </>
+        )}
+    </section>
+  );
+}
+
+function GraphTraceResult({ response }: { response: ExecutionResponse }) {
+  if (!response.trace) {
+    return null;
+  }
+
+  const stepCount = response.trace.length;
+
+  return (
+    <TraceDetails
+      title="Trace"
+      summary={`${stepCount} ${stepCount === 1 ? "step" : "steps"}`}
+    >
+      <div className="space-y-3">
+        {response.trace.map((step) => (
+          <TraceStep
+            key={step.index}
+            step={step}
+          />
+        ))}
+      </div>
+    </TraceDetails>
+  );
+}
+
+function TraceDetails({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="border-t border-zinc-200 pt-4">
+      <h4 className="text-xs font-semibold uppercase text-zinc-500">
+        {title}
+      </h4>
+      <details className="mt-2 rounded border border-zinc-200 bg-white">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-700">
+          {summary}
+        </summary>
+        <div className="border-t border-zinc-200 p-3">{children}</div>
+      </details>
+    </section>
+  );
+}
+
+function TraceStep({ step }: { step: ExecutionTraceStep }) {
+  return (
+    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="font-mono text-xs text-zinc-500">Step {step.index}</p>
+          <p className="mt-1 font-mono text-sm font-semibold text-zinc-900">
+            {step.nodeId}
+          </p>
+        </div>
+        <span
+          className={[
+            "rounded px-2 py-0.5 text-xs font-medium",
+            step.ok
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-red-50 text-red-700",
+          ].join(" ")}
+        >
+          {step.ok ? "ok" : "failed"}
+        </span>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <section>
+          <h5 className="text-xs font-semibold uppercase text-zinc-500">
+            Depends On
+          </h5>
+          <CodeList items={step.dependsOn} emptyLabel="No dependencies" />
+        </section>
+
+        <section>
+          <h5 className="text-xs font-semibold uppercase text-zinc-500">
+            Inputs
+          </h5>
+          <JsonBlock value={step.inputs} />
+        </section>
+
+        <section>
+          <h5 className="text-xs font-semibold uppercase text-zinc-500">
+            Outputs
+          </h5>
+          <JsonBlock value={step.outputs} />
+        </section>
+
+        <TextOutputBlock title="Stdout" value={step.stdout} />
+        <TextOutputBlock title="Stderr" value={step.stderr} variant="danger" />
+        {step.error && (
+          <section>
+            <h5 className="text-xs font-semibold uppercase text-red-700">
+              Error
+            </h5>
+            <p className="mt-2 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              {step.error}
+            </p>
+          </section>
+        )}
+      </div>
     </div>
   );
 }
@@ -385,14 +677,32 @@ function GraphInspector({
 function NodeInspector({
   selectedNode,
   executionState,
+  inputsText,
+  inputsError,
+  traceEnabled,
+  onInputsChange,
+  onTraceEnabledChange,
   onNodeSelect,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
+  inputsText: string;
+  inputsError: string | null;
+  traceEnabled: boolean;
+  onInputsChange: (value: string) => void;
+  onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
     <div className="space-y-4">
+      <RunConfigEditor
+        value={inputsText}
+        error={inputsError}
+        traceEnabled={traceEnabled}
+        onChange={onInputsChange}
+        onTraceEnabledChange={onTraceEnabledChange}
+      />
+
       <section>
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Declared Outputs
@@ -429,17 +739,78 @@ function NodeInspector({
   );
 }
 
+function RunConfigEditor({
+  value,
+  error,
+  traceEnabled,
+  onChange,
+  onTraceEnabledChange,
+}: {
+  value: string;
+  error: string | null;
+  traceEnabled: boolean;
+  onChange: (value: string) => void;
+  onTraceEnabledChange: (value: boolean) => void;
+}) {
+  return (
+    <section>
+      <label
+        className="block text-xs font-semibold uppercase text-zinc-500"
+        htmlFor="run-inputs"
+      >
+        Inputs
+      </label>
+      <textarea
+        id="run-inputs"
+        className={[
+          "mt-2 min-h-28 w-full resize-y rounded border bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:ring-2",
+          error
+            ? "border-red-300 focus:border-red-400 focus:ring-red-100"
+            : "border-zinc-300 focus:border-zinc-400 focus:ring-zinc-100",
+        ].join(" ")}
+        spellCheck={false}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+      {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+      <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-zinc-300"
+          checked={traceEnabled}
+          onChange={(event) =>
+            onTraceEnabledChange(event.currentTarget.checked)}
+        />
+        Trace
+      </label>
+    </section>
+  );
+}
+
 export function InspectorPanel({
   selectedNode,
   graph,
   selectedNodeExecutionState,
+  graphExecutionState,
+  inputsText,
+  inputsError,
+  areInputsValid,
+  traceEnabled,
   onNodeSelect,
+  onInputsChange,
+  onTraceEnabledChange,
   onRunNode,
   onRunToNode,
+  onRunGraph,
   onSelectionClear,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
+  const isGraphRunning = graphExecutionState?.status === "running";
+  const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
+  const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning ||
+    !areInputsValid;
+  const isGraphActionDisabled = isGraphRunning || !areInputsValid;
 
   return (
     <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-zinc-200 bg-white">
@@ -456,6 +827,16 @@ export function InspectorPanel({
               onClick={onSelectionClear}
             >
               x
+            </button>
+          )}
+          {!selectedNode && (
+            <button
+              type="button"
+              className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              disabled={isGraphActionDisabled}
+              onClick={onRunGraph}
+            >
+              {isGraphRunning ? "Running..." : "Run graph"}
             </button>
           )}
         </div>
@@ -482,15 +863,15 @@ export function InspectorPanel({
             <button
               type="button"
               className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
-              disabled={isSelectedNodeRunning}
+              disabled={areNodeActionsDisabled}
               onClick={() => onRunToNode(selectedNode.id)}
             >
-              {isSelectedNodeRunning ? "Running..." : "Run to node"}
+              {isAnyRunBlockingNodeActions ? "Running..." : "Run to node"}
             </button>
             <button
               type="button"
               className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
-              disabled={isSelectedNodeRunning}
+              disabled={areNodeActionsDisabled}
               onClick={() => onRunNode(selectedNode.id)}
             >
               Run node
@@ -505,10 +886,26 @@ export function InspectorPanel({
             <NodeInspector
               selectedNode={selectedNode}
               executionState={selectedNodeExecutionState}
+              inputsText={inputsText}
+              inputsError={inputsError}
+              traceEnabled={traceEnabled}
+              onInputsChange={onInputsChange}
+              onTraceEnabledChange={onTraceEnabledChange}
               onNodeSelect={onNodeSelect}
             />
           )
-          : <GraphInspector graph={graph} onNodeSelect={onNodeSelect} />}
+          : (
+            <GraphInspector
+              graph={graph}
+              graphExecutionState={graphExecutionState}
+              inputsText={inputsText}
+              inputsError={inputsError}
+              traceEnabled={traceEnabled}
+              onInputsChange={onInputsChange}
+              onTraceEnabledChange={onTraceEnabledChange}
+              onNodeSelect={onNodeSelect}
+            />
+          )}
       </div>
     </aside>
   );
