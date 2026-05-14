@@ -6,6 +6,10 @@ info:
 http:
   method: POST
   url: "{{HOST}}/run-to-node"
+  headers:
+    - name: Accept
+      value: text/event-stream
+      enabled: true
   body:
     type: json
     data: |-

@@ -9,7 +9,10 @@ import {
 } from "@xyflow/react";
 import { useMemo } from "react";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
-import { toReactFlowGraph } from "../graph/toReactFlow.ts";
+import {
+  type NodeRunVisualStatus,
+  toReactFlowGraph,
+} from "../graph/toReactFlow.ts";
 import { PythonNode } from "./PythonNode.tsx";
 
 const nodeTypes = {
@@ -19,6 +22,7 @@ const nodeTypes = {
 type CanvasProps = {
   graph: RuntimeGraph;
   selectedNodeId: string | null;
+  nodeRunStatuses: Record<string, NodeRunVisualStatus>;
   onNodeSelect: (nodeId: string) => void;
   onSelectionClear: () => void;
 };
@@ -26,6 +30,7 @@ type CanvasProps = {
 export function Canvas({
   graph,
   selectedNodeId,
+  nodeRunStatuses,
   onNodeSelect,
   onSelectionClear,
 }: CanvasProps) {
@@ -38,9 +43,13 @@ export function Canvas({
     () =>
       nodes.map((node) => ({
         ...node,
+        data: {
+          ...node.data,
+          runStatus: nodeRunStatuses[node.id] ?? "idle",
+        },
         selected: node.id === selectedNodeId,
       })),
-    [nodes, selectedNodeId],
+    [nodes, nodeRunStatuses, selectedNodeId],
   );
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     onNodeSelect(node.id);

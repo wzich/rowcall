@@ -9,16 +9,22 @@ import {
 
 export type RunExecutionMutationRequest = RunExecutionRequest & {
   sourceValue: string;
+  abortController: AbortController;
 };
 
 export type RunGraphMutationRequest = RunGraphRequest & {
   sourceValue: string;
+  abortController: AbortController;
 };
 
 export function runNodeMutationOptions() {
   return mutationOptions({
     mutationFn: (
-      { sourceValue: _sourceValue, ...request }: RunExecutionMutationRequest,
+      {
+        sourceValue: _sourceValue,
+        abortController: _abortController,
+        ...request
+      }: RunExecutionMutationRequest,
     ) => runNode(request),
   });
 }
@@ -26,7 +32,11 @@ export function runNodeMutationOptions() {
 export function runToNodeMutationOptions() {
   return mutationOptions({
     mutationFn: (
-      { sourceValue: _sourceValue, ...request }: RunExecutionMutationRequest,
+      {
+        sourceValue: _sourceValue,
+        abortController: _abortController,
+        ...request
+      }: RunExecutionMutationRequest,
     ) => runToNode(request),
   });
 }
@@ -34,7 +44,11 @@ export function runToNodeMutationOptions() {
 export function runGraphMutationOptions() {
   return mutationOptions({
     mutationFn: (
-      { sourceValue: _sourceValue, ...request }: RunGraphMutationRequest,
+      {
+        sourceValue: _sourceValue,
+        abortController: _abortController,
+        ...request
+      }: RunGraphMutationRequest,
     ) => runGraph(request),
   });
 }

@@ -1,6 +1,8 @@
 import type {
   ExecutionResponse,
+  ExecutionRunType,
   ExecutionStepTrace,
+  ExecutionStreamEvent,
   Graph,
   Node,
   NodeRunResult,
@@ -84,6 +86,25 @@ export async function runToNode(
   return result;
 }
 
+export async function* streamRunToNode(
+  runId: string,
+  graph: Graph,
+  nodeId: string,
+  inputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  const runPlan = buildRunPlan(graph, nodeId);
+  yield* streamRunPlanExecution(
+    runId,
+    graph,
+    runPlan,
+    inputs,
+    trace,
+    "run_to_node",
+    nodeId,
+  );
+}
+
 export function buildRunPlanForTargets(
   graph: Graph,
   targetNodeIds: string[],
@@ -165,6 +186,25 @@ export async function runGraph(
   );
 
   return result;
+}
+
+export async function* streamRunGraph(
+  runId: string,
+  graph: Graph,
+  userInputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  const sinks = getSinkNodes(graph);
+  const runPlan = buildRunPlanForTargets(graph, [...sinks]);
+
+  yield* streamRunPlanExecution(
+    runId,
+    graph,
+    runPlan,
+    userInputs,
+    trace,
+    "run_graph",
+  );
 }
 
 async function executeRunPlan(
@@ -323,5 +363,185 @@ export async function runSingleNode(
       message: `Failed execution at node ${node.id}`,
       nodeId: node.id,
     },
+  };
+}
+
+export async function* streamRunSingleNode(
+  runId: string,
+  node: Node,
+  inputs: Record<string, unknown> = {},
+  traceEnabled = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  const runType = "run_node";
+  yield {
+    type: "run_started",
+    runId,
+    runType,
+    targetNodeId: node.id,
+  };
+  yield {
+    type: "run_plan",
+    runId,
+    runType,
+    targetNodeId: node.id,
+    plan: {
+      targetNodeIds: [node.id],
+      steps: [{ nodeId: node.id, dependsOn: [] }],
+    },
+  };
+  yield {
+    type: "node_started",
+    runId,
+    runType,
+    targetNodeId: node.id,
+    index: 0,
+    nodeId: node.id,
+    dependsOn: [],
+  };
+
+  const response = await runSingleNode(node, inputs, traceEnabled);
+  const result = response.resultsByNode[node.id];
+  yield {
+    type: result.ok ? "node_completed" : "node_failed",
+    runId,
+    runType,
+    targetNodeId: node.id,
+    index: 0,
+    nodeId: node.id,
+    dependsOn: [],
+    result,
+  };
+  yield {
+    type: response.ok ? "run_completed" : "run_failed",
+    runId,
+    runType,
+    targetNodeId: node.id,
+    response,
+  };
+}
+
+async function* streamRunPlanExecution(
+  runId: string,
+  graph: Graph,
+  runPlan: RunPlan,
+  userInputs: Record<string, unknown>,
+  traceEnabled: boolean,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined = undefined,
+): AsyncGenerator<ExecutionStreamEvent> {
+  yield {
+    type: "run_started",
+    runId,
+    runType,
+    targetNodeId,
+  };
+  yield {
+    type: "run_plan",
+    runId,
+    runType,
+    targetNodeId,
+    plan: runPlan,
+  };
+
+  const resultsByNode: Record<string, NodeRunResult> = {};
+  const executedNodeIds: string[] = [];
+  const trace: ExecutionStepTrace[] | null = traceEnabled ? [] : null;
+
+  for (const [index, step] of runPlan.steps.entries()) {
+    const node = getNodeById(graph, step.nodeId);
+    const inputs = step.dependsOn.length === 0
+      ? userInputs
+      : buildInputsForStep(step, resultsByNode);
+
+    yield {
+      type: "node_started",
+      runId,
+      runType,
+      targetNodeId,
+      index,
+      nodeId: step.nodeId,
+      dependsOn: step.dependsOn,
+    };
+
+    const result = await runPythonNode(node, inputs);
+
+    resultsByNode[step.nodeId] = result;
+    executedNodeIds.push(step.nodeId);
+
+    trace?.push({
+      index,
+      nodeId: step.nodeId,
+      dependsOn: step.dependsOn,
+      inputs,
+      ok: result.ok,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      outputs: result.outputs,
+      error: result.error ?? null,
+    });
+
+    yield {
+      type: result.ok ? "node_completed" : "node_failed",
+      runId,
+      runType,
+      targetNodeId,
+      index,
+      nodeId: step.nodeId,
+      dependsOn: step.dependsOn,
+      result,
+    };
+
+    if (!result.ok) {
+      const response: ExecutionResponse = {
+        ok: false,
+        runType,
+        targetNodeId,
+        finalNodeIds: runPlan.targetNodeIds,
+        executedNodeIds,
+        resultsByNode,
+        finalOutputsByNode: buildFinalOutputsByNode(
+          runPlan.targetNodeIds,
+          resultsByNode,
+        ),
+        trace,
+        error: {
+          kind: "runtime_error",
+          message: `Failed execution at node ${step.nodeId}`,
+          nodeId: step.nodeId,
+        },
+      };
+
+      yield {
+        type: "run_failed",
+        runId,
+        runType,
+        targetNodeId,
+        response,
+      };
+      return;
+    }
+  }
+
+  const response: ExecutionResponse = {
+    ok: true,
+    runType,
+    targetNodeId,
+    finalNodeIds: runPlan.targetNodeIds,
+    executedNodeIds,
+    resultsByNode,
+    finalOutputsByNode: buildFinalOutputsByNode(
+      runPlan.targetNodeIds,
+      resultsByNode,
+    ),
+    trace,
+    error: null,
+  };
+
+  yield {
+    type: "run_completed",
+    runId,
+    runType,
+    targetNodeId,
+    response,
   };
 }

@@ -1,4 +1,4 @@
-import type { ExecutionResponse } from "../../../../types.ts";
+import type { ExecutionResponse, NodeRunResult } from "../../../../types.ts";
 import type { ReactNode } from "react";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
@@ -28,14 +28,31 @@ export type GraphInspectorModel = {
 
 export type ExecutionDisplayState =
   | { status: "running"; runType: ExecutionResponse["runType"] }
+  | {
+    status: "completed_node";
+    runType: ExecutionResponse["runType"];
+    result: NodeRunResult;
+  }
+  | {
+    status: "failed_node";
+    runType: ExecutionResponse["runType"];
+    result: NodeRunResult;
+  }
   | { status: "completed"; response: ExecutionResponse }
   | { status: "request_error"; message: string };
+
+export type GraphExecutionDisplayState = Extract<
+  ExecutionDisplayState,
+  | { status: "running" }
+  | { status: "completed" }
+  | { status: "request_error" }
+>;
 
 type InspectorPanelProps = {
   selectedNode: NodeInspectorSelection | null;
   graph: GraphInspectorModel;
   selectedNodeExecutionState: ExecutionDisplayState | null;
-  graphExecutionState: ExecutionDisplayState | null;
+  graphExecutionState: GraphExecutionDisplayState | null;
   inputsText: string;
   inputsError: string | null;
   areInputsValid: boolean;
@@ -223,6 +240,59 @@ function RunResult({
     );
   }
 
+  if (
+    executionState.status === "completed_node" ||
+    executionState.status === "failed_node"
+  ) {
+    const nodeResult = executionState.result;
+    const outputEntries = Object.entries(nodeResult.outputs);
+
+    return (
+      <section className="border-t border-zinc-200 pt-4">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+          Run Result
+        </h3>
+        <p
+          className={[
+            "mt-2 text-sm font-medium",
+            nodeResult.ok ? "text-zinc-700" : "text-red-800",
+          ].join(" ")}
+        >
+          {nodeResult.ok ? "Node completed" : "Node failed"}
+        </p>
+
+        {!nodeResult.ok && (
+          <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
+            <p className="text-sm font-medium text-red-800">
+              Python execution failed.
+            </p>
+            {nodeResult.error && (
+              <p className="mt-1 text-sm text-red-700">{nodeResult.error}</p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 space-y-4">
+          <section>
+            <h4 className="text-xs font-semibold uppercase text-zinc-500">
+              Outputs
+            </h4>
+            {outputEntries.length === 0
+              ? <p className="mt-2 text-sm text-zinc-500">No outputs.</p>
+              : <JsonBlock value={nodeResult.outputs} />}
+          </section>
+
+          <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
+          <TextOutputBlock
+            title="Stderr"
+            value={nodeResult.stderr}
+            variant="danger"
+          />
+        </div>
+      </section>
+    );
+  }
+
   const response = executionState.response;
   const nodeResult = response.resultsByNode[selectedNode.id];
   const traceStep =
@@ -342,7 +412,7 @@ function GraphInspector({
   onNodeSelect,
 }: {
   graph: GraphInspectorModel;
-  graphExecutionState: ExecutionDisplayState | null;
+  graphExecutionState: GraphExecutionDisplayState | null;
   inputsText: string;
   inputsError: string | null;
   traceEnabled: boolean;
@@ -438,7 +508,7 @@ function GraphRunResult({
   executionState,
   onNodeSelect,
 }: {
-  executionState: ExecutionDisplayState | null;
+  executionState: GraphExecutionDisplayState | null;
   onNodeSelect: (nodeId: string) => void;
 }) {
   if (!executionState) {

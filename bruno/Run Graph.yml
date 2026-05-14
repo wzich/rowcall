@@ -6,6 +6,9 @@ info:
 http:
   method: POST
   url: "{{HOST}}/run-graph"
+  headers:
+    - name: Accept
+      value: text/event-stream
   body:
     type: json
     data: |-
@@ -14,7 +17,7 @@ http:
         "nodes": [
           {
             "id": "a",
-            "code": "x = 1\ny = z + 2",
+            "code": "import time\nx = 1\ny = z + 2\ntime.sleep(5)",
             "outputs": ["x", "y"]
           },
           {

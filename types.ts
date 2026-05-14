@@ -87,3 +87,77 @@ export type ExecutionResponse = {
   trace: ExecutionStepTrace[] | null;
   error: ExecutionError | null;
 };
+
+export type ExecutionRunType = ExecutionResponse["runType"];
+
+export type ExecutionRunStartedEvent = {
+  type: "run_started";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+};
+
+export type ExecutionRunPlanEvent = {
+  type: "run_plan";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  plan: RunPlan;
+};
+
+export type ExecutionNodeStartedEvent = {
+  type: "node_started";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  index: number;
+  nodeId: string;
+  dependsOn: string[];
+};
+
+export type ExecutionNodeCompletedEvent = {
+  type: "node_completed";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  index: number;
+  nodeId: string;
+  dependsOn: string[];
+  result: NodeRunResult;
+};
+
+export type ExecutionNodeFailedEvent = {
+  type: "node_failed";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  index: number;
+  nodeId: string;
+  dependsOn: string[];
+  result: NodeRunResult;
+};
+
+export type ExecutionRunCompletedEvent = {
+  type: "run_completed";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  response: ExecutionResponse;
+};
+
+export type ExecutionRunFailedEvent = {
+  type: "run_failed";
+  runId: string;
+  runType: ExecutionRunType;
+  targetNodeId?: string;
+  response: ExecutionResponse;
+};
+
+export type ExecutionStreamEvent =
+  | ExecutionRunStartedEvent
+  | ExecutionRunPlanEvent
+  | ExecutionNodeStartedEvent
+  | ExecutionNodeCompletedEvent
+  | ExecutionNodeFailedEvent
+  | ExecutionRunCompletedEvent
+  | ExecutionRunFailedEvent;

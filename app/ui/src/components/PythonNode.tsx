@@ -2,17 +2,52 @@ import { python } from "@codemirror/lang-python";
 import CodeMirror from "@uiw/react-codemirror";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { useMemo } from "react";
-import type { PythonFlowNode } from "../graph/toReactFlow.ts";
+import type {
+  NodeRunVisualStatus,
+  PythonFlowNode,
+} from "../graph/toReactFlow.ts";
+
+const statusStyles: Record<
+  NodeRunVisualStatus,
+  { border: string; dot: string; label: string }
+> = {
+  idle: {
+    border: "border-zinc-300",
+    dot: "bg-zinc-300",
+    label: "Idle",
+  },
+  queued: {
+    border: "border-zinc-400",
+    dot: "bg-zinc-400",
+    label: "Queued",
+  },
+  running: {
+    border: "border-blue-400",
+    dot: "bg-blue-500",
+    label: "Running",
+  },
+  completed: {
+    border: "border-emerald-500",
+    dot: "bg-emerald-500",
+    label: "Completed",
+  },
+  failed: {
+    border: "border-red-500",
+    dot: "bg-red-500",
+    label: "Failed",
+  },
+};
 
 export function PythonNode({ data, selected }: NodeProps<PythonFlowNode>) {
   const extensions = useMemo(() => [python()], []);
   const outputs = data.outputs.length > 0 ? data.outputs.join(", ") : "none";
+  const status = statusStyles[data.runStatus];
 
   return (
     <article
       className={[
         "w-[360px] rounded-lg border bg-white shadow-sm",
-        selected ? "border-zinc-900" : "border-zinc-300",
+        selected ? "border-zinc-900" : status.border,
       ].join(" ")}
     >
       <Handle
@@ -22,12 +57,23 @@ export function PythonNode({ data, selected }: NodeProps<PythonFlowNode>) {
       />
       <div className="cursor-grab border-b border-zinc-200 px-3 py-2 active:cursor-grabbing">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="truncate text-sm font-semibold text-zinc-950">
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-950">
             {data.label}
           </h2>
-          <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
-            Python
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span
+              className={[
+                "h-2.5 w-2.5 shrink-0 rounded-full",
+                data.runStatus === "running" ? "animate-pulse" : "",
+                status.dot,
+              ].join(" ")}
+              title={status.label}
+              aria-label={status.label}
+            />
+            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
+              Python
+            </span>
+          </div>
         </div>
         <p className="mt-1 truncate text-xs text-zinc-500">
           outputs: {outputs}

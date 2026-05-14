@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
-import type { ExecutionResponse } from "../../../types.ts";
+import { useMemo, useState } from "react";
 import {
   availableGraphSources,
   defaultGraphSource,
@@ -10,7 +9,6 @@ import {
 } from "./api/graphSources.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
-  type ExecutionDisplayState,
   type GraphInspectorModel,
   InspectorPanel,
   type NodeInspectorBadge,
@@ -25,6 +23,7 @@ import {
   inspectedGraphQueryOptions,
   InspectGraphQueryError,
 } from "./query/graphQueries.ts";
+import { useExecutionSession } from "./query/useExecutionSession.ts";
 
 export default function App() {
   const [selectedSource, setSelectedSource] = useState(defaultGraphSource);
@@ -32,91 +31,33 @@ export default function App() {
   const [inputsText, setInputsText] = useState("{}");
   const [inputsError, setInputsError] = useState<string | null>(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
-  const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
-    Record<string, ExecutionDisplayState>
-  >({});
-  const [graphExecutionState, setGraphExecutionState] = useState<
-    ExecutionDisplayState | null
-  >(null);
   const selectedSourceValue = encodeGraphSource(selectedSource);
-  const selectedSourceValueRef = useRef(selectedSourceValue);
-  selectedSourceValueRef.current = selectedSourceValue;
   const sourceLabel = describeGraphSource(selectedSource);
   const inspectedGraphQuery = useQuery(
     inspectedGraphQueryOptions(selectedSource),
   );
-
-  function markNodeExecutionRunning(
-    nodeId: string,
-    runType: ExecutionResponse["runType"],
-  ) {
-    setExecutionStateByNodeId((current) => ({
-      ...current,
-      [nodeId]: { status: "running", runType },
-    }));
-    setGraphExecutionState({ status: "running", runType });
-  }
-
-  function storeExecutionResponseForNodeIds(
-    response: ExecutionResponse,
-    nodeIds: Iterable<string>,
-  ) {
-    setExecutionStateByNodeId((current) => {
-      const next = { ...current };
-
-      for (const nodeId of new Set(nodeIds)) {
-        next[nodeId] = {
-          status: "completed",
-          response,
-        };
-      }
-
-      return next;
-    });
-  }
-
-  function storeExecutionRequestErrorForNode(
-    error: unknown,
-    targetNodeId: string,
-  ) {
-    setExecutionStateByNodeId((current) => ({
-      ...current,
-      [targetNodeId]: {
-        status: "request_error",
-        message: error instanceof Error
-          ? error.message
-          : "The request failed before Python execution completed.",
-      },
-    }));
-  }
-
-  function markGraphExecutionRunning() {
-    // TODO: Revisit this full flush once the UI can stream execution plans or
-    // per-node progress; for now a graph run is treated as a global reset.
-    setExecutionStateByNodeId({});
-    setGraphExecutionState({ status: "running", runType: "run_graph" });
-  }
-
-  function storeGraphExecutionResponse(response: ExecutionResponse) {
-    setGraphExecutionState({
-      status: "completed",
-      response,
-    });
-  }
-
-  function storeGraphExecutionRequestError(error: unknown) {
-    setGraphExecutionState({
-      status: "request_error",
-      message: error instanceof Error
-        ? error.message
-        : "The request failed before Python execution completed.",
-    });
-  }
+  const {
+    executionStateByNodeId,
+    graphExecutionState,
+    nodeRunStatuses,
+    applyExecutionStreamEvent,
+    clearActiveRun,
+    clearExecutionSession,
+    isCurrentSource,
+    markGraphExecutionRunning,
+    markNodeExecutionRunning,
+    resetUnfinishedRunStatuses,
+    startRunAbortController,
+    storeExecutionRequestErrorForNode,
+    storeExecutionResponseForNodeIds,
+    storeGraphExecutionRequestError,
+    storeGraphExecutionResponse,
+  } = useExecutionSession(selectedSourceValue);
 
   const runNodeMutation = useMutation({
     ...runNodeMutationOptions(),
     onSuccess: (response, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
         return;
       }
 
@@ -125,20 +66,28 @@ export default function App() {
         variables.nodeId,
       ]);
       storeGraphExecutionResponse(response);
+      clearActiveRun(variables.abortController);
     },
     onError: (error, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
+        return;
+      }
+      if (isAbortError(error)) {
+        if (clearActiveRun(variables.abortController)) {
+          resetUnfinishedRunStatuses();
+        }
         return;
       }
 
       storeExecutionRequestErrorForNode(error, variables.nodeId);
       storeGraphExecutionRequestError(error);
+      clearActiveRun(variables.abortController);
     },
   });
   const runToNodeMutation = useMutation({
     ...runToNodeMutationOptions(),
     onSuccess: (response, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
         return;
       }
 
@@ -147,20 +96,28 @@ export default function App() {
         variables.nodeId,
       ]);
       storeGraphExecutionResponse(response);
+      clearActiveRun(variables.abortController);
     },
     onError: (error, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
+        return;
+      }
+      if (isAbortError(error)) {
+        if (clearActiveRun(variables.abortController)) {
+          resetUnfinishedRunStatuses();
+        }
         return;
       }
 
       storeExecutionRequestErrorForNode(error, variables.nodeId);
       storeGraphExecutionRequestError(error);
+      clearActiveRun(variables.abortController);
     },
   });
   const runGraphMutation = useMutation({
     ...runGraphMutationOptions(),
     onSuccess: (response, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
         return;
       }
 
@@ -171,13 +128,21 @@ export default function App() {
         response,
         variables.graph.nodes.map((node) => node.id),
       );
+      clearActiveRun(variables.abortController);
     },
     onError: (error, variables) => {
-      if (variables.sourceValue !== selectedSourceValueRef.current) {
+      if (!isCurrentSource(variables.sourceValue)) {
+        return;
+      }
+      if (isAbortError(error)) {
+        if (clearActiveRun(variables.abortController)) {
+          resetUnfinishedRunStatuses();
+        }
         return;
       }
 
       storeGraphExecutionRequestError(error);
+      clearActiveRun(variables.abortController);
     },
   });
   const inspectionIssues = inspectedGraphQuery.error instanceof
@@ -255,12 +220,11 @@ export default function App() {
   }, [inspectedGraphQuery, selectedNodeId]);
 
   function handleSourceChange(value: string) {
+    clearExecutionSession();
     setSelectedNodeId(null);
     setInputsText("{}");
     setInputsError(null);
     setTraceEnabled(false);
-    setExecutionStateByNodeId({});
-    setGraphExecutionState(null);
     setSelectedSource(getGraphSourceByValue(value));
   }
 
@@ -312,11 +276,15 @@ export default function App() {
     }
 
     markNodeExecutionRunning(nodeId, "run_node");
+    const abortController = startRunAbortController();
     runNodeMutation.mutate({
       graph: inspectedGraphQuery.data.graph,
       nodeId,
       inputs,
       trace: traceEnabled,
+      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      signal: abortController.signal,
+      abortController,
       sourceValue: selectedSourceValue,
     });
   }
@@ -332,11 +300,15 @@ export default function App() {
     }
 
     markNodeExecutionRunning(nodeId, "run_to_node");
+    const abortController = startRunAbortController();
     runToNodeMutation.mutate({
       graph: inspectedGraphQuery.data.graph,
       nodeId,
       inputs,
       trace: traceEnabled,
+      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      signal: abortController.signal,
+      abortController,
       sourceValue: selectedSourceValue,
     });
   }
@@ -352,10 +324,14 @@ export default function App() {
     }
 
     markGraphExecutionRunning();
+    const abortController = startRunAbortController();
     runGraphMutation.mutate({
       graph: inspectedGraphQuery.data.graph,
       inputs,
       trace: traceEnabled,
+      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      signal: abortController.signal,
+      abortController,
       sourceValue: selectedSourceValue,
     });
   }
@@ -442,6 +418,7 @@ export default function App() {
                 key={selectedSourceValue}
                 graph={inspectedGraphQuery.data.graph}
                 selectedNodeId={selectedNodeId}
+                nodeRunStatuses={nodeRunStatuses}
                 onNodeSelect={setSelectedNodeId}
                 onSelectionClear={() => setSelectedNodeId(null)}
               />
@@ -491,4 +468,8 @@ function getInputsValidationError(inputsText: string): string | null {
   }
 
   return null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }

@@ -11,8 +11,15 @@ import {
   validateGraph,
 } from "./graph.ts";
 import { loadGraphFile } from "./utils.ts";
-import type { Graph, ValidationIssue } from "./types.ts";
-import { runGraph, runSingleNode, runToNode } from "./executor.ts";
+import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
+import {
+  runGraph,
+  runSingleNode,
+  runToNode,
+  streamRunGraph,
+  streamRunSingleNode,
+  streamRunToNode,
+} from "./executor.ts";
 
 const app = new Hono();
 
@@ -69,6 +76,67 @@ function decodeAndValidateGraph(graph: unknown): GraphResolutionResult {
   }
 
   return { ok: true, graph: decoded.graph };
+}
+
+function wantsExecutionStream(
+  c: { req: { header: (name: string) => string | undefined } },
+): boolean {
+  return c.req.header("accept")?.includes("text/event-stream") ?? false;
+}
+
+function formatStreamEvent(event: ExecutionStreamEvent): string {
+  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function streamExecutionEvents(
+  runId: string,
+  runType: ExecutionStreamEvent["runType"],
+  events: AsyncIterable<ExecutionStreamEvent>,
+  targetNodeId?: string,
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of events) {
+          controller.enqueue(encoder.encode(formatStreamEvent(event)));
+        }
+        controller.close();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const event: ExecutionStreamEvent = {
+          type: "run_failed",
+          runId,
+          runType,
+          targetNodeId,
+          response: {
+            ok: false,
+            runType,
+            targetNodeId,
+            finalNodeIds: [],
+            executedNodeIds: [],
+            resultsByNode: {},
+            finalOutputsByNode: {},
+            trace: null,
+            error: {
+              kind: "internal_error",
+              message,
+            },
+          },
+        };
+        controller.enqueue(encoder.encode(formatStreamEvent(event)));
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
 }
 
 app.post("/inspect", async (c) => {
@@ -181,6 +249,19 @@ app.post("/run-node", async (c) => {
   const node = getNodeById(graph, nodeId);
   const inputs = body.inputs || {};
 
+  // TODO: Add scoped API-level concurrency and resource controls once the
+  // product has a runtime/session/document model. The UI keeps one active run
+  // at a time for now, but direct API callers can still start concurrent runs.
+  if (wantsExecutionStream(c)) {
+    const runId = crypto.randomUUID();
+    return streamExecutionEvents(
+      runId,
+      "run_node",
+      streamRunSingleNode(runId, node, inputs, trace),
+      node.id,
+    );
+  }
+
   const result = await runSingleNode(node, inputs, trace);
   return c.json(result);
 });
@@ -207,6 +288,16 @@ app.post("/run-to-node", async (c) => {
   const inputs = body.inputs || {};
   const trace = body.trace || false;
 
+  if (wantsExecutionStream(c)) {
+    const runId = crypto.randomUUID();
+    return streamExecutionEvents(
+      runId,
+      "run_to_node",
+      streamRunToNode(runId, graph, nodeId, inputs, trace),
+      nodeId,
+    );
+  }
+
   const result = await runToNode(graph, nodeId, inputs, trace);
 
   return c.json(result);
@@ -227,6 +318,15 @@ app.post("/run-graph", async (c) => {
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
+
+  if (wantsExecutionStream(c)) {
+    const runId = crypto.randomUUID();
+    return streamExecutionEvents(
+      runId,
+      "run_graph",
+      streamRunGraph(runId, graph, inputs, trace),
+    );
+  }
 
   const result = await runGraph(graph, inputs, trace);
 

@@ -1,0 +1,242 @@
+import { useRef, useState } from "react";
+import type {
+  ExecutionResponse,
+  ExecutionStreamEvent,
+} from "../../../../types.ts";
+import type {
+  ExecutionDisplayState,
+  GraphExecutionDisplayState,
+} from "../components/InspectorPanel.tsx";
+import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
+
+export function useExecutionSession(selectedSourceValue: string) {
+  const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
+    Record<string, ExecutionDisplayState>
+  >({});
+  const [graphExecutionState, setGraphExecutionState] = useState<
+    GraphExecutionDisplayState | null
+  >(null);
+  const [nodeRunStatuses, setNodeRunStatuses] = useState<
+    Record<string, NodeRunVisualStatus>
+  >({});
+  const selectedSourceValueRef = useRef(selectedSourceValue);
+  selectedSourceValueRef.current = selectedSourceValue;
+  const activeRunIdRef = useRef<string | null>(null);
+  const activeRunAbortControllerRef = useRef<AbortController | null>(null);
+
+  function isCurrentSource(sourceValue: string): boolean {
+    return sourceValue === selectedSourceValueRef.current;
+  }
+
+  function markNodeExecutionRunning(
+    nodeId: string,
+    runType: ExecutionResponse["runType"],
+  ) {
+    setExecutionStateByNodeId((current) => ({
+      ...current,
+      [nodeId]: { status: "running", runType },
+    }));
+    setGraphExecutionState({ status: "running", runType });
+  }
+
+  function markGraphExecutionRunning() {
+    setExecutionStateByNodeId({});
+    setGraphExecutionState({ status: "running", runType: "run_graph" });
+  }
+
+  function applyExecutionStreamEvent(
+    event: ExecutionStreamEvent,
+    sourceValue: string,
+  ) {
+    if (sourceValue !== selectedSourceValueRef.current) {
+      return;
+    }
+
+    if (event.type === "run_started") {
+      activeRunIdRef.current = event.runId;
+      setGraphExecutionState({ status: "running", runType: event.runType });
+      return;
+    }
+
+    if (activeRunIdRef.current !== event.runId) {
+      return;
+    }
+
+    if (event.type === "run_plan") {
+      setNodeRunStatuses(
+        Object.fromEntries(
+          event.plan.steps.map((step) => [step.nodeId, "queued" as const]),
+        ),
+      );
+      return;
+    }
+
+    if (event.type === "node_started") {
+      setExecutionStateByNodeId((current) => ({
+        ...current,
+        [event.nodeId]: {
+          status: "running",
+          runType: event.runType,
+        },
+      }));
+      setNodeRunStatuses((current) => ({
+        ...current,
+        [event.nodeId]: "running",
+      }));
+      return;
+    }
+
+    if (event.type === "node_completed" || event.type === "node_failed") {
+      setExecutionStateByNodeId((current) => ({
+        ...current,
+        [event.nodeId]: {
+          status: event.type === "node_completed"
+            ? "completed_node"
+            : "failed_node",
+          runType: event.runType,
+          result: event.result,
+        },
+      }));
+      setNodeRunStatuses((current) => ({
+        ...current,
+        [event.nodeId]: event.type === "node_completed"
+          ? "completed"
+          : "failed",
+      }));
+      return;
+    }
+
+    if (event.type === "run_completed" || event.type === "run_failed") {
+      storeGraphExecutionResponse(event.response);
+      storeExecutionResponseForNodeIds(
+        event.response,
+        event.response.runType === "run_graph"
+          ? Object.keys(event.response.resultsByNode)
+          : [
+            ...event.response.executedNodeIds,
+            event.response.targetNodeId,
+          ].filter((nodeId): nodeId is string => Boolean(nodeId)),
+      );
+      if (event.type === "run_failed") {
+        resetUnfinishedRunStatuses();
+      }
+    }
+  }
+
+  function storeExecutionResponseForNodeIds(
+    response: ExecutionResponse,
+    nodeIds: Iterable<string>,
+  ) {
+    setExecutionStateByNodeId((current) => {
+      const next = { ...current };
+
+      for (const nodeId of new Set(nodeIds)) {
+        next[nodeId] = {
+          status: "completed",
+          response,
+        };
+      }
+
+      return next;
+    });
+  }
+
+  function storeExecutionRequestErrorForNode(
+    error: unknown,
+    targetNodeId: string,
+  ) {
+    setExecutionStateByNodeId((current) => ({
+      ...current,
+      [targetNodeId]: {
+        status: "request_error",
+        message: error instanceof Error
+          ? error.message
+          : "The request failed before Python execution completed.",
+      },
+    }));
+  }
+
+  function resetUnfinishedRunStatuses() {
+    setNodeRunStatuses((current) =>
+      Object.fromEntries(
+        Object.entries(current).map(([nodeId, status]) => [
+          nodeId,
+          status === "queued" || status === "running" ? "idle" : status,
+        ]),
+      )
+    );
+  }
+
+  function startRunAbortController(): AbortController {
+    activeRunAbortControllerRef.current?.abort();
+    resetUnfinishedRunStatuses();
+    setExecutionStateByNodeId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([, state]) =>
+          state.status !== "running"
+        ),
+      )
+    );
+
+    const controller = new AbortController();
+    activeRunAbortControllerRef.current = controller;
+    activeRunIdRef.current = null;
+    return controller;
+  }
+
+  function clearActiveRun(controller: AbortController): boolean {
+    if (activeRunAbortControllerRef.current === controller) {
+      activeRunAbortControllerRef.current = null;
+      activeRunIdRef.current = null;
+      return true;
+    }
+    return false;
+  }
+
+  function abortActiveRun() {
+    activeRunAbortControllerRef.current?.abort();
+    activeRunAbortControllerRef.current = null;
+    activeRunIdRef.current = null;
+  }
+
+  function storeGraphExecutionResponse(response: ExecutionResponse) {
+    setGraphExecutionState({
+      status: "completed",
+      response,
+    });
+  }
+
+  function storeGraphExecutionRequestError(error: unknown) {
+    setGraphExecutionState({
+      status: "request_error",
+      message: error instanceof Error
+        ? error.message
+        : "The request failed before Python execution completed.",
+    });
+  }
+
+  function clearExecutionSession() {
+    abortActiveRun();
+    setExecutionStateByNodeId({});
+    setGraphExecutionState(null);
+    setNodeRunStatuses({});
+  }
+
+  return {
+    executionStateByNodeId,
+    graphExecutionState,
+    nodeRunStatuses,
+    applyExecutionStreamEvent,
+    clearActiveRun,
+    clearExecutionSession,
+    isCurrentSource,
+    markGraphExecutionRunning,
+    markNodeExecutionRunning,
+    resetUnfinishedRunStatuses,
+    startRunAbortController,
+    storeExecutionRequestErrorForNode,
+    storeExecutionResponseForNodeIds,
+    storeGraphExecutionRequestError,
+    storeGraphExecutionResponse,
+  };
+}

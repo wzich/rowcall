@@ -6,17 +6,27 @@ export type PythonNodeData = {
   label: string;
   code: string;
   outputs: string[];
+  runStatus: NodeRunVisualStatus;
 };
 
 export type PythonFlowNode = FlowNode<PythonNodeData, "pythonNode">;
 export type PythonFlowEdge = FlowEdge;
+export type NodeRunVisualStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
 
 export type ReactFlowGraph = {
   nodes: PythonFlowNode[];
   edges: PythonFlowEdge[];
 };
 
-export function toReactFlowGraph(graph: RuntimeGraph): ReactFlowGraph {
+export function toReactFlowGraph(
+  graph: RuntimeGraph,
+  nodeRunStatuses: Record<string, NodeRunVisualStatus> = {},
+): ReactFlowGraph {
   const positions = createSimpleLayout(graph);
 
   return {
@@ -28,6 +38,7 @@ export function toReactFlowGraph(graph: RuntimeGraph): ReactFlowGraph {
         label: node.id,
         code: node.code,
         outputs: node.outputs,
+        runStatus: nodeRunStatuses[node.id] ?? "idle",
       },
     })),
     edges: graph.edges.map((edge) => ({
