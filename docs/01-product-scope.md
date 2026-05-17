@@ -2,7 +2,7 @@
 
 ## What is NodeBook?
 
-NodeBook is a computational notebook where code lives in nodes on a visual canvas instead of a linear sequence of cells. Each node has explicit named inputs and outputs, so data flow is visible in the graph rather than hidden in shared state. This eliminates the class of bugs Jupyter users know well — re-run order mattering, variables silently persisting — and makes branching and exploration a first-class feature instead of an awkward workaround.
+NodeBook is a computational notebook where code lives in nodes on a visual canvas instead of a linear sequence of cells. Each node declares explicit named outputs, while its inputs are derived from upstream graph connections, so data flow is visible in the graph rather than hidden in shared state. This eliminates the class of bugs Jupyter users know well — re-run order mattering, variables silently persisting — and makes branching and exploration a first-class feature instead of an awkward workaround.
 
 It feels like working in Figma. You open a URL, see a canvas, and start building.
 
@@ -19,7 +19,7 @@ The deeper problem is **exploratory divergence**: you have a working analysis up
 ## Core Concepts
 
 ### Nodes
-A node is a small code editor containing a self-contained script. It declares explicit **outputs** — named values it produces. It receives **inputs** — named values made available from upstream nodes it is connected to. A node cannot access any state outside of those provided inputs. This makes execution order unambiguous and re-runs safe.
+A node is a small code editor containing a self-contained script. It declares explicit **outputs** — named values it produces. It receives derived **inputs** — named values made available from upstream nodes it is connected to, plus any explicit user-provided inputs when it is a root node in the current run. A node cannot access any state outside of those provided inputs. This makes execution order unambiguous and re-runs safe.
 
 Nodes nudge users toward writing smaller, meaningful steps. The act of naming outputs forces intentionality: what does this node *do*? The canvas becomes self-documenting.
 

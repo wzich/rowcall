@@ -127,14 +127,25 @@ export function useExecutionSession(selectedSourceValue: string) {
     response: ExecutionResponse,
     nodeIds: Iterable<string>,
   ) {
+    const completedNodeIds = new Set(nodeIds);
+
     setExecutionStateByNodeId((current) => {
       const next = { ...current };
 
-      for (const nodeId of new Set(nodeIds)) {
+      for (const nodeId of completedNodeIds) {
         next[nodeId] = {
           status: "completed",
           response,
         };
+      }
+
+      return next;
+    });
+    setNodeRunStatuses((current) => {
+      const next = { ...current };
+
+      for (const nodeId of completedNodeIds) {
+        next[nodeId] = "completed";
       }
 
       return next;
@@ -222,6 +233,52 @@ export function useExecutionSession(selectedSourceValue: string) {
     setNodeRunStatuses({});
   }
 
+  function markNodesStale(nodeIds: Iterable<string>) {
+    const staleNodeIds = new Set(nodeIds);
+    if (staleNodeIds.size === 0) {
+      return;
+    }
+
+    setExecutionStateByNodeId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([nodeId, state]) =>
+          !staleNodeIds.has(nodeId) || state.status === "running"
+        ),
+      )
+    );
+    setNodeRunStatuses((current) => {
+      const next = { ...current };
+
+      for (const nodeId of staleNodeIds) {
+        if (next[nodeId] === "queued" || next[nodeId] === "running") {
+          continue;
+        }
+        next[nodeId] = "stale";
+      }
+
+      return next;
+    });
+  }
+
+  function forgetNodes(nodeIds: Iterable<string>) {
+    const removedNodeIds = new Set(nodeIds);
+
+    setExecutionStateByNodeId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([nodeId]) =>
+          !removedNodeIds.has(nodeId)
+        ),
+      )
+    );
+    setNodeRunStatuses((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([nodeId]) =>
+          !removedNodeIds.has(nodeId)
+        ),
+      )
+    );
+  }
+
   return {
     executionStateByNodeId,
     graphExecutionState,
@@ -230,7 +287,9 @@ export function useExecutionSession(selectedSourceValue: string) {
     clearActiveRun,
     clearExecutionSession,
     isCurrentSource,
+    forgetNodes,
     markGraphExecutionRunning,
+    markNodesStale,
     markNodeExecutionRunning,
     resetUnfinishedRunStatuses,
     startRunAbortController,

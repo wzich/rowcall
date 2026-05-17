@@ -48,10 +48,27 @@ export type InspectGraphResult = InspectGraphSuccess | InspectGraphError;
 export async function inspectGraph(
   source: GraphSource,
 ): Promise<InspectGraphResult> {
+  return await inspectGraphRequest(toInspectRequest(source));
+}
+
+export async function inspectGraphText(
+  text: string,
+): Promise<InspectGraphResult> {
+  return await inspectGraphRequest({
+    source: {
+      type: "text",
+      text,
+    },
+  });
+}
+
+async function inspectGraphRequest(
+  request: unknown,
+): Promise<InspectGraphResult> {
   const response = await fetch("/inspect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toInspectRequest(source)),
+    body: JSON.stringify(request),
   });
 
   // TODO: Validate this response with shared schemas once the UI and runtime

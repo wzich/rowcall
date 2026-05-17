@@ -1,5 +1,6 @@
 import type { ExecutionResponse, NodeRunResult } from "../../../../types.ts";
 import type { ReactNode } from "react";
+import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -59,11 +60,13 @@ type InspectorPanelProps = {
   traceEnabled: boolean;
   onNodeSelect: (nodeId: string) => void;
   onInputsChange: (value: string) => void;
+  onOutputsChange: (nodeId: string, outputsText: string) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
   onRunGraph: () => void;
   onSelectionClear: () => void;
+  validationIssues: InspectGraphValidationIssue[];
 };
 
 function CodeList(
@@ -404,6 +407,7 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 function GraphInspector({
   graph,
   graphExecutionState,
+  validationIssues,
   inputsText,
   inputsError,
   traceEnabled,
@@ -413,6 +417,7 @@ function GraphInspector({
 }: {
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
+  validationIssues: InspectGraphValidationIssue[];
   inputsText: string;
   inputsError: string | null;
   traceEnabled: boolean;
@@ -429,6 +434,8 @@ function GraphInspector({
         onChange={onInputsChange}
         onTraceEnabledChange={onTraceEnabledChange}
       />
+
+      <ValidationIssues issues={validationIssues} />
 
       <dl className="grid grid-cols-2 gap-3">
         <MetricTile label="Nodes" value={graph.nodeCount} />
@@ -747,19 +754,23 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
 function NodeInspector({
   selectedNode,
   executionState,
+  validationIssues,
   inputsText,
   inputsError,
   traceEnabled,
   onInputsChange,
+  onOutputsChange,
   onTraceEnabledChange,
   onNodeSelect,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
+  validationIssues: InspectGraphValidationIssue[];
   inputsText: string;
   inputsError: string | null;
   traceEnabled: boolean;
   onInputsChange: (value: string) => void;
+  onOutputsChange: (nodeId: string, outputsText: string) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
@@ -773,14 +784,22 @@ function NodeInspector({
         onTraceEnabledChange={onTraceEnabledChange}
       />
 
+      <ValidationIssues issues={validationIssues} />
+
       <section>
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Declared Outputs
         </h3>
-        <CodeList
-          items={selectedNode.outputs}
-          emptyLabel="No declared outputs"
+        <textarea
+          className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-300 bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
+          spellCheck={false}
+          value={selectedNode.outputs.join("\n")}
+          onChange={(event) =>
+            onOutputsChange(selectedNode.id, event.currentTarget.value)}
         />
+        <p className="mt-2 text-xs text-zinc-500">
+          One output name per line.
+        </p>
       </section>
 
       <DependencyList
@@ -857,6 +876,41 @@ function RunConfigEditor({
   );
 }
 
+function ValidationIssues(
+  { issues }: { issues: InspectGraphValidationIssue[] },
+) {
+  if (issues.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="rounded border border-red-200 bg-red-50 p-3">
+      <h3 className="text-xs font-semibold uppercase text-red-700">
+        Validation
+      </h3>
+      <p className="mt-1 text-sm text-red-700">
+        Fix these issues before running the graph.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {issues.map((issue, index) => (
+          <li
+            key={`${issue.kind}-${issue.path ?? "graph"}-${index}`}
+            className="text-sm text-red-900"
+          >
+            <span className="font-medium">{issue.kind}</span>
+            <span className="block">{issue.message}</span>
+            {issue.path && (
+              <span className="mt-0.5 block font-mono text-xs text-red-700">
+                {issue.path}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function InspectorPanel({
   selectedNode,
   graph,
@@ -868,11 +922,13 @@ export function InspectorPanel({
   traceEnabled,
   onNodeSelect,
   onInputsChange,
+  onOutputsChange,
   onTraceEnabledChange,
   onRunNode,
   onRunToNode,
   onRunGraph,
   onSelectionClear,
+  validationIssues,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
@@ -956,10 +1012,12 @@ export function InspectorPanel({
             <NodeInspector
               selectedNode={selectedNode}
               executionState={selectedNodeExecutionState}
+              validationIssues={validationIssues}
               inputsText={inputsText}
               inputsError={inputsError}
               traceEnabled={traceEnabled}
               onInputsChange={onInputsChange}
+              onOutputsChange={onOutputsChange}
               onTraceEnabledChange={onTraceEnabledChange}
               onNodeSelect={onNodeSelect}
             />
@@ -968,6 +1026,7 @@ export function InspectorPanel({
             <GraphInspector
               graph={graph}
               graphExecutionState={graphExecutionState}
+              validationIssues={validationIssues}
               inputsText={inputsText}
               inputsError={inputsError}
               traceEnabled={traceEnabled}

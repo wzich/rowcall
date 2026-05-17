@@ -1,6 +1,6 @@
 import { python } from "@codemirror/lang-python";
 import CodeMirror from "@uiw/react-codemirror";
-import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
 import { useMemo } from "react";
 import type {
   NodeRunVisualStatus,
@@ -15,6 +15,11 @@ const statusStyles: Record<
     border: "border-zinc-300",
     dot: "bg-zinc-300",
     label: "Idle",
+  },
+  stale: {
+    border: "border-amber-400",
+    dot: "bg-amber-400",
+    label: "Stale",
   },
   queued: {
     border: "border-zinc-400",
@@ -38,14 +43,16 @@ const statusStyles: Record<
   },
 };
 
-export function PythonNode({ data, selected }: NodeProps<PythonFlowNode>) {
+export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const extensions = useMemo(() => [python()], []);
   const outputs = data.outputs.length > 0 ? data.outputs.join(", ") : "none";
   const status = statusStyles[data.runStatus];
+  const canEdit = Boolean(data.onCodeChange);
 
   return (
     <article
       className={[
+        "relative",
         "w-[360px] rounded-lg border bg-white shadow-sm",
         selected ? "border-zinc-900" : status.border,
       ].join(" ")}
@@ -80,11 +87,11 @@ export function PythonNode({ data, selected }: NodeProps<PythonFlowNode>) {
         </p>
       </div>
       <div className="nodrag nopan p-2 [&_.cm-editor]:max-h-[180px] [&_.cm-editor]:rounded-md [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
-        {/* TODO: Switch this to editable mode when graph editing becomes part of the canvas milestone. */}
         <CodeMirror
           value={data.code}
           extensions={extensions}
-          readOnly
+          readOnly={!canEdit}
+          onChange={(value) => data.onCodeChange?.(id, value)}
           basicSetup={{
             autocompletion: false,
             closeBrackets: false,
@@ -96,6 +103,36 @@ export function PythonNode({ data, selected }: NodeProps<PythonFlowNode>) {
           theme="light"
         />
       </div>
+      <NodeToolbar
+        isVisible={selected}
+        position={Position.Bottom}
+        offset={12}
+      >
+        <div className="flex items-center gap-2 rounded border border-zinc-200 bg-white p-1 shadow-sm">
+          {data.onAddChild && (
+            <button
+              type="button"
+              aria-label={`Add child node after ${data.label}`}
+              title="Add child node"
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-base font-semibold text-zinc-700 hover:bg-zinc-100"
+              onClick={() => data.onAddChild?.(id)}
+            >
+              +
+            </button>
+          )}
+          {data.onDelete && (
+            <button
+              type="button"
+              aria-label={`Delete node ${data.label}`}
+              title="Delete node"
+              className="flex h-7 w-7 items-center justify-center rounded border border-red-200 text-xs font-semibold text-red-600 hover:bg-red-50"
+              onClick={() => data.onDelete?.(id)}
+            >
+              x
+            </button>
+          )}
+        </div>
+      </NodeToolbar>
       <Handle
         type="source"
         position={Position.Bottom}

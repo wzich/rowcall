@@ -4,6 +4,7 @@ export type RuntimeNode = {
   id: string;
   code: string;
   outputs: string[];
+  position?: GraphPosition;
 };
 
 export type RuntimeEdge = {
@@ -14,4 +15,9 @@ export type RuntimeEdge = {
 export type RuntimeGraph = {
   nodes: RuntimeNode[];
   edges: RuntimeEdge[];
+};
+
+export type GraphPosition = {
+  x: number;
+  y: number;
 };
