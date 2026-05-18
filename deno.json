@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "deno run --watch --allow-read --allow-net --allow-run main.ts",
+    "dev": "deno run --watch --allow-read --allow-write=examples/scratch.nodebook.json --allow-net --allow-run main.ts",
     "cli": "deno run --allow-read --allow-run cli.ts",
     "ui:dev": "cd app/ui && deno task dev",
     "ui:build": "cd app/ui && deno task build",

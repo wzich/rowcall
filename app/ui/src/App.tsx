@@ -5,12 +5,10 @@ import {
   type InspectGraphValidationIssue,
 } from "./api/inspectGraph.ts";
 import {
-  availableGraphSources,
-  defaultGraphSource,
-  describeGraphSource,
-  encodeGraphSource,
-  getGraphSourceByValue,
-} from "./api/graphSources.ts";
+  DocumentApiRequestError,
+  loadScratchDocument,
+  saveScratchDocument,
+} from "./api/documents.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
   type GraphInspectorModel,
@@ -20,39 +18,45 @@ import {
 } from "./components/InspectorPanel.tsx";
 import { toReactFlowGraph } from "./graph/toReactFlow.ts";
 import {
+  type NodebookDocumentV1,
+  toRuntimeGraph,
+} from "./graph/documentTypes.ts";
+import {
   runGraphMutationOptions,
   runNodeMutationOptions,
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
-import {
-  inspectedGraphQueryOptions,
-  InspectGraphQueryError,
-} from "./query/graphQueries.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RuntimeGraph } from "./graph/runtimeTypes.ts";
 
+const scratchSourceValue = "document:scratch";
+const scratchDocumentPath = "examples/scratch.nodebook.json";
+
 export default function App() {
-  const [selectedSource, setSelectedSource] = useState(defaultGraphSource);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [inputsText, setInputsText] = useState("{}");
   const [inputsError, setInputsError] = useState<string | null>(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
-  const [editableGraph, setEditableGraph] = useState<RuntimeGraph | null>(null);
+  const [editableDocument, setEditableDocument] = useState<
+    NodebookDocumentV1 | null
+  >(null);
   const [validationIssues, setValidationIssues] = useState<
     InspectGraphValidationIssue[]
   >([]);
-  const selectedSourceValue = encodeGraphSource(selectedSource);
-  const sourceLabel = describeGraphSource(selectedSource);
-  const inspectedGraphQuery = useQuery(
-    inspectedGraphQueryOptions(selectedSource),
-  );
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const scratchDocumentQuery = useQuery({
+    queryKey: ["nodebook-document", "scratch"],
+    queryFn: loadScratchDocument,
+  });
   const {
     executionStateByNodeId,
     graphExecutionState,
     nodeRunStatuses,
     applyExecutionStreamEvent,
     clearActiveRun,
-    clearExecutionSession,
     forgetNodes,
     isCurrentSource,
     markGraphExecutionRunning,
@@ -64,24 +68,43 @@ export default function App() {
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
-  } = useExecutionSession(selectedSourceValue);
+  } = useExecutionSession(scratchSourceValue);
 
   useEffect(() => {
-    if (!inspectedGraphQuery.isSuccess) {
+    if (!scratchDocumentQuery.isSuccess) {
       return;
     }
 
-    const flowGraph = toReactFlowGraph(inspectedGraphQuery.data.graph);
-    setEditableGraph({
-      ...inspectedGraphQuery.data.graph,
-      nodes: inspectedGraphQuery.data.graph.nodes.map((node) => ({
+    const graph = scratchDocumentQuery.data.document;
+    const flowGraph = toReactFlowGraph(graph);
+    setEditableDocument({
+      ...graph,
+      nodes: graph.nodes.map((node) => ({
         ...node,
         position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
           ?.position,
       })),
     });
     setValidationIssues([]);
-  }, [inspectedGraphQuery.data, inspectedGraphQuery.isSuccess]);
+    setSaveStatus("idle");
+    setSaveError(null);
+  }, [scratchDocumentQuery.data, scratchDocumentQuery.isSuccess]);
+
+  const saveScratchDocumentMutation = useMutation({
+    mutationFn: saveScratchDocument,
+    onMutate: () => {
+      setSaveStatus("saving");
+      setSaveError(null);
+    },
+    onSuccess: (result) => {
+      setEditableDocument(result.document);
+      setSaveStatus("saved");
+    },
+    onError: (error) => {
+      setSaveStatus("error");
+      setSaveError(error instanceof Error ? error.message : String(error));
+    },
+  });
 
   const runNodeMutation = useMutation({
     ...runNodeMutationOptions(),
@@ -174,10 +197,14 @@ export default function App() {
       clearActiveRun(variables.abortController);
     },
   });
-  const inspectionIssues = inspectedGraphQuery.error instanceof
-      InspectGraphQueryError
-    ? inspectedGraphQuery.error.issues
+  const documentLoadIssues = scratchDocumentQuery.error instanceof
+      DocumentApiRequestError
+    ? scratchDocumentQuery.error.issues
     : [];
+  const editableGraph = useMemo<RuntimeGraph | null>(
+    () => editableDocument ? toRuntimeGraph(editableDocument) : null,
+    [editableDocument],
+  );
   const graphInspectorDetails = useMemo<GraphInspectorModel | null>(() => {
     if (!editableGraph) {
       return null;
@@ -249,15 +276,6 @@ export default function App() {
     };
   }, [editableGraph, selectedNodeId]);
 
-  function handleSourceChange(value: string) {
-    clearExecutionSession();
-    setSelectedNodeId(null);
-    setInputsText("{}");
-    setInputsError(null);
-    setTraceEnabled(false);
-    setSelectedSource(getGraphSourceByValue(value));
-  }
-
   function parseRunInputs(): Record<string, unknown> | null {
     const trimmedInputs = inputsText.trim();
 
@@ -295,11 +313,17 @@ export default function App() {
     return getInputsValidationError(inputsText) === null;
   }
 
+  const markDocumentEdited = useCallback(() => {
+    setSaveStatus("idle");
+    setSaveError(null);
+  }, []);
+
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       const nodeId = createNextNodeId(current);
 
+      markDocumentEdited();
       return {
         ...current,
         nodes: [
@@ -313,10 +337,10 @@ export default function App() {
         ],
       };
     });
-  }, []);
+  }, [markDocumentEdited]);
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       const parentNode = current.nodes.find((node) => node.id === parentNodeId);
       if (!parentNode) return current;
@@ -327,6 +351,7 @@ export default function App() {
         y: (parentNode.position?.y ?? 0) + 280,
       };
 
+      markDocumentEdited();
       markNodesStale([nodeId]);
       return {
         ...current,
@@ -345,15 +370,16 @@ export default function App() {
         ],
       };
     });
-  }, [markNodesStale]);
+  }, [markDocumentEdited, markNodesStale]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
       if (!node || node.code === code) return current;
 
-      markNodesStale(getNodeAndDescendants(current, nodeId));
+      markDocumentEdited();
+      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
       return {
         ...current,
         nodes: current.nodes.map((item) =>
@@ -361,7 +387,7 @@ export default function App() {
         ),
       };
     });
-  }, [markNodesStale]);
+  }, [markDocumentEdited, markNodesStale]);
 
   const handleOutputsChange = useCallback((
     nodeId: string,
@@ -372,12 +398,13 @@ export default function App() {
       .map((output) => output.trim())
       .filter((output) => output.length > 0);
 
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
       if (!node || areStringArraysEqual(node.outputs, outputs)) return current;
 
-      markNodesStale(getNodeAndDescendants(current, nodeId));
+      markDocumentEdited();
+      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
       return {
         ...current,
         nodes: current.nodes.map((item) =>
@@ -385,10 +412,10 @@ export default function App() {
         ),
       };
     });
-  }, [markNodesStale]);
+  }, [markDocumentEdited, markNodesStale]);
 
   const handleConnectNodes = useCallback((fromNode: string, toNode: string) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       if (
         current.edges.some((edge) =>
@@ -398,16 +425,17 @@ export default function App() {
         return current;
       }
 
-      markNodesStale(getNodeAndDescendants(current, toNode));
+      markDocumentEdited();
+      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), toNode));
       return {
         ...current,
         edges: [...current.edges, { fromNode, toNode }],
       };
     });
-  }, [markNodesStale]);
+  }, [markDocumentEdited, markNodesStale]);
 
   const handleDeleteEdges = useCallback((edgeIds: string[]) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       const edgeIdSet = new Set(edgeIds);
       const removedEdges = current.edges.filter((edge) =>
@@ -415,8 +443,11 @@ export default function App() {
       );
       if (removedEdges.length === 0) return current;
 
+      markDocumentEdited();
       for (const edge of removedEdges) {
-        markNodesStale(getNodeAndDescendants(current, edge.toNode));
+        markNodesStale(
+          getNodeAndDescendants(toRuntimeGraph(current), edge.toNode),
+        );
       }
 
       return {
@@ -424,14 +455,15 @@ export default function App() {
         edges: current.edges.filter((edge) => !edgeIdSet.has(getEdgeId(edge))),
       };
     });
-  }, [markNodesStale]);
+  }, [markDocumentEdited, markNodesStale]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
       if (!current.nodes.some((node) => node.id === nodeId)) return current;
 
-      const descendants = getDescendants(current, nodeId);
+      const descendants = getDescendants(toRuntimeGraph(current), nodeId);
+      markDocumentEdited();
       markNodesStale(descendants);
       forgetNodes([nodeId]);
       if (selectedNodeId === nodeId) {
@@ -446,15 +478,16 @@ export default function App() {
         ),
       };
     });
-  }, [forgetNodes, markNodesStale, selectedNodeId]);
+  }, [forgetNodes, markDocumentEdited, markNodesStale, selectedNodeId]);
 
   const handleNodePositionChange = useCallback((
     nodeId: string,
     position: { x: number; y: number },
   ) => {
-    setEditableGraph((current) => {
+    setEditableDocument((current) => {
       if (!current) return current;
 
+      markDocumentEdited();
       return {
         ...current,
         nodes: current.nodes.map((node) =>
@@ -462,7 +495,7 @@ export default function App() {
         ),
       };
     });
-  }, []);
+  }, [markDocumentEdited]);
 
   async function validateGraphForExecution(): Promise<boolean> {
     if (!editableGraph) {
@@ -484,6 +517,14 @@ export default function App() {
     return true;
   }
 
+  function handleSaveDocument() {
+    if (!editableDocument || saveScratchDocumentMutation.isPending) {
+      return;
+    }
+
+    saveScratchDocumentMutation.mutate(editableDocument);
+  }
+
   async function handleRunNode(nodeId: string) {
     if (!editableGraph || !(await validateGraphForExecution())) {
       return;
@@ -501,10 +542,10 @@ export default function App() {
       nodeId,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: selectedSourceValue,
+      sourceValue: scratchSourceValue,
     });
   }
 
@@ -525,10 +566,10 @@ export default function App() {
       nodeId,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: selectedSourceValue,
+      sourceValue: scratchSourceValue,
     });
   }
 
@@ -548,10 +589,10 @@ export default function App() {
       graph: editableGraph,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, selectedSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: selectedSourceValue,
+      sourceValue: scratchSourceValue,
     });
   }
 
@@ -564,45 +605,48 @@ export default function App() {
           </p>
           <h1 className="text-lg font-semibold">Nodebook</h1>
         </div>
-        <label className="flex items-center gap-2 text-sm text-zinc-600">
-          Example
-          <select
-            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-900 shadow-sm"
-            value={selectedSourceValue}
-            onChange={(event) => handleSourceChange(event.currentTarget.value)}
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-zinc-600">{scratchDocumentPath}</span>
+          {saveStatus === "saved" && (
+            <span className="text-xs font-medium text-emerald-700">Saved</span>
+          )}
+          {saveStatus === "error" && saveError && (
+            <span className="max-w-72 truncate text-xs font-medium text-red-700">
+              {saveError}
+            </span>
+          )}
+          <button
+            type="button"
+            className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
+            disabled={!editableDocument ||
+              saveScratchDocumentMutation.isPending}
+            onClick={handleSaveDocument}
           >
-            {availableGraphSources.map((item) => (
-              <option
-                key={encodeGraphSource(item.source)}
-                value={encodeGraphSource(item.source)}
-              >
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            {saveScratchDocumentMutation.isPending ? "Saving..." : "Save"}
+          </button>
+        </div>
       </header>
       <main className="min-h-0 flex-1 overflow-hidden">
-        {inspectedGraphQuery.isLoading && (
+        {scratchDocumentQuery.isLoading && (
           <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-            Loading {sourceLabel}...
+            Loading {scratchDocumentPath}...
           </div>
         )}
-        {inspectedGraphQuery.isError && (
+        {scratchDocumentQuery.isError && (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-md rounded-lg border border-red-200 bg-white p-4 shadow-sm">
               <h2 className="text-sm font-semibold text-red-700">
-                Could not load graph
+                Could not load document
               </h2>
               <p className="mt-2 text-sm text-zinc-600">
-                {sourceLabel}
+                {scratchDocumentPath}
               </p>
               <p className="mt-2 text-sm text-zinc-600">
-                {inspectedGraphQuery.error.message}
+                {scratchDocumentQuery.error.message}
               </p>
-              {inspectionIssues.length > 0 && (
+              {documentLoadIssues.length > 0 && (
                 <ul className="mt-3 space-y-2 text-sm text-zinc-700">
-                  {inspectionIssues.map((issue, index) => (
+                  {documentLoadIssues.map((issue, index) => (
                     <li
                       key={`${issue.kind}-${issue.path ?? "graph"}-${index}`}
                       className="rounded-md bg-red-50 px-3 py-2"
@@ -623,19 +667,19 @@ export default function App() {
                 </ul>
               )}
               <p className="mt-3 text-xs text-zinc-500">
-                {inspectionIssues.length > 0
-                  ? "These issues were returned by the /inspect validation step."
+                {documentLoadIssues.length > 0
+                  ? "These issues were returned by the document decoder."
                   : "Make sure the Deno API is running before loading the Vite UI."}
               </p>
             </div>
           </div>
         )}
-        {inspectedGraphQuery.isSuccess && editableGraph &&
+        {scratchDocumentQuery.isSuccess && editableGraph &&
           graphInspectorDetails && (
           <div className="flex h-full min-h-0">
             <div className="min-h-0 min-w-0 flex-1">
               <Canvas
-                key={selectedSourceValue}
+                key={scratchSourceValue}
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}

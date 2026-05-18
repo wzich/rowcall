@@ -12,6 +12,7 @@ import {
 } from "./graph.ts";
 import { loadGraphFile } from "./utils.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
+import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
 import {
   runGraph,
   runSingleNode,
@@ -22,6 +23,21 @@ import {
 } from "./executor.ts";
 
 const app = new Hono();
+const scratchDocumentPath = "examples/scratch.nodebook.json";
+
+app.use("*", async (c, next) => {
+  await next();
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  c.header("Access-Control-Allow-Headers", "Content-Type, Accept");
+});
+
+app.options("*", (c) => {
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  c.header("Access-Control-Allow-Headers", "Content-Type, Accept");
+  return c.body(null, 204);
+});
 
 type ApiError = {
   kind:
@@ -29,6 +45,8 @@ type ApiError = {
     | "invalid_json"
     | "invalid_request"
     | "node_not_found"
+    | "document_decode_error"
+    | "document_write_error"
     | "validation_error";
   message: string;
   issues?: ValidationIssue[];
@@ -78,6 +96,14 @@ function decodeAndValidateGraph(graph: unknown): GraphResolutionResult {
   return { ok: true, graph: decoded.graph };
 }
 
+function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
+  return errorResponse({
+    kind: "document_decode_error",
+    message: "Nodebook document decoding failed",
+    issues,
+  });
+}
+
 function wantsExecutionStream(
   c: { req: { header: (name: string) => string | undefined } },
 ): boolean {
@@ -86,6 +112,22 @@ function wantsExecutionStream(
 
 function formatStreamEvent(event: ExecutionStreamEvent): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
+  return {
+    version: document.version,
+    nodes: document.nodes.map((node) => ({
+      id: node.id,
+      code: node.code,
+      outputs: node.outputs,
+      ...(node.position ? { position: node.position } : {}),
+    })),
+    edges: document.edges.map((edge) => ({
+      fromNode: edge.fromNode,
+      toNode: edge.toNode,
+    })),
+  };
 }
 
 function streamExecutionEvents(
@@ -223,6 +265,95 @@ app.post("/inspect", async (c) => {
       isSourceNode: sourceNodes.has(node.id),
       isSinkNode: sinkNodes.has(node.id),
     })),
+  });
+});
+
+app.get("/documents/scratch", async (c) => {
+  try {
+    const text = await Deno.readTextFile(scratchDocumentPath);
+    const json = JSON.parse(text);
+    const decoded = decodeNodebookDocument(json);
+
+    if (!decoded.ok) {
+      return c.json(documentDecodeError(decoded.issues), 422);
+    }
+
+    return c.json({
+      ok: true,
+      document: decoded.document,
+      path: scratchDocumentPath,
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return c.json(
+        errorResponse({
+          kind: "invalid_json",
+          message: "Unable to parse scratch Nodebook document",
+          issues: [{
+            kind: "invalid_json",
+            message: "Unable to parse scratch Nodebook document",
+          }],
+        }),
+        400,
+      );
+    }
+
+    return c.json(
+      errorResponse({
+        kind: "file_read_error",
+        message: `Unable to read Nodebook document: ${scratchDocumentPath}`,
+      }),
+      500,
+    );
+  }
+});
+
+app.put("/documents/scratch", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(
+      errorResponse({
+        kind: "invalid_json",
+        message: "Unable to parse provided Nodebook document",
+        issues: [{
+          kind: "invalid_json",
+          message: "Unable to parse provided Nodebook document",
+        }],
+      }),
+      400,
+    );
+  }
+
+  const decoded = decodeNodebookDocument(body);
+  if (!decoded.ok) {
+    return c.json(documentDecodeError(decoded.issues), 422);
+  }
+
+  try {
+    await Deno.writeTextFile(
+      scratchDocumentPath,
+      `${JSON.stringify(formatDocument(decoded.document), null, 2)}\n`,
+    );
+  } catch (error) {
+    console.error(
+      `Failed to write Nodebook document at ${scratchDocumentPath}:`,
+    );
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "document_write_error",
+        message: `Unable to write Nodebook document: ${scratchDocumentPath}`,
+      }),
+      500,
+    );
+  }
+
+  return c.json({
+    ok: true,
+    document: decoded.document,
+    path: scratchDocumentPath,
   });
 });
 

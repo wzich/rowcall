@@ -42,7 +42,8 @@ export type ValidationIssue = {
     | "duplicate_node_id"
     | "missing_node_reference"
     | "cycle"
-    | "conflicting_outputs";
+    | "conflicting_outputs"
+    | "unsupported_version";
   message: string;
   path?: string;
   nodeId?: string;

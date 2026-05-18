@@ -1,4 +1,5 @@
 import type { ExecutionResponse, NodeRunResult } from "../../../../types.ts";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 
@@ -774,6 +775,19 @@ function NodeInspector({
   onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
+  const [outputsDraft, setOutputsDraft] = useState(() =>
+    selectedNode.outputs.join("\n")
+  );
+
+  useEffect(() => {
+    setOutputsDraft(selectedNode.outputs.join("\n"));
+  }, [selectedNode.id, selectedNode.outputs]);
+
+  const handleOutputsDraftChange = (value: string) => {
+    setOutputsDraft(value);
+    onOutputsChange(selectedNode.id, value);
+  };
+
   return (
     <div className="space-y-4">
       <RunConfigEditor
@@ -793,9 +807,9 @@ function NodeInspector({
         <textarea
           className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-300 bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
           spellCheck={false}
-          value={selectedNode.outputs.join("\n")}
+          value={outputsDraft}
           onChange={(event) =>
-            onOutputsChange(selectedNode.id, event.currentTarget.value)}
+            handleOutputsDraftChange(event.currentTarget.value)}
         />
         <p className="mt-2 text-xs text-zinc-500">
           One output name per line.

@@ -12,10 +12,11 @@ export default defineConfig({
     proxy: {
       // TODO: Move this target into environment-specific config if the local
       // API port stops being fixed during development.
-      "/inspect": "http://127.0.0.1:8000",
-      "/run-node": "http://127.0.0.1:8000",
-      "/run-to-node": "http://127.0.0.1:8000",
-      "/run-graph": "http://127.0.0.1:8000",
+      "/inspect": "http://localhost:8000",
+      "/run-node": "http://localhost:8000",
+      "/run-to-node": "http://localhost:8000",
+      "/run-graph": "http://localhost:8000",
+      "/documents": "http://localhost:8000",
     },
   },
 });
