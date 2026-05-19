@@ -8,10 +8,11 @@ export type NodebookDocumentV1 = {
 
 export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
   return {
-    nodes: document.nodes.map(({ id, code, outputs }) => ({
+    nodes: document.nodes.map(({ id, code, outputs, position }) => ({
       id,
       code,
       outputs,
+      ...(position ? { position } : {}),
     })),
     edges: document.edges,
   };
