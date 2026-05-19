@@ -1,5 +1,4 @@
 import { Hono } from "@hono/hono";
-import { serveStatic } from "@hono/hono/deno";
 import {
   assertNodeExists,
   buildDownstreamAdjacency,
@@ -28,6 +27,7 @@ import {
 
 const app = new Hono();
 const defaultDocumentPath = "examples/scratch.nodebook.json";
+const uiDistPath = "app/ui/dist";
 const activeDocumentPath = getActiveDocumentPath(Deno.args);
 await ensureActiveDocumentExists(activeDocumentPath);
 
@@ -201,6 +201,63 @@ function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
       toNode: edge.toNode,
     })),
   };
+}
+
+function getStaticContentType(path: string): string {
+  if (path.endsWith(".html")) return "text/html; charset=utf-8";
+  if (path.endsWith(".js")) return "text/javascript; charset=utf-8";
+  if (path.endsWith(".css")) return "text/css; charset=utf-8";
+  if (path.endsWith(".json")) return "application/json; charset=utf-8";
+  if (path.endsWith(".svg")) return "image/svg+xml";
+  if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  if (path.endsWith(".ico")) return "image/x-icon";
+  if (path.endsWith(".woff2")) return "font/woff2";
+  return "application/octet-stream";
+}
+
+async function serveBuiltUiAsset(path: string): Promise<Response> {
+  if (path.includes("..") || path.includes("\\")) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  try {
+    const file = await Deno.readFile(`${uiDistPath}/${path}`);
+    return new Response(file, {
+      headers: {
+        "Content-Type": getStaticContentType(path),
+      },
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return new Response("Not found", { status: 404 });
+    }
+    throw error;
+  }
+}
+
+async function serveBuiltUiIndex(): Promise<Response> {
+  try {
+    const file = await Deno.readFile(`${uiDistPath}/index.html`);
+    return new Response(file, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+      },
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return new Response(
+        "React UI build not found. Run `deno task ui:build` first, or use `deno task ui:dev` during development.",
+        {
+          status: 404,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+          },
+        },
+      );
+    }
+    throw error;
+  }
 }
 
 async function writeNodebookDocument(
@@ -544,8 +601,11 @@ app.post("/run-graph", async (c) => {
   return c.json(result);
 });
 
-app.get("/", serveStatic({ path: "./static/index.html" }));
-app.get("/index.js", serveStatic({ path: "./static/index.js" }));
-app.get("/index.css", serveStatic({ path: "./static/index.css" }));
+app.get("/assets/*", (c) => {
+  const path = c.req.path.slice(1);
+  return serveBuiltUiAsset(path);
+});
+
+app.get("*", () => serveBuiltUiIndex());
 
 Deno.serve(app.fetch);
