@@ -12,14 +12,23 @@ Start the Deno API:
 deno task dev
 ```
 
+By default this edits `examples/scratch.nodebook.json`. To edit another local
+document during development, pass a `.nodebook.json` path through the task:
+
+```sh
+deno task dev -- path/to/analysis.nodebook.json
+```
+
+If the document does not exist, Nodebook creates it with one blank Python node.
+
 Start the React canvas UI in another terminal:
 
 ```sh
 deno task ui:dev
 ```
 
-The UI is served by Vite at `http://127.0.0.1:5173/` and proxies `/inspect`
-requests to the API at `http://127.0.0.1:8000/`.
+The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document,
+inspection, and execution requests to the API at `http://127.0.0.1:8000/`.
 
 ## Build The UI
 

@@ -12,7 +12,11 @@ import {
 } from "./graph.ts";
 import { loadGraphFile } from "./utils.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
-import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
+import {
+  createEmptyNodebookDocument,
+  decodeNodebookDocument,
+  type NodebookDocumentV1,
+} from "./document.ts";
 import {
   runGraph,
   runSingleNode,
@@ -23,7 +27,9 @@ import {
 } from "./executor.ts";
 
 const app = new Hono();
-const scratchDocumentPath = "examples/scratch.nodebook.json";
+const defaultDocumentPath = "examples/scratch.nodebook.json";
+const activeDocumentPath = getActiveDocumentPath(Deno.args);
+await ensureActiveDocumentExists(activeDocumentPath);
 
 app.use("*", async (c, next) => {
   await next();
@@ -104,6 +110,73 @@ function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
   });
 }
 
+function getActiveDocumentPath(args: string[]): string {
+  const documentFlagIndex = args.findIndex((arg) => arg === "--document");
+  if (documentFlagIndex >= 0 && args[documentFlagIndex + 1] === undefined) {
+    console.error("Missing path after --document");
+    Deno.exit(1);
+  }
+
+  const path = documentFlagIndex >= 0
+    ? args[documentFlagIndex + 1]
+    : args.find((arg) => !arg.startsWith("-"));
+
+  const documentPath = path ?? defaultDocumentPath;
+  if (!documentPath.endsWith(".nodebook.json")) {
+    console.error("Nodebook document path must end with .nodebook.json");
+    Deno.exit(1);
+  }
+
+  return documentPath;
+}
+
+async function ensureActiveDocumentExists(path: string): Promise<void> {
+  try {
+    const stat = await Deno.stat(path);
+    if (!stat.isFile) {
+      console.error(`Nodebook document path is not a file: ${path}`);
+      Deno.exit(1);
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      console.error(`Unable to inspect Nodebook document path: ${path}`);
+      console.error(error);
+      Deno.exit(1);
+    }
+
+    try {
+      await ensureParentDirectoryExists(path);
+      await writeNodebookDocument(path, createEmptyNodebookDocument());
+    } catch (writeError) {
+      console.error(`Unable to create Nodebook document: ${path}`);
+      console.error(writeError);
+      Deno.exit(1);
+    }
+  }
+}
+
+async function ensureParentDirectoryExists(path: string): Promise<void> {
+  const directory = getDirectoryName(path);
+  if (directory === null) {
+    return;
+  }
+
+  await Deno.mkdir(directory, { recursive: true });
+}
+
+function getDirectoryName(path: string): string | null {
+  const normalizedPath = path.replaceAll("\\", "/");
+  const separatorIndex = normalizedPath.lastIndexOf("/");
+  if (separatorIndex < 0) {
+    return null;
+  }
+  if (separatorIndex === 0) {
+    return "/";
+  }
+
+  return path.slice(0, separatorIndex);
+}
+
 function wantsExecutionStream(
   c: { req: { header: (name: string) => string | undefined } },
 ): boolean {
@@ -128,6 +201,16 @@ function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
       toNode: edge.toNode,
     })),
   };
+}
+
+async function writeNodebookDocument(
+  path: string,
+  document: NodebookDocumentV1,
+): Promise<void> {
+  await Deno.writeTextFile(
+    path,
+    `${JSON.stringify(formatDocument(document), null, 2)}\n`,
+  );
 }
 
 function streamExecutionEvents(
@@ -268,9 +351,9 @@ app.post("/inspect", async (c) => {
   });
 });
 
-app.get("/documents/scratch", async (c) => {
+app.get("/document", async (c) => {
   try {
-    const text = await Deno.readTextFile(scratchDocumentPath);
+    const text = await Deno.readTextFile(activeDocumentPath);
     const json = JSON.parse(text);
     const decoded = decodeNodebookDocument(json);
 
@@ -281,17 +364,17 @@ app.get("/documents/scratch", async (c) => {
     return c.json({
       ok: true,
       document: decoded.document,
-      path: scratchDocumentPath,
+      path: activeDocumentPath,
     });
   } catch (error) {
     if (error instanceof SyntaxError) {
       return c.json(
         errorResponse({
           kind: "invalid_json",
-          message: "Unable to parse scratch Nodebook document",
+          message: "Unable to parse active Nodebook document",
           issues: [{
             kind: "invalid_json",
-            message: "Unable to parse scratch Nodebook document",
+            message: "Unable to parse active Nodebook document",
           }],
         }),
         400,
@@ -301,14 +384,14 @@ app.get("/documents/scratch", async (c) => {
     return c.json(
       errorResponse({
         kind: "file_read_error",
-        message: `Unable to read Nodebook document: ${scratchDocumentPath}`,
+        message: `Unable to read Nodebook document: ${activeDocumentPath}`,
       }),
       500,
     );
   }
 });
 
-app.put("/documents/scratch", async (c) => {
+app.put("/document", async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -332,19 +415,16 @@ app.put("/documents/scratch", async (c) => {
   }
 
   try {
-    await Deno.writeTextFile(
-      scratchDocumentPath,
-      `${JSON.stringify(formatDocument(decoded.document), null, 2)}\n`,
-    );
+    await writeNodebookDocument(activeDocumentPath, decoded.document);
   } catch (error) {
     console.error(
-      `Failed to write Nodebook document at ${scratchDocumentPath}:`,
+      `Failed to write Nodebook document at ${activeDocumentPath}:`,
     );
     console.error(error);
     return c.json(
       errorResponse({
         kind: "document_write_error",
-        message: `Unable to write Nodebook document: ${scratchDocumentPath}`,
+        message: `Unable to write Nodebook document: ${activeDocumentPath}`,
       }),
       500,
     );
@@ -353,7 +433,7 @@ app.put("/documents/scratch", async (c) => {
   return c.json({
     ok: true,
     document: decoded.document,
-    path: scratchDocumentPath,
+    path: activeDocumentPath,
   });
 });
 

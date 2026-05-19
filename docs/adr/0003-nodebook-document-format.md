@@ -11,10 +11,11 @@ such as node positions. The runtime graph contract should remain focused on
 execution and validation, and should not grow UI-only fields or persistence
 concerns.
 
-The first save target is intentionally narrow: a single local scratch document
-at `examples/scratch.nodebook.json`. General file picking, autosave, cloud
-storage, collaboration, and execution-state persistence are out of scope for
-this pass.
+The local runtime edits one active document selected when the server starts. The
+default development document is `examples/scratch.nodebook.json`, and callers
+can provide another `.nodebook.json` path. General file picking, autosave, cloud
+storage, collaboration, conflict detection, and execution-state persistence are
+out of scope for this pass.
 
 ## Decision
 
@@ -38,6 +39,11 @@ decoder checks that the JSON has an editable shape and a supported version.
 Runtime validation still happens immediately before execution through
 `/inspect`.
 
+The browser loads and saves the active document through `/document`. The server
+owns the active document path and disk I/O; the browser owns unsaved editing
+state until the user saves. If the active document path does not exist at
+startup, the server creates a new document with one blank node and no edges.
+
 The UI adapts a document into a runtime graph by stripping document-only fields:
 
 ```ts
@@ -54,5 +60,6 @@ The UI adapts a document into a runtime graph by stripping document-only fields:
 - Node positions are preserved in the saved document.
 - Execution state, stale state, cached outputs, errors, and run history are not
   saved.
+- Save overwrites the active document without conflict detection.
 - Future storage options can reuse the same document format without changing the
   runtime contract.

@@ -6,8 +6,8 @@ import {
 } from "./api/inspectGraph.ts";
 import {
   DocumentApiRequestError,
-  loadScratchDocument,
-  saveScratchDocument,
+  loadDocument,
+  saveDocument,
 } from "./api/documents.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
@@ -29,8 +29,7 @@ import {
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RuntimeGraph } from "./graph/runtimeTypes.ts";
 
-const scratchSourceValue = "document:scratch";
-const scratchDocumentPath = "examples/scratch.nodebook.json";
+const documentSourceValue = "document:active";
 
 export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -47,9 +46,10 @@ export default function App() {
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const scratchDocumentQuery = useQuery({
-    queryKey: ["nodebook-document", "scratch"],
-    queryFn: loadScratchDocument,
+  const [documentPath, setDocumentPath] = useState("Active document");
+  const documentQuery = useQuery({
+    queryKey: ["nodebook-document", "active"],
+    queryFn: loadDocument,
   });
   const {
     executionStateByNodeId,
@@ -68,14 +68,15 @@ export default function App() {
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
-  } = useExecutionSession(scratchSourceValue);
+  } = useExecutionSession(documentSourceValue);
 
   useEffect(() => {
-    if (!scratchDocumentQuery.isSuccess) {
+    if (!documentQuery.isSuccess) {
       return;
     }
 
-    const graph = scratchDocumentQuery.data.document;
+    const graph = documentQuery.data.document;
+    setDocumentPath(documentQuery.data.path);
     const flowGraph = toReactFlowGraph(graph);
     setEditableDocument({
       ...graph,
@@ -88,15 +89,16 @@ export default function App() {
     setValidationIssues([]);
     setSaveStatus("idle");
     setSaveError(null);
-  }, [scratchDocumentQuery.data, scratchDocumentQuery.isSuccess]);
+  }, [documentQuery.data, documentQuery.isSuccess]);
 
-  const saveScratchDocumentMutation = useMutation({
-    mutationFn: saveScratchDocument,
+  const saveDocumentMutation = useMutation({
+    mutationFn: saveDocument,
     onMutate: () => {
       setSaveStatus("saving");
       setSaveError(null);
     },
     onSuccess: (result) => {
+      setDocumentPath(result.path);
       setEditableDocument(result.document);
       setSaveStatus("saved");
     },
@@ -197,9 +199,9 @@ export default function App() {
       clearActiveRun(variables.abortController);
     },
   });
-  const documentLoadIssues = scratchDocumentQuery.error instanceof
+  const documentLoadIssues = documentQuery.error instanceof
       DocumentApiRequestError
-    ? scratchDocumentQuery.error.issues
+    ? documentQuery.error.issues
     : [];
   const editableGraph = useMemo<RuntimeGraph | null>(
     () => editableDocument ? toRuntimeGraph(editableDocument) : null,
@@ -518,11 +520,11 @@ export default function App() {
   }
 
   function handleSaveDocument() {
-    if (!editableDocument || saveScratchDocumentMutation.isPending) {
+    if (!editableDocument || saveDocumentMutation.isPending) {
       return;
     }
 
-    saveScratchDocumentMutation.mutate(editableDocument);
+    saveDocumentMutation.mutate(editableDocument);
   }
 
   async function handleRunNode(nodeId: string) {
@@ -542,10 +544,10 @@ export default function App() {
       nodeId,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: scratchSourceValue,
+      sourceValue: documentSourceValue,
     });
   }
 
@@ -566,10 +568,10 @@ export default function App() {
       nodeId,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: scratchSourceValue,
+      sourceValue: documentSourceValue,
     });
   }
 
@@ -589,10 +591,10 @@ export default function App() {
       graph: editableGraph,
       inputs,
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, scratchSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: scratchSourceValue,
+      sourceValue: documentSourceValue,
     });
   }
 
@@ -606,7 +608,7 @@ export default function App() {
           <h1 className="text-lg font-semibold">Nodebook</h1>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-600">{scratchDocumentPath}</span>
+          <span className="text-sm text-zinc-600">{documentPath}</span>
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
           )}
@@ -619,30 +621,30 @@ export default function App() {
             type="button"
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
             disabled={!editableDocument ||
-              saveScratchDocumentMutation.isPending}
+              saveDocumentMutation.isPending}
             onClick={handleSaveDocument}
           >
-            {saveScratchDocumentMutation.isPending ? "Saving..." : "Save"}
+            {saveDocumentMutation.isPending ? "Saving..." : "Save"}
           </button>
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-hidden">
-        {scratchDocumentQuery.isLoading && (
+        {documentQuery.isLoading && (
           <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-            Loading {scratchDocumentPath}...
+            Loading {documentPath}...
           </div>
         )}
-        {scratchDocumentQuery.isError && (
+        {documentQuery.isError && (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-md rounded-lg border border-red-200 bg-white p-4 shadow-sm">
               <h2 className="text-sm font-semibold text-red-700">
                 Could not load document
               </h2>
               <p className="mt-2 text-sm text-zinc-600">
-                {scratchDocumentPath}
+                {documentPath}
               </p>
               <p className="mt-2 text-sm text-zinc-600">
-                {scratchDocumentQuery.error.message}
+                {documentQuery.error.message}
               </p>
               {documentLoadIssues.length > 0 && (
                 <ul className="mt-3 space-y-2 text-sm text-zinc-700">
@@ -674,12 +676,12 @@ export default function App() {
             </div>
           </div>
         )}
-        {scratchDocumentQuery.isSuccess && editableGraph &&
+        {documentQuery.isSuccess && editableGraph &&
           graphInspectorDetails && (
           <div className="flex h-full min-h-0">
             <div className="min-h-0 min-w-0 flex-1">
               <Canvas
-                key={scratchSourceValue}
+                key={documentSourceValue}
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}

@@ -105,6 +105,19 @@ export function toRuntimeGraph(document: NodebookDocumentV1): Graph {
   };
 }
 
+export function createEmptyNodebookDocument(): NodebookDocumentV1 {
+  return {
+    version: 1,
+    nodes: [{
+      id: "node_1",
+      code: "",
+      outputs: [],
+      position: { x: 0, y: 0 },
+    }],
+    edges: [],
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;

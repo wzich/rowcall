@@ -1,7 +1,7 @@
 import type { InspectGraphValidationIssue } from "./inspectGraph.ts";
 import type { NodebookDocumentV1 } from "../graph/documentTypes.ts";
 
-const scratchDocumentPath = "/documents/scratch";
+const activeDocumentPath = "/document";
 
 export type DocumentApiError = {
   ok: false;
@@ -12,18 +12,18 @@ export type DocumentApiError = {
   };
 };
 
-export type LoadScratchDocumentSuccess = {
+export type LoadDocumentSuccess = {
   ok: true;
   document: NodebookDocumentV1;
   path: string;
 };
 
-export type LoadScratchDocumentResult =
-  | LoadScratchDocumentSuccess
+export type LoadDocumentResult =
+  | LoadDocumentSuccess
   | DocumentApiError;
 
-export type SaveScratchDocumentResult =
-  | LoadScratchDocumentSuccess
+export type SaveDocumentResult =
+  | LoadDocumentSuccess
   | DocumentApiError;
 
 export class DocumentApiRequestError extends Error {
@@ -36,11 +36,9 @@ export class DocumentApiRequestError extends Error {
   }
 }
 
-export async function loadScratchDocument(): Promise<
-  LoadScratchDocumentSuccess
-> {
-  const response = await fetch(scratchDocumentPath);
-  const result = await response.json() as LoadScratchDocumentResult;
+export async function loadDocument(): Promise<LoadDocumentSuccess> {
+  const response = await fetch(activeDocumentPath);
+  const result = await response.json() as LoadDocumentResult;
 
   if (!result.ok) {
     throw new DocumentApiRequestError(
@@ -52,15 +50,15 @@ export async function loadScratchDocument(): Promise<
   return result;
 }
 
-export async function saveScratchDocument(
+export async function saveDocument(
   document: NodebookDocumentV1,
-): Promise<LoadScratchDocumentSuccess> {
-  const response = await fetch(scratchDocumentPath, {
+): Promise<LoadDocumentSuccess> {
+  const response = await fetch(activeDocumentPath, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(document),
   });
-  const result = await response.json() as SaveScratchDocumentResult;
+  const result = await response.json() as SaveDocumentResult;
 
   if (!result.ok) {
     throw new DocumentApiRequestError(

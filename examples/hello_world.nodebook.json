@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "node_1",
+      "code": "x = \"Hello\"",
+      "outputs": [
+        "x"
+      ],
+      "position": {
+        "x": 384.9310031287353,
+        "y": 79.03807254533523
+      }
+    },
+    {
+      "id": "node_2",
+      "code": "y = \"World\"",
+      "outputs": [
+        "y"
+      ],
+      "position": {
+        "x": -203.7685991261101,
+        "y": 375.1903627266761
+      }
+    },
+    {
+      "id": "node_3",
+      "code": "print(f\"{x}, {y}!\")",
+      "outputs": [],
+      "position": {
+        "x": 525.3724115097931,
+        "y": 225.00831394355902
+      }
+    }
+  ],
+  "edges": [
+    {
+      "fromNode": "node_1",
+      "toNode": "node_2"
+    },
+    {
+      "fromNode": "node_2",
+      "toNode": "node_3"
+    },
+    {
+      "fromNode": "node_1",
+      "toNode": "node_3"
+    }
+  ]
+}
