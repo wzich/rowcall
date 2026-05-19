@@ -180,7 +180,11 @@ export default function App() {
       // session model once streaming or run history makes this duplication hurt.
       storeExecutionResponseForNodeIds(
         response,
-        variables.graph.nodes.map((node) => node.id),
+        response.ok
+          ? variables.graph.nodes.map((node) => node.id)
+          : response.executedNodeIds.filter((nodeId) =>
+            response.resultsByNode[nodeId]?.ok
+          ),
       );
       clearActiveRun(variables.abortController);
     },
