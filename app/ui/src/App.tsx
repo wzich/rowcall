@@ -246,6 +246,7 @@ export default function App() {
     return {
       nodeCount: editableGraph.nodes.length,
       edgeCount: editableGraph.edges.length,
+      globalsCode: editableDocument?.globalsCode ?? "",
       sourceNodeIds,
       sinkNodeIds,
       isolatedNodeIds,
@@ -258,7 +259,7 @@ export default function App() {
         };
       }),
     };
-  }, [editableGraph]);
+  }, [editableDocument?.globalsCode, editableGraph]);
   const selectedNodeDetails = useMemo<NodeInspectorSelection | null>(() => {
     if (!editableGraph || selectedNodeId === null) {
       return null;

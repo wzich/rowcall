@@ -24,6 +24,7 @@ export type NodeInspectorSelection = {
 export type GraphInspectorModel = {
   nodeCount: number;
   edgeCount: number;
+  globalsCode: string;
   sourceNodeIds: string[];
   sinkNodeIds: string[];
   isolatedNodeIds: string[];
@@ -490,6 +491,17 @@ function GraphInspector({
       />
 
       <ValidationIssues issues={validationIssues} />
+
+      {graph.globalsCode.trim().length > 0 && (
+        <section className="border-t border-zinc-200 pt-4">
+          <h3 className="text-xs font-semibold uppercase text-zinc-500">
+            Document Globals
+          </h3>
+          <pre className="mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900">
+            {graph.globalsCode}
+          </pre>
+        </section>
+      )}
 
       <dl className="grid grid-cols-2 gap-3">
         <MetricTile label="Nodes" value={graph.nodeCount} />
