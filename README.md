@@ -12,14 +12,32 @@ Start the Deno API:
 deno task dev
 ```
 
-By default this edits `examples/scratch.nodebook.json`. To edit another local
-document during development, pass a `.nodebook.json` path through the task:
+By default this edits `examples/hello_world.py`. To edit another local
+document during development, pass a `.py` path through the task:
 
 ```sh
-deno task dev -- path/to/analysis.nodebook.json
+deno task dev -- --document path/to/analysis.py
 ```
 
-If the document does not exist, Nodebook creates it with one blank Python node.
+Nodebook Python documents import a tiny local `nodebook` package:
+
+```python
+from nodebook import node
+
+
+@node(id="n_load", outputs=["message"])
+def read_message():
+    message = "hello"
+    return {"message": message}
+```
+
+The decorator records node metadata and returns the original function unchanged.
+For local alpha testing from outside the repository, install the stub package
+into the active Python environment:
+
+```sh
+python -m pip install -e .
+```
 
 Start the React canvas UI in another terminal:
 

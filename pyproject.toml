@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nodebook"
+version = "0.0.0"
+description = "Minimal Python document API for Nodebook."
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["nodebook"]
