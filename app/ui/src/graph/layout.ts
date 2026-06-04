@@ -5,7 +5,7 @@ export type CanvasPosition = {
   y: number;
 };
 
-const columnGap = 400;
+const columnGap = 520;
 const rowGap = 300;
 const startX = 80;
 const startY = 80;

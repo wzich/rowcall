@@ -611,7 +611,12 @@ export default function App() {
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             {isReadOnlyDocument ? "Read-only canvas" : "Editable canvas"}
           </p>
-          <h1 className="text-lg font-semibold">Nodebook</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold">Nodebook</h1>
+            <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+              Alpha
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-zinc-600">{documentPath}</span>
