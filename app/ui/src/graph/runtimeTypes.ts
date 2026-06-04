@@ -3,6 +3,12 @@
 export type RuntimeNode = {
   id: string;
   code: string;
+  displayCode?: string;
+  runtimeCode?: string;
+  functionName?: string;
+  parameters?: string[];
+  customReturn?: boolean;
+  editable?: boolean;
   outputs: string[];
   position?: GraphPosition;
 };

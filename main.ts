@@ -4,19 +4,16 @@ import {
   buildDownstreamAdjacency,
   buildUpstreamAdjacency,
   decodeGraph,
-  getNodeById,
   getSinkNodes,
   getSourceNodes,
   validateGraph,
 } from "./graph.ts";
 import { loadGraphFile } from "./utils.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
+import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
+import { loadPythonDocument, savePythonDocument } from "./python_document.ts";
 import {
-  createEmptyNodebookDocument,
-  decodeNodebookDocument,
-  type NodebookDocumentV1,
-} from "./document.ts";
-import {
+  clearRuntimeSessionCache,
   runGraph,
   runSingleNode,
   runToNode,
@@ -26,7 +23,7 @@ import {
 } from "./executor.ts";
 
 const app = new Hono();
-const defaultDocumentPath = "examples/scratch.nodebook.json";
+const defaultDocumentPath = "examples/hello_world.py";
 const uiDistPath = "app/ui/dist";
 const activeDocumentPath = getActiveDocumentPath(Deno.args);
 await ensureActiveDocumentExists(activeDocumentPath);
@@ -52,6 +49,7 @@ type ApiError = {
     | "invalid_request"
     | "node_not_found"
     | "document_decode_error"
+    | "unsupported_document_write"
     | "document_write_error"
     | "validation_error";
   message: string;
@@ -110,6 +108,12 @@ function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
   });
 }
 
+async function loadJsonDocument(path: string) {
+  const text = await Deno.readTextFile(path);
+  const json = JSON.parse(text);
+  return decodeNodebookDocument(json);
+}
+
 function getActiveDocumentPath(args: string[]): string {
   const documentFlagIndex = args.findIndex((arg) => arg === "--document");
   if (documentFlagIndex >= 0 && args[documentFlagIndex + 1] === undefined) {
@@ -122,8 +126,8 @@ function getActiveDocumentPath(args: string[]): string {
     : args.find((arg) => !arg.startsWith("-"));
 
   const documentPath = path ?? defaultDocumentPath;
-  if (!documentPath.endsWith(".nodebook.json")) {
-    console.error("Nodebook document path must end with .nodebook.json");
+  if (!documentPath.endsWith(".py")) {
+    console.error("Nodebook document path must end with .py");
     Deno.exit(1);
   }
 
@@ -144,14 +148,8 @@ async function ensureActiveDocumentExists(path: string): Promise<void> {
       Deno.exit(1);
     }
 
-    try {
-      await ensureParentDirectoryExists(path);
-      await writeNodebookDocument(path, createEmptyNodebookDocument());
-    } catch (writeError) {
-      console.error(`Unable to create Nodebook document: ${path}`);
-      console.error(writeError);
-      Deno.exit(1);
-    }
+    console.error(`Nodebook Python document does not exist: ${path}`);
+    Deno.exit(1);
   }
 }
 
@@ -195,11 +193,21 @@ function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
       code: node.code,
       outputs: node.outputs,
       ...(node.position ? { position: node.position } : {}),
+      ...(node.runtimeCode ? { runtimeCode: node.runtimeCode } : {}),
+      ...(node.functionName ? { functionName: node.functionName } : {}),
+      ...(node.parameters ? { parameters: node.parameters } : {}),
+      ...(node.customReturn !== undefined
+        ? { customReturn: node.customReturn }
+        : {}),
+      ...(node.editable !== undefined ? { editable: node.editable } : {}),
     })),
     edges: document.edges.map((edge) => ({
       fromNode: edge.fromNode,
       toNode: edge.toNode,
     })),
+    ...(document.globalsCode ? { globalsCode: document.globalsCode } : {}),
+    ...(document.readOnly !== undefined ? { readOnly: document.readOnly } : {}),
+    ...(document.revision ? { revision: document.revision } : {}),
   };
 }
 
@@ -410,9 +418,9 @@ app.post("/inspect", async (c) => {
 
 app.get("/document", async (c) => {
   try {
-    const text = await Deno.readTextFile(activeDocumentPath);
-    const json = JSON.parse(text);
-    const decoded = decodeNodebookDocument(json);
+    const decoded = activeDocumentPath.endsWith(".py")
+      ? await loadPythonDocument(activeDocumentPath)
+      : await loadJsonDocument(activeDocumentPath);
 
     if (!decoded.ok) {
       return c.json(documentDecodeError(decoded.issues), 422);
@@ -420,7 +428,7 @@ app.get("/document", async (c) => {
 
     return c.json({
       ok: true,
-      document: decoded.document,
+      document: formatDocument(decoded.document),
       path: activeDocumentPath,
     });
   } catch (error) {
@@ -471,6 +479,36 @@ app.put("/document", async (c) => {
     return c.json(documentDecodeError(decoded.issues), 422);
   }
 
+  if (activeDocumentPath.endsWith(".py")) {
+    try {
+      const saved = await savePythonDocument(
+        activeDocumentPath,
+        decoded.document,
+      );
+      if (!saved.ok) {
+        return c.json(documentDecodeError(saved.issues), 409);
+      }
+
+      return c.json({
+        ok: true,
+        document: formatDocument(saved.document),
+        path: activeDocumentPath,
+      });
+    } catch (error) {
+      console.error(
+        `Failed to write Python Nodebook document at ${activeDocumentPath}:`,
+      );
+      console.error(error);
+      return c.json(
+        errorResponse({
+          kind: "document_write_error",
+          message: `Unable to write Nodebook document: ${activeDocumentPath}`,
+        }),
+        500,
+      );
+    }
+  }
+
   try {
     await writeNodebookDocument(activeDocumentPath, decoded.document);
   } catch (error) {
@@ -514,7 +552,6 @@ app.post("/run-node", async (c) => {
     return c.json(nodeNotFoundError(nodeId), 422);
   }
 
-  const node = getNodeById(graph, nodeId);
   const inputs = body.inputs || {};
 
   // TODO: Add scoped API-level concurrency and resource controls once the
@@ -525,12 +562,12 @@ app.post("/run-node", async (c) => {
     return streamExecutionEvents(
       runId,
       "run_node",
-      streamRunSingleNode(runId, node, inputs, trace),
-      node.id,
+      streamRunSingleNode(runId, graph, nodeId, inputs, trace),
+      nodeId,
     );
   }
 
-  const result = await runSingleNode(node, inputs, trace);
+  const result = await runSingleNode(graph, nodeId, inputs, trace);
   return c.json(result);
 });
 
@@ -599,6 +636,11 @@ app.post("/run-graph", async (c) => {
   const result = await runGraph(graph, inputs, trace);
 
   return c.json(result);
+});
+
+app.post("/runtime-session/clear-cache", async (c) => {
+  await clearRuntimeSessionCache();
+  return c.json({ ok: true });
 });
 
 app.get("/assets/*", (c) => {

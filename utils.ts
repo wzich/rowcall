@@ -1,4 +1,6 @@
 import { decodeGraph, validateGraph } from "./graph.ts";
+import { toRuntimeGraph } from "./document.ts";
+import { loadPythonDocument } from "./python_document.ts";
 import type { Graph } from "./types.ts";
 
 export async function loadGraphFile(path: string): Promise<unknown> {
@@ -12,6 +14,20 @@ export async function loadGraphFile(path: string): Promise<unknown> {
 }
 
 export async function loadValidatedGraph(path: string): Promise<Graph> {
+  if (path.endsWith(".py")) {
+    const document = await loadPythonDocument(path);
+    if (!document.ok) {
+      throw new Error(formatValidationIssues(document.issues));
+    }
+
+    const graph = toRuntimeGraph(document.document);
+    const validated = validateGraph(graph);
+    if (!validated.ok) {
+      throw new Error(formatValidationIssues(validated.issues));
+    }
+    return graph;
+  }
+
   const obj = await loadGraphFile(path);
   const decoded = decodeGraph(obj);
   if (!decoded.ok) {

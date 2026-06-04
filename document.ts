@@ -7,12 +7,32 @@ export type GraphPosition = {
 
 export type DocumentNode = Node & {
   position?: GraphPosition;
+  runtimeCode?: string;
+  functionName?: string;
+  parameters?: string[];
+  customReturn?: boolean;
+  editable?: boolean;
+  sourceRange?: PythonSourceRange;
+};
+
+export type PythonSourceRange = {
+  startLine: number;
+  endLine: number;
+  decoratorLine?: number;
+  bodyStartLine?: number;
+  bodyEndLine?: number;
+  returnLine?: number;
+  returnEndLine?: number;
+  indent?: string;
 };
 
 export type NodebookDocumentV1 = {
   version: 1;
   nodes: DocumentNode[];
   edges: Edge[];
+  globalsCode?: string;
+  readOnly?: boolean;
+  revision?: string;
 };
 
 export type DecodeDocumentResult =
@@ -43,6 +63,9 @@ export function decodeNodebookDocument(obj: unknown): DecodeDocumentResult {
 
   const nodesValue = getRequiredField(record, "nodes", issues);
   const edgesValue = getRequiredField(record, "edges", issues);
+  const globalsCode = record["globalsCode"];
+  const readOnly = record["readOnly"];
+  const revision = record["revision"];
 
   const nodes = Array.isArray(nodesValue)
     ? nodesValue.map((node, index) => decodeDocumentNode(node, index, issues))
@@ -72,6 +95,33 @@ export function decodeNodebookDocument(obj: unknown): DecodeDocumentResult {
     });
   }
 
+  if (globalsCode !== undefined && typeof globalsCode !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "`globalsCode` must be a string",
+      field: "globalsCode",
+      path: "globalsCode",
+    });
+  }
+
+  if (readOnly !== undefined && typeof readOnly !== "boolean") {
+    issues.push({
+      kind: "wrong_type",
+      message: "`readOnly` must be a boolean",
+      field: "readOnly",
+      path: "readOnly",
+    });
+  }
+
+  if (revision !== undefined && typeof revision !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "`revision` must be a string",
+      field: "revision",
+      path: "revision",
+    });
+  }
+
   if (nodes !== undefined) {
     const nodeIds = new Set<string>();
     nodes.forEach((node, index) => {
@@ -91,14 +141,25 @@ export function decodeNodebookDocument(obj: unknown): DecodeDocumentResult {
     return { ok: false, issues };
   }
 
-  return { ok: true, document: { version: 1, nodes, edges }, issues: [] };
+  return {
+    ok: true,
+    document: {
+      version: 1,
+      nodes,
+      edges,
+      ...(typeof globalsCode === "string" ? { globalsCode } : {}),
+      ...(typeof readOnly === "boolean" ? { readOnly } : {}),
+      ...(typeof revision === "string" ? { revision } : {}),
+    },
+    issues: [],
+  };
 }
 
 export function toRuntimeGraph(document: NodebookDocumentV1): Graph {
   return {
-    nodes: document.nodes.map(({ id, code, outputs }) => ({
+    nodes: document.nodes.map(({ id, code, outputs, runtimeCode }) => ({
       id,
-      code,
+      code: runtimeCode ?? code,
       outputs,
     })),
     edges: document.edges,
@@ -165,6 +226,11 @@ function decodeDocumentNode(
   const code = record["code"];
   const outputs = record["outputs"];
   const position = record["position"];
+  const runtimeCode = record["runtimeCode"];
+  const functionName = record["functionName"];
+  const parameters = record["parameters"];
+  const customReturn = record["customReturn"];
+  const editable = record["editable"];
   let ok = true;
 
   if (typeof id !== "string") {
@@ -210,6 +276,61 @@ function decodeDocumentNode(
     ok = false;
   }
 
+  if (runtimeCode !== undefined && typeof runtimeCode !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node runtimeCode must be a string",
+      field: "runtimeCode",
+      path: `nodes[${index}].runtimeCode`,
+    });
+    ok = false;
+  }
+
+  if (functionName !== undefined && typeof functionName !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node functionName must be a string",
+      field: "functionName",
+      path: `nodes[${index}].functionName`,
+    });
+    ok = false;
+  }
+
+  if (parameters !== undefined) {
+    if (
+      !Array.isArray(parameters) ||
+      !parameters.every((parameter) => typeof parameter === "string")
+    ) {
+      issues.push({
+        kind: "wrong_type",
+        message: "Node parameters must be an array of strings",
+        field: "parameters",
+        path: `nodes[${index}].parameters`,
+      });
+      ok = false;
+    }
+  }
+
+  if (customReturn !== undefined && typeof customReturn !== "boolean") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node customReturn must be a boolean",
+      field: "customReturn",
+      path: `nodes[${index}].customReturn`,
+    });
+    ok = false;
+  }
+
+  if (editable !== undefined && typeof editable !== "boolean") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node editable must be a boolean",
+      field: "editable",
+      path: `nodes[${index}].editable`,
+    });
+    ok = false;
+  }
+
   if (!ok) {
     return null;
   }
@@ -219,6 +340,13 @@ function decodeDocumentNode(
     code: code as string,
     outputs: outputs as string[],
     ...(decodedPosition ? { position: decodedPosition } : {}),
+    ...(typeof runtimeCode === "string" ? { runtimeCode } : {}),
+    ...(typeof functionName === "string" ? { functionName } : {}),
+    ...(Array.isArray(parameters)
+      ? { parameters: parameters as string[] }
+      : {}),
+    ...(typeof customReturn === "boolean" ? { customReturn } : {}),
+    ...(typeof editable === "boolean" ? { editable } : {}),
   };
 }
 

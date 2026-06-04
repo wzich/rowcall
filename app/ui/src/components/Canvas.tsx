@@ -31,12 +31,12 @@ type CanvasProps = {
   graph: RuntimeGraph;
   selectedNodeId: string | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
-  onAddNode: (position: GraphPosition) => void;
-  onAddChildNode: (nodeId: string) => void;
-  onCodeChange: (nodeId: string, code: string) => void;
-  onConnectNodes: (fromNode: string, toNode: string) => void;
-  onDeleteEdges: (edgeIds: string[]) => void;
-  onDeleteNode: (nodeId: string) => void;
+  onAddNode?: (position: GraphPosition) => void;
+  onAddChildNode?: (nodeId: string) => void;
+  onCodeChange?: (nodeId: string, code: string) => void;
+  onConnectNodes?: (fromNode: string, toNode: string) => void;
+  onDeleteEdges?: (edgeIds: string[]) => void;
+  onDeleteNode?: (nodeId: string) => void;
   onNodePositionChange: (nodeId: string, position: GraphPosition) => void;
   onNodeSelect: (nodeId: string) => void;
   onSelectionClear: () => void;
@@ -76,7 +76,7 @@ export function Canvas({
           ...node.data,
           runStatus: nodeRunStatuses[node.id] ?? "idle",
           onAddChild: onAddChildNode,
-          onCodeChange,
+          onCodeChange: node.data.editable ? onCodeChange : undefined,
           onDelete: onDeleteNode,
         },
         selected: node.id === selectedNodeId,
@@ -111,7 +111,7 @@ export function Canvas({
       .map((change) => change.id);
 
     if (removedEdgeIds.length > 0) {
-      onDeleteEdges(removedEdgeIds);
+      onDeleteEdges?.(removedEdgeIds);
     }
   }, [onDeleteEdges, onEdgesChange]);
   const handleConnect = useCallback<OnConnect>((connection) => {
@@ -119,7 +119,7 @@ export function Canvas({
       return;
     }
 
-    onConnectNodes(connection.source, connection.target);
+    onConnectNodes?.(connection.source, connection.target);
   }, [onConnectNodes]);
 
   return (
@@ -139,7 +139,7 @@ export function Canvas({
     >
       <Background color="#d4d4d8" gap={18} />
       <Controls />
-      <CanvasAddPanel onAddNode={onAddNode} />
+      {onAddNode && <CanvasAddPanel onAddNode={onAddNode} />}
     </ReactFlow>
   );
 }

@@ -27,7 +27,7 @@ import {
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
-import type { RuntimeGraph } from "./graph/runtimeTypes.ts";
+import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 
 const documentSourceValue = "document:active";
 
@@ -211,6 +211,9 @@ export default function App() {
     () => editableDocument ? toRuntimeGraph(editableDocument) : null,
     [editableDocument],
   );
+  const isReadOnlyDocument = editableDocument?.readOnly ?? false;
+  const canEditStructure = !isReadOnlyDocument;
+  const canEditOutputs = !isReadOnlyDocument;
   const graphInspectorDetails = useMemo<GraphInspectorModel | null>(() => {
     if (!editableGraph) {
       return null;
@@ -274,7 +277,8 @@ export default function App() {
 
     return {
       id: node.id,
-      code: node.code,
+      code: node.displayCode ?? node.code,
+      editable: node.editable ?? true,
       outputs: node.outputs,
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
@@ -327,20 +331,12 @@ export default function App() {
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
     setEditableDocument((current) => {
       if (!current) return current;
-      const nodeId = createNextNodeId(current);
+      const node = createNewPythonNode(current, position);
 
       markDocumentEdited();
       return {
         ...current,
-        nodes: [
-          ...current.nodes,
-          {
-            id: nodeId,
-            code: "# New Python Node",
-            outputs: [],
-            position,
-          },
-        ],
+        nodes: [...current.nodes, node],
       };
     });
   }, [markDocumentEdited]);
@@ -351,28 +347,20 @@ export default function App() {
       const parentNode = current.nodes.find((node) => node.id === parentNodeId);
       if (!parentNode) return current;
 
-      const nodeId = createNextNodeId(current);
       const position = {
         x: (parentNode.position?.x ?? 0) + 0,
         y: (parentNode.position?.y ?? 0) + 280,
       };
+      const node = createNewPythonNode(current, position);
 
       markDocumentEdited();
-      markNodesStale([nodeId]);
+      markNodesStale([node.id]);
       return {
         ...current,
-        nodes: [
-          ...current.nodes,
-          {
-            id: nodeId,
-            code: "# New Python Node",
-            outputs: [],
-            position,
-          },
-        ],
+        nodes: [...current.nodes, node],
         edges: [
           ...current.edges,
-          { fromNode: parentNodeId, toNode: nodeId },
+          { fromNode: parentNodeId, toNode: node.id },
         ],
       };
     });
@@ -389,7 +377,7 @@ export default function App() {
       return {
         ...current,
         nodes: current.nodes.map((item) =>
-          item.id === nodeId ? { ...item, code } : item
+          item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
         ),
       };
     });
@@ -414,7 +402,9 @@ export default function App() {
       return {
         ...current,
         nodes: current.nodes.map((item) =>
-          item.id === nodeId ? { ...item, outputs } : item
+          item.id === nodeId
+            ? { ...item, outputs, runtimeCode: undefined }
+            : item
         ),
       };
     });
@@ -607,7 +597,7 @@ export default function App() {
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Editable canvas
+            {isReadOnlyDocument ? "Read-only canvas" : "Editable canvas"}
           </p>
           <h1 className="text-lg font-semibold">Nodebook</h1>
         </div>
@@ -624,11 +614,14 @@ export default function App() {
           <button
             type="button"
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
-            disabled={!editableDocument ||
-              saveDocumentMutation.isPending}
+            disabled={!editableDocument || saveDocumentMutation.isPending}
             onClick={handleSaveDocument}
           >
-            {saveDocumentMutation.isPending ? "Saving..." : "Save"}
+            {isReadOnlyDocument
+              ? "Read-only"
+              : saveDocumentMutation.isPending
+              ? "Saving..."
+              : "Save"}
           </button>
         </div>
       </header>
@@ -689,12 +682,14 @@ export default function App() {
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}
-                onAddNode={handleAddNode}
-                onAddChildNode={handleAddChildNode}
-                onCodeChange={handleCodeChange}
-                onConnectNodes={handleConnectNodes}
-                onDeleteEdges={handleDeleteEdges}
-                onDeleteNode={handleDeleteNode}
+                onAddNode={canEditStructure ? handleAddNode : undefined}
+                onAddChildNode={canEditStructure
+                  ? handleAddChildNode
+                  : undefined}
+                onCodeChange={isReadOnlyDocument ? undefined : handleCodeChange}
+                onConnectNodes={undefined}
+                onDeleteEdges={undefined}
+                onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
                 onNodePositionChange={handleNodePositionChange}
                 onNodeSelect={setSelectedNodeId}
                 onSelectionClear={() => setSelectedNodeId(null)}
@@ -711,6 +706,7 @@ export default function App() {
               inputsError={inputsError}
               areInputsValid={isInputsTextValid()}
               traceEnabled={traceEnabled}
+              readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
               onInputsChange={handleInputsChange}
               onOutputsChange={handleOutputsChange}
@@ -753,15 +749,58 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function createNewPythonNode(
+  graph: RuntimeGraph,
+  position: { x: number; y: number },
+): RuntimeNode {
+  return {
+    id: createNextNodeId(graph),
+    functionName: createNextFunctionName(graph),
+    parameters: [],
+    code: "pass",
+    outputs: [],
+    customReturn: false,
+    editable: true,
+    position,
+  };
+}
+
 function createNextNodeId(graph: RuntimeGraph): string {
   const existingIds = new Set(graph.nodes.map((node) => node.id));
-  let index = graph.nodes.length + 1;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const id = `n_${createShortId()}`;
+    if (!existingIds.has(id)) {
+      return id;
+    }
+  }
 
-  while (existingIds.has(`node_${index}`)) {
+  let index = graph.nodes.length + 1;
+  while (existingIds.has(`n_${index}`)) {
     index += 1;
   }
 
-  return `node_${index}`;
+  return `n_${index}`;
+}
+
+function createShortId(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(36).padStart(2, "0"))
+    .join("")
+    .slice(0, 10);
+}
+
+function createNextFunctionName(graph: RuntimeGraph): string {
+  const existingNames = new Set(
+    graph.nodes.flatMap((node) => node.functionName ? [node.functionName] : []),
+  );
+  let index = graph.nodes.length + 1;
+
+  while (existingNames.has(`new_node_${index}`)) {
+    index += 1;
+  }
+
+  return `new_node_${index}`;
 }
 
 function getEdgeId(edge: { fromNode: string; toNode: string }): string {

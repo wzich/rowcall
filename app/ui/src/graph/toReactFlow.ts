@@ -6,6 +6,7 @@ export type PythonNodeData = {
   label: string;
   code: string;
   outputs: string[];
+  editable: boolean;
   runStatus: NodeRunVisualStatus;
   onAddChild?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
@@ -41,9 +42,10 @@ export function toReactFlowGraph(
       // generated layout and stores the resulting positions in the document.
       position: node.position ?? positions[node.id] ?? { x: 0, y: 0 },
       data: {
-        label: node.id,
-        code: node.code,
+        label: node.functionName ?? node.id,
+        code: node.displayCode ?? node.code,
         outputs: node.outputs,
+        editable: node.editable ?? true,
         runStatus: nodeRunStatuses[node.id] ?? "idle",
       },
     })),

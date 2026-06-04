@@ -1,4 +1,8 @@
-import type { ExecutionResponse, NodeRunResult } from "../../../../types.ts";
+import type {
+  ExecutionResponse,
+  NodeRunResult,
+  ValuePreview,
+} from "../../../../types.ts";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
@@ -10,6 +14,7 @@ export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 export type NodeInspectorSelection = {
   id: string;
   code: string;
+  editable: boolean;
   outputs: string[];
   upstreamDependencies: string[];
   downstreamDependencies: string[];
@@ -59,6 +64,7 @@ type InspectorPanelProps = {
   inputsError: string | null;
   areInputsValid: boolean;
   traceEnabled: boolean;
+  readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onInputsChange: (value: string) => void;
   onOutputsChange: (nodeId: string, outputsText: string) => void;
@@ -166,11 +172,56 @@ function DependencyList({
   );
 }
 
-function JsonBlock({ value }: { value: unknown }) {
+function PreviewBlock(
+  { previews }: { previews: Record<string, ValuePreview> },
+) {
+  const entries = Object.entries(previews);
+
+  if (entries.length === 0) {
+    return <p className="mt-2 text-sm text-zinc-500">No values.</p>;
+  }
+
   return (
-    <pre className="mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900">
-      {JSON.stringify(value, null, 2)}
-    </pre>
+    <div className="mt-2 space-y-2">
+      {entries.map(([name, preview]) => (
+        <div
+          key={name}
+          className="rounded border border-zinc-200 bg-zinc-50 p-3"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="font-mono text-sm font-semibold text-zinc-900">
+              {preview.name}
+            </span>
+            <span className="font-mono text-xs text-zinc-500">
+              {preview.type}
+            </span>
+          </div>
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800">
+            {preview.repr}
+          </pre>
+          {preview.warning && (
+            <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              {preview.warning}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WarningList({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+
+  return (
+    <section>
+      <h4 className="text-xs font-semibold uppercase text-amber-700">
+        Warnings
+      </h4>
+      <ul className="mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+      </ul>
+    </section>
   );
 }
 
@@ -283,9 +334,10 @@ function RunResult({
             </h4>
             {outputEntries.length === 0
               ? <p className="mt-2 text-sm text-zinc-500">No outputs.</p>
-              : <JsonBlock value={nodeResult.outputs} />}
+              : <PreviewBlock previews={nodeResult.outputs} />}
           </section>
 
+          <WarningList warnings={nodeResult.warnings} />
           <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
           <TextOutputBlock
             title="Stderr"
@@ -367,9 +419,10 @@ function RunResult({
           </h4>
           {outputEntries.length === 0
             ? <p className="mt-2 text-sm text-zinc-500">No outputs.</p>
-            : <JsonBlock value={outputs} />}
+            : <PreviewBlock previews={outputs} />}
         </section>
 
+        <WarningList warnings={nodeResult?.warnings ?? []} />
         <TextOutputBlock title="Stdout" value={nodeResult?.stdout ?? ""} />
         <TextOutputBlock
           title="Stderr"
@@ -604,8 +657,8 @@ function GraphRunResult({
                           nodeId={nodeId}
                           onNodeSelect={onNodeSelect}
                         />
-                        <JsonBlock
-                          value={response.finalOutputsByNode[nodeId]}
+                        <PreviewBlock
+                          previews={response.finalOutputsByNode[nodeId]}
                         />
                       </div>
                     ))}
@@ -725,16 +778,17 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
           <h5 className="text-xs font-semibold uppercase text-zinc-500">
             Inputs
           </h5>
-          <JsonBlock value={step.inputs} />
+          <PreviewBlock previews={step.inputs} />
         </section>
 
         <section>
           <h5 className="text-xs font-semibold uppercase text-zinc-500">
             Outputs
           </h5>
-          <JsonBlock value={step.outputs} />
+          <PreviewBlock previews={step.outputs} />
         </section>
 
+        <WarningList warnings={step.warnings} />
         <TextOutputBlock title="Stdout" value={step.stdout} />
         <TextOutputBlock title="Stderr" value={step.stderr} variant="danger" />
         {step.error && (
@@ -759,6 +813,7 @@ function NodeInspector({
   inputsText,
   inputsError,
   traceEnabled,
+  readOnly,
   onInputsChange,
   onOutputsChange,
   onTraceEnabledChange,
@@ -770,6 +825,7 @@ function NodeInspector({
   inputsText: string;
   inputsError: string | null;
   traceEnabled: boolean;
+  readOnly: boolean;
   onInputsChange: (value: string) => void;
   onOutputsChange: (nodeId: string, outputsText: string) => void;
   onTraceEnabledChange: (value: boolean) => void;
@@ -785,8 +841,10 @@ function NodeInspector({
 
   const handleOutputsDraftChange = (value: string) => {
     setOutputsDraft(value);
+    if (readOnly || !selectedNode.editable) return;
     onOutputsChange(selectedNode.id, value);
   };
+  const outputsReadOnly = readOnly || !selectedNode.editable;
 
   return (
     <div className="space-y-4">
@@ -808,6 +866,7 @@ function NodeInspector({
           className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-300 bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
           spellCheck={false}
           value={outputsDraft}
+          readOnly={outputsReadOnly}
           onChange={(event) =>
             handleOutputsDraftChange(event.currentTarget.value)}
         />
@@ -934,6 +993,7 @@ export function InspectorPanel({
   inputsError,
   areInputsValid,
   traceEnabled,
+  readOnly,
   onNodeSelect,
   onInputsChange,
   onOutputsChange,
@@ -1030,6 +1090,7 @@ export function InspectorPanel({
               inputsText={inputsText}
               inputsError={inputsError}
               traceEnabled={traceEnabled}
+              readOnly={readOnly}
               onInputsChange={onInputsChange}
               onOutputsChange={onOutputsChange}
               onTraceEnabledChange={onTraceEnabledChange}
