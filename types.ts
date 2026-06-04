@@ -24,11 +24,20 @@ export type RunPlan = {
   steps: RunPlanStep[];
 };
 
+export type ValuePreview = {
+  name: string;
+  type: string;
+  repr: string;
+  jsonValue?: unknown;
+  warning?: string;
+};
+
 export type NodeRunResult = {
   ok: boolean;
   stdout: string;
   stderr: string;
-  outputs: Record<string, unknown>;
+  outputs: Record<string, ValuePreview>;
+  warnings: string[];
   error?: string;
 };
 
@@ -43,6 +52,10 @@ export type ValidationIssue = {
     | "missing_node_reference"
     | "cycle"
     | "conflicting_outputs"
+    | "invalid_python"
+    | "stale_document"
+    | "duplicate_function_name"
+    | "unsupported_python"
     | "unsupported_version";
   message: string;
   path?: string;
@@ -60,7 +73,7 @@ export type GraphValidationResult =
   | { ok: false; issues: ValidationIssue[] };
 
 export type ExecutionError = {
-  kind: "runtime_error" | "node_not_found" | "internal_error";
+  kind: "runtime_error" | "node_not_found" | "internal_error" | "cache_miss";
   message: string;
   nodeId?: string;
 };
@@ -69,11 +82,12 @@ export type ExecutionStepTrace = {
   index: number;
   nodeId: string;
   dependsOn: string[];
-  inputs: Record<string, unknown>;
+  inputs: Record<string, ValuePreview>;
   ok: boolean;
   stdout: string;
   stderr: string;
-  outputs: Record<string, unknown>;
+  outputs: Record<string, ValuePreview>;
+  warnings: string[];
   error: string | null;
 };
 
@@ -84,7 +98,7 @@ export type ExecutionResponse = {
   finalNodeIds: string[];
   executedNodeIds: string[];
   resultsByNode: Record<string, NodeRunResult>;
-  finalOutputsByNode: Record<string, Record<string, unknown>>;
+  finalOutputsByNode: Record<string, Record<string, ValuePreview>>;
   trace: ExecutionStepTrace[] | null;
   error: ExecutionError | null;
 };

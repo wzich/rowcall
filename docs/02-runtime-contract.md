@@ -15,12 +15,19 @@ version, one Canvas contains one Graph.
 ### Node
 
 A Node is a small block of Python code that can run on its own or as part of a
-Graph. Nodes run in complete isolation with no hidden cross-Node state. A Node
-can only access:
+Graph. The current runtime uses namespace isolation: each Node executes with a
+fresh Python namespace, so normal variables do not persist across Nodes unless
+they are declared outputs and flow through Edges. A Node can access:
 
 - variables it defines in its own code
 - variables made available from directly connected upstream Nodes
 - explicit user-provided inputs when the Node is a root in the current run
+
+Namespace isolation is not process isolation. Nodes in the same Run currently
+share one Python process, so deliberate process-global side effects such as
+mutating imported modules or `builtins` may be visible to later Nodes. The
+runtime contract treats that as outside the normal data-flow model: portable
+Nodebook programs should communicate through Declared Outputs and Edges.
 
 ### Declared Outputs
 
@@ -28,9 +35,13 @@ Declared Outputs are the variable names a Node exports for downstream use. Not
 all variables defined in a Node are exported. Only Declared Outputs are
 available to downstream Nodes.
 
-In v1, output values must be JSON-serializable so they can be transported
-between the TypeScript runtime and the Python runtime and stored as run
-artifacts.
+During a Run, Declared Output values may be arbitrary Python objects. Downstream
+Nodes receive copied values from upstream Declared Outputs so rich objects such
+as data frames do not need to be serialized between Nodes. Runtime responses do
+not return those Python objects directly. They return JSON-serializable
+`ValuePreview` records containing the output name, Python type, truncated
+`repr`, and optionally `jsonValue` when the value is a small plain
+JSON-compatible primitive or container.
 
 ### Edge
 
@@ -64,6 +75,31 @@ are not passed through Edges as Outputs.
 
 If an upstream Node fails during a Run, execution stops and downstream Nodes do
 not execute.
+
+The runtime keeps an in-memory Python session cache for the active server
+process. `Run graph` and `Run upstream to node` recompute their planned Nodes
+fresh and refresh cache entries for every successful Node. `Run single node` is
+for iterative development: it executes only the selected Node, using copied
+outputs from valid cached upstream Nodes. If any required upstream cache entry
+is missing or transitively stale, `Run single node` fails with `cache_miss`
+instead of silently recomputing upstream Nodes.
+
+Cache entries are valid only when the Node code, declared output names, explicit
+root inputs, and upstream cache keys still match. Failed executions are not
+cached. Successful `Run single node` executions refresh the selected Node's
+cache entry so downstream Nodes can use the latest successful iteration.
+
+The session cache is process-local and in memory only. It is lost when the
+server restarts, and it can be cleared explicitly with
+`POST /runtime-session/clear-cache`.
+
+Future runtime configurations may expose explicit isolation modes:
+
+- process isolation, where Nodes run in separate processes and values must cross
+  a serialization boundary
+- namespace isolation, where Nodes share a Python process but get fresh
+  namespaces and copied Declared Outputs
+- no isolation, where Nodes intentionally share the same execution namespace
 
 ## Streaming Execution
 
@@ -102,6 +138,12 @@ In the current runtime, `stdout` and `stderr` are still node-completion
 artifacts. They are streamed as part of `node_completed` or `node_failed`, not
 as live chunks while Python code is still running inside a Node.
 
+The Python runner writes runtime telemetry to its process stdout as
+newline-delimited JSON. User code `stdout` and `stderr` are redirected while
+each Node executes and included in that Node's completion event. Runtime preview
+and copy operations also capture stdout and stderr before telemetry resumes, so
+user-defined hooks such as `__repr__` cannot corrupt the runtime event protocol.
+
 The browser UI keeps one active run at a time. The API does not yet enforce
 server-side concurrency or resource limits for direct callers; that should be
 scoped to a future runtime/session/document model.
@@ -123,5 +165,10 @@ These are errors that can be detected from the Graph structure before execution:
 These are errors that can only be detected while executing Node code:
 
 - a Declared Output name does not exist after the Node finishes executing
-- a Declared Output value is not JSON-serializable
 - the Python process exits with an error
+
+If an input value cannot be copied into a downstream Node's namespace, the
+runtime falls back to passing that value by reference and emits a warning in the
+Node result. This fallback is intentionally visible because reference sharing
+can make in-place mutation observable within the same Run. Future copy handlers
+should minimize how often the fallback is needed.
