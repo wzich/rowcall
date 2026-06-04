@@ -302,7 +302,14 @@ class PythonRuntimeSession {
   }
 }
 
-async function resolvePythonCommand(): Promise<string> {
+export type PythonEnvironmentInfo = {
+  command: string;
+  executable: string;
+  version: string;
+  implementation: string;
+};
+
+export async function resolvePythonCommand(): Promise<string> {
   for (const command of ["python3", "python"]) {
     const probe = new Deno.Command(command, {
       args: ["--version"],
@@ -316,6 +323,50 @@ async function resolvePythonCommand(): Promise<string> {
   }
 
   return "python3";
+}
+
+export async function getPythonEnvironmentInfo(): Promise<PythonEnvironmentInfo> {
+  const command = await resolvePythonCommand();
+  const probe = new Deno.Command(command, {
+    args: [
+      "-c",
+      "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version(), 'implementation': platform.python_implementation()}))",
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const output = await probe.output();
+
+  if (!output.success) {
+    const stderr = new TextDecoder().decode(output.stderr).trim();
+    throw new Error(
+      `Failed to inspect Python runtime with ${command}${
+        stderr ? `: ${stderr}` : ""
+      }`,
+    );
+  }
+
+  const text = new TextDecoder().decode(output.stdout);
+  const parsed = JSON.parse(text) as {
+    executable?: unknown;
+    version?: unknown;
+    implementation?: unknown;
+  };
+
+  if (
+    typeof parsed.executable !== "string" ||
+    typeof parsed.version !== "string" ||
+    typeof parsed.implementation !== "string"
+  ) {
+    throw new Error(`Python runtime probe returned an invalid response`);
+  }
+
+  return {
+    command,
+    executable: parsed.executable,
+    version: parsed.version,
+    implementation: parsed.implementation,
+  };
 }
 
 const runtimeSession = new PythonRuntimeSession();
@@ -698,7 +749,7 @@ async function* streamOneShotPythonRunPlan(
   targetNodeId: string | undefined,
   cacheMode: "refresh" | "single_node",
 ): AsyncGenerator<RunnerEvent> {
-  const command = new Deno.Command("python", {
+  const command = new Deno.Command(await resolvePythonCommand(), {
     args: ["runner.py"],
     stdin: "piped",
     stdout: "piped",

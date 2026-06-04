@@ -9,6 +9,7 @@ import {
   loadDocument,
   saveDocument,
 } from "./api/documents.ts";
+import { loadPythonRuntime } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
   type GraphInspectorModel,
@@ -50,6 +51,10 @@ export default function App() {
   const documentQuery = useQuery({
     queryKey: ["nodebook-document", "active"],
     queryFn: loadDocument,
+  });
+  const pythonRuntimeQuery = useQuery({
+    queryKey: ["runtime", "python"],
+    queryFn: loadPythonRuntime,
   });
   const {
     executionStateByNodeId,
@@ -603,6 +608,11 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-zinc-600">{documentPath}</span>
+          <PythonRuntimeBadge
+            isLoading={pythonRuntimeQuery.isLoading}
+            error={pythonRuntimeQuery.error}
+            python={pythonRuntimeQuery.data?.python ?? null}
+          />
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
           )}
@@ -720,6 +730,52 @@ export default function App() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function PythonRuntimeBadge({
+  python,
+  isLoading,
+  error,
+}: {
+  python: Awaited<ReturnType<typeof loadPythonRuntime>>["python"] | null;
+  isLoading: boolean;
+  error: Error | null;
+}) {
+  if (isLoading) {
+    return (
+      <div className="hidden max-w-xs rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 md:block">
+        Python: checking...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        className="hidden max-w-xs rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 md:block"
+        title={error.message}
+      >
+        Python: unavailable
+      </div>
+    );
+  }
+
+  if (!python) return null;
+
+  const label = `${python.implementation} ${python.version}`;
+
+  return (
+    <div
+      className="hidden min-w-0 max-w-sm rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 md:block"
+      title={`${label}\n${python.executable}`}
+    >
+      <span className="font-medium text-zinc-700">Python</span>{" "}
+      <span>{python.version}</span>
+      <span className="ml-2 inline-block max-w-[18rem] truncate align-bottom text-zinc-400">
+        {python.executable}
+      </span>
     </div>
   );
 }

@@ -6,6 +6,8 @@ import {
 } from "@std/assert";
 import {
   clearRuntimeSessionCache,
+  getPythonEnvironmentInfo,
+  resolvePythonCommand,
   shutdownRuntimeSession,
   streamRunGraph,
   streamRunSingleNode,
@@ -36,6 +38,17 @@ function runtimeTest(
     }
   });
 }
+
+Deno.test("getPythonEnvironmentInfo reports the resolved Python runtime", async () => {
+  const command = await resolvePythonCommand();
+  const python = await getPythonEnvironmentInfo();
+
+  assertEquals(python.command, command);
+  assertStringIncludes(["python3", "python"].join(","), python.command);
+  assertStringIncludes(python.executable.toLowerCase(), "python");
+  assertStringIncludes(python.implementation, "Python");
+  assertExists(python.version.match(/^\d+\.\d+\.\d+/));
+});
 
 runtimeTest(
   "streamRunGraph emits progress events and final response",

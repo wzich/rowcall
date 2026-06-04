@@ -14,6 +14,7 @@ import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
 import { loadPythonDocument, savePythonDocument } from "./python_document.ts";
 import {
   clearRuntimeSessionCache,
+  getPythonEnvironmentInfo,
   runGraph,
   runSingleNode,
   runToNode,
@@ -48,6 +49,7 @@ type ApiError = {
     | "invalid_json"
     | "invalid_request"
     | "node_not_found"
+    | "runtime_inspection_error"
     | "document_decode_error"
     | "unsupported_document_write"
     | "document_write_error"
@@ -450,6 +452,25 @@ app.get("/document", async (c) => {
       errorResponse({
         kind: "file_read_error",
         message: `Unable to read Nodebook document: ${activeDocumentPath}`,
+      }),
+      500,
+    );
+  }
+});
+
+app.get("/runtime/python", async (c) => {
+  try {
+    return c.json({
+      ok: true,
+      python: await getPythonEnvironmentInfo(),
+    });
+  } catch (error) {
+    console.error("Failed to inspect Python runtime:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "runtime_inspection_error",
+        message: "Unable to inspect the Python runtime Nodebook will use.",
       }),
       500,
     );
