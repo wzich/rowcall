@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
 import {
+  type NodeCanvasPreview,
   type NodeRunVisualStatus,
   type PythonFlowNode,
   toReactFlowGraph,
@@ -31,6 +32,7 @@ type CanvasProps = {
   graph: RuntimeGraph;
   selectedNodeId: string | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
+  nodePreviews: Record<string, NodeCanvasPreview>;
   onAddNode?: (position: GraphPosition) => void;
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
@@ -46,6 +48,7 @@ export function Canvas({
   graph,
   selectedNodeId,
   nodeRunStatuses,
+  nodePreviews,
   onAddNode,
   onAddChildNode,
   onCodeChange,
@@ -75,6 +78,7 @@ export function Canvas({
         data: {
           ...node.data,
           runStatus: nodeRunStatuses[node.id] ?? "idle",
+          preview: nodePreviews[node.id],
           onAddChild: onAddChildNode,
           onCodeChange: node.data.editable ? onCodeChange : undefined,
           onDelete: onDeleteNode,
@@ -84,6 +88,7 @@ export function Canvas({
     [
       nodes,
       nodeRunStatuses,
+      nodePreviews,
       onAddChildNode,
       onCodeChange,
       onDeleteNode,

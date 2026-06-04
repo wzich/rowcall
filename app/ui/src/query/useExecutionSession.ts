@@ -239,13 +239,6 @@ export function useExecutionSession(selectedSourceValue: string) {
       return;
     }
 
-    setExecutionStateByNodeId((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([nodeId, state]) =>
-          !staleNodeIds.has(nodeId) || state.status === "running"
-        ),
-      )
-    );
     setNodeRunStatuses((current) => {
       const next = { ...current };
 

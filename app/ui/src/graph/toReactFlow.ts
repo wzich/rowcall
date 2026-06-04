@@ -8,6 +8,7 @@ export type PythonNodeData = {
   outputs: string[];
   editable: boolean;
   runStatus: NodeRunVisualStatus;
+  preview?: NodeCanvasPreview;
   onAddChild?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onDelete?: (nodeId: string) => void;
@@ -15,6 +16,16 @@ export type PythonNodeData = {
 
 export type PythonFlowNode = FlowNode<PythonNodeData, "pythonNode">;
 export type PythonFlowEdge = FlowEdge;
+export type NodeCanvasPreview = {
+  ok: boolean;
+  outputs: Array<{
+    name: string;
+    type: string;
+  }>;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+};
 export type NodeRunVisualStatus =
   | "idle"
   | "stale"

@@ -12,12 +12,14 @@ import {
 import { loadPythonRuntime } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
+  type ExecutionDisplayState,
   type GraphInspectorModel,
   InspectorPanel,
   type NodeInspectorBadge,
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
 import { toReactFlowGraph } from "./graph/toReactFlow.ts";
+import type { NodeCanvasPreview } from "./graph/toReactFlow.ts";
 import {
   type NodebookDocumentV1,
   toRuntimeGraph,
@@ -219,6 +221,10 @@ export default function App() {
   const isReadOnlyDocument = editableDocument?.readOnly ?? false;
   const canEditStructure = !isReadOnlyDocument;
   const canEditOutputs = !isReadOnlyDocument;
+  const nodePreviews = useMemo(
+    () => getNodeCanvasPreviews(executionStateByNodeId),
+    [executionStateByNodeId],
+  );
   const graphInspectorDetails = useMemo<GraphInspectorModel | null>(() => {
     if (!editableGraph) {
       return null;
@@ -692,6 +698,7 @@ export default function App() {
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}
+                nodePreviews={nodePreviews}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
                 onAddChildNode={canEditStructure
                   ? handleAddChildNode
@@ -803,6 +810,87 @@ function getInputsValidationError(inputsText: string): string | null {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function getNodeCanvasPreviews(
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Record<string, NodeCanvasPreview> {
+  return Object.fromEntries(
+    Object.entries(executionStateByNodeId).flatMap(([nodeId, state]) => {
+      const preview = getNodeCanvasPreview(nodeId, state);
+      return preview ? [[nodeId, preview]] : [];
+    }),
+  );
+}
+
+function getNodeCanvasPreview(
+  nodeId: string,
+  state: ExecutionDisplayState,
+): NodeCanvasPreview | null {
+  if (state.status === "completed_node" || state.status === "failed_node") {
+    return resultToCanvasPreview(state.result);
+  }
+
+  if (state.status === "completed") {
+    const result = state.response.resultsByNode[nodeId];
+    if (result) {
+      return resultToCanvasPreview(result);
+    }
+
+    if (state.response.error?.nodeId === nodeId) {
+      return {
+        ok: false,
+        outputs: [],
+        stdout: "",
+        stderr: "",
+        error: state.response.error.message,
+      };
+    }
+  }
+
+  if (state.status === "request_error") {
+    return {
+      ok: false,
+      outputs: [],
+      stdout: "",
+      stderr: "",
+      error: state.message,
+    };
+  }
+
+  return null;
+}
+
+function resultToCanvasPreview(result: {
+  ok: boolean;
+  outputs: Record<string, { name: string; type: string }>;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}): NodeCanvasPreview | null {
+  const preview: NodeCanvasPreview = {
+    ok: result.ok,
+    outputs: result.ok
+      ? Object.entries(result.outputs).map(([name, output]) => ({
+        name: output.name || name,
+        type: output.type,
+      }))
+      : [],
+    stdout: result.stdout,
+    stderr: result.stderr,
+    error: result.error ?? null,
+  };
+
+  if (
+    preview.outputs.length === 0 &&
+    preview.stdout.length === 0 &&
+    preview.stderr.length === 0 &&
+    preview.error === null
+  ) {
+    return null;
+  }
+
+  return preview;
 }
 
 function createNewPythonNode(

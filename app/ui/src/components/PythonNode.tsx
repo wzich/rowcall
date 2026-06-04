@@ -48,6 +48,12 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const outputs = data.outputs.length > 0 ? data.outputs.join(", ") : "none";
   const status = statusStyles[data.runStatus];
   const canEdit = Boolean(data.onCodeChange);
+  const preview = data.preview;
+  const showOutputs = preview?.ok && preview.outputs.length > 0;
+  const showStdout = Boolean(preview?.stdout);
+  const showStderr = Boolean(preview?.stderr);
+  const showError = Boolean(preview?.error);
+  const hasPreview = showOutputs || showStdout || showStderr || showError;
 
   return (
     <article
@@ -103,6 +109,50 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
           theme="light"
         />
       </div>
+      {hasPreview && (
+        <div
+          className={[
+            "space-y-2 border-t border-zinc-200 px-3 py-2",
+            data.runStatus === "stale" ? "opacity-70" : "",
+          ].join(" ")}
+        >
+          {showOutputs && preview && (
+            <div className="flex flex-wrap gap-1.5">
+              {preview.outputs.map((output) => (
+                <span
+                  key={output.name}
+                  className="max-w-full truncate rounded border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] leading-none text-emerald-800"
+                  title={`${output.name} · ${output.type}`}
+                >
+                  {output.name} · {output.type}
+                </span>
+              ))}
+            </div>
+          )}
+          {showStdout && preview && (
+            <TextPreviewBlock title="stdout" value={preview.stdout} />
+          )}
+          {showStderr && preview && (
+            <TextPreviewBlock
+              title="stderr"
+              value={preview.stderr}
+              variant="danger"
+            />
+          )}
+          {showError && preview?.error && (
+            <TextPreviewBlock
+              title="error"
+              value={preview.error}
+              variant="danger"
+            />
+          )}
+          {data.runStatus === "stale" && (
+            <p className="text-[11px] font-medium uppercase text-amber-700">
+              Stale preview
+            </p>
+          )}
+        </div>
+      )}
       <NodeToolbar
         isVisible={selected}
         position={Position.Bottom}
@@ -140,4 +190,49 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       />
     </article>
   );
+}
+
+function TextPreviewBlock({
+  title,
+  value,
+  variant = "default",
+}: {
+  title: string;
+  value: string;
+  variant?: "default" | "danger";
+}) {
+  const truncated = truncatePreviewText(value);
+  const isTruncated = truncated !== value;
+  const className = variant === "danger"
+    ? "border-red-200 bg-red-50 text-red-900"
+    : "border-zinc-200 bg-zinc-50 text-zinc-800";
+
+  return (
+    <div className={["rounded border p-2", className].join(" ")}>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
+        {title}
+      </div>
+      <pre
+        className="max-h-28 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] leading-4"
+        title={isTruncated ? value : undefined}
+      >
+        {truncated}
+      </pre>
+    </div>
+  );
+}
+
+function truncatePreviewText(value: string): string {
+  const normalized = value.replace(/\s+$/u, "");
+  const maxLength = 700;
+  const lines = normalized.split(/\r?\n/u);
+  const lineLimited = lines.length > 8
+    ? `${lines.slice(0, 8).join("\n")}\n...`
+    : normalized;
+
+  if (lineLimited.length <= maxLength) {
+    return lineLimited;
+  }
+
+  return `${lineLimited.slice(0, maxLength)}...`;
 }
