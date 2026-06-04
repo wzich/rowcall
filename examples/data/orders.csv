@@ -1,0 +1,16 @@
+order_id,customer,region,category,order_date,units,unit_price,discount_rate,returned
+1001,Ada,West,Software,2026-01-04,3,49.00,0.00,false
+1002,Ben,East,Hardware,2026-01-05,2,129.00,0.05,false
+1003,Cora,West,Services,2026-01-06,1,299.00,0.10,false
+1004,Drew,South,Software,2026-01-08,5,49.00,0.00,true
+1005,Eli,North,Hardware,2026-01-09,4,89.00,0.15,false
+1006,Finn,East,Software,2026-01-10,7,39.00,0.00,false
+1007,Gia,West,Hardware,2026-01-12,1,249.00,0.05,false
+1008,Hana,South,Services,2026-01-13,2,199.00,0.20,false
+1009,Ivan,North,Software,2026-01-15,6,59.00,0.05,false
+1010,Jules,East,Services,2026-01-17,1,399.00,0.00,true
+1011,Kai,South,Hardware,2026-01-18,3,149.00,0.10,false
+1012,Lena,West,Software,2026-01-20,8,29.00,0.00,false
+1013,Mina,North,Services,2026-01-21,2,249.00,0.05,false
+1014,Nico,East,Hardware,2026-01-22,5,99.00,0.10,false
+1015,Ola,South,Software,2026-01-24,4,69.00,0.00,false

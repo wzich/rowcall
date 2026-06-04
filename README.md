@@ -39,6 +39,13 @@ into the active Python environment:
 python -m pip install -e .
 ```
 
+There is also a Polars-based data workflow example:
+
+```sh
+python -m pip install polars
+deno task dev -- --document examples/polars_orders.py
+```
+
 Start the React canvas UI in another terminal:
 
 ```sh

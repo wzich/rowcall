@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n_orders_load",
+      "position": {
+        "x": 80,
+        "y": 80
+      }
+    },
+    {
+      "id": "n_orders_prepare",
+      "position": {
+        "x": 80,
+        "y": 360
+      }
+    },
+    {
+      "id": "n_orders_summarize",
+      "position": {
+        "x": 80,
+        "y": 640
+      }
+    },
+    {
+      "id": "n_orders_render",
+      "position": {
+        "x": 80,
+        "y": 920
+      }
+    }
+  ]
+}
