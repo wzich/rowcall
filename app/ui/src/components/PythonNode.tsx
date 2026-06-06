@@ -107,10 +107,10 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
                 onChange={(value) => data.onCodeChange?.(id, value)}
                 basicSetup={{
                   autocompletion: false,
-                  closeBrackets: false,
+                  closeBrackets: true,
                   foldGutter: false,
                   highlightActiveLine: false,
-                  highlightActiveLineGutter: false,
+                  highlightActiveLineGutter: true,
                   lineNumbers: false,
                 }}
                 theme="light"
