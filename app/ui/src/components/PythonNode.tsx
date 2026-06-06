@@ -92,7 +92,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
     <article
       className={[
         "relative",
-        "w-[480px] rounded-lg border bg-white shadow-sm",
+        "w-[800px] rounded-lg border bg-white shadow-sm",
         selected ? "border-zinc-900" : status.border,
       ].join(" ")}
     >
