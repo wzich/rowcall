@@ -25,6 +25,7 @@ import {
   type NodebookDocumentV1,
   toRuntimeGraph,
 } from "./graph/documentTypes.ts";
+import { createSimpleLayout } from "./graph/layout.ts";
 import {
   runGraphMutationOptions,
   runNodeMutationOptions,
@@ -509,6 +510,28 @@ export default function App() {
     });
   }, [markDocumentEdited]);
 
+  const handleAutoLayout = useCallback(() => {
+    setEditableDocument((current) => {
+      if (!current) return current;
+      const positions = createSimpleLayout(toRuntimeGraph(current));
+      const hasPositionChange = current.nodes.some((node) => {
+        const position = positions[node.id];
+        return position && !arePositionsEqual(node.position, position);
+      });
+
+      if (!hasPositionChange) return current;
+
+      markDocumentEdited();
+      return {
+        ...current,
+        nodes: current.nodes.map((node) => ({
+          ...node,
+          position: positions[node.id] ?? node.position,
+        })),
+      };
+    });
+  }, [markDocumentEdited]);
+
   async function validateGraphForExecution(): Promise<boolean> {
     if (!editableGraph) {
       return false;
@@ -713,6 +736,7 @@ export default function App() {
                 nodeRunStatuses={nodeRunStatuses}
                 nodePreviews={nodePreviews}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
+                onAutoLayout={isReadOnlyDocument ? undefined : handleAutoLayout}
                 onAddChildNode={canEditStructure
                   ? handleAddChildNode
                   : undefined}

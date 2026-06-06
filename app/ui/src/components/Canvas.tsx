@@ -13,7 +13,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { Plus } from "lucide-react";
+import { LayoutDashboard, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
@@ -35,6 +35,7 @@ type CanvasProps = {
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
   nodePreviews: Record<string, NodeCanvasPreview>;
   onAddNode?: (position: GraphPosition) => void;
+  onAutoLayout?: () => void;
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onConnectNodes?: (fromNode: string, toNode: string) => void;
@@ -51,6 +52,7 @@ export function Canvas({
   nodeRunStatuses,
   nodePreviews,
   onAddNode,
+  onAutoLayout,
   onAddChildNode,
   onCodeChange,
   onConnectNodes,
@@ -145,7 +147,12 @@ export function Canvas({
       <InitialFitView nodeCount={renderedNodes.length} />
       <Background color="#d4d4d8" gap={18} />
       <Controls />
-      {onAddNode && <CanvasAddPanel onAddNode={onAddNode} />}
+      {(onAddNode || onAutoLayout) && (
+        <CanvasToolsPanel
+          onAddNode={onAddNode}
+          onAutoLayout={onAutoLayout}
+        />
+      )}
     </ReactFlow>
   );
 }
@@ -170,41 +177,65 @@ function InitialFitView({ nodeCount }: { nodeCount: number }) {
   return null;
 }
 
-function CanvasAddPanel({
+function CanvasToolsPanel({
   onAddNode,
+  onAutoLayout,
 }: {
-  onAddNode: (position: GraphPosition) => void;
+  onAddNode?: (position: GraphPosition) => void;
+  onAutoLayout?: () => void;
 }) {
-  const { screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
 
   return (
     <Panel position="top-left">
-      <button
-        type="button"
-        aria-label="Add node"
-        title="Add node"
-        className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
-        onClick={() => {
-          const canvasBounds = document
-            .querySelector(".react-flow")
-            ?.getBoundingClientRect();
-          const x = canvasBounds
-            ? canvasBounds.left + canvasBounds.width / 2
-            : window.innerWidth / 2;
-          const y = canvasBounds
-            ? canvasBounds.top + canvasBounds.height / 2
-            : window.innerHeight / 2;
+      <div className="flex items-center gap-2">
+        {onAddNode && (
+          <button
+            type="button"
+            aria-label="Add node"
+            title="Add node"
+            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
+            onClick={() => {
+              const canvasBounds = document
+                .querySelector(".react-flow")
+                ?.getBoundingClientRect();
+              const x = canvasBounds
+                ? canvasBounds.left + canvasBounds.width / 2
+                : window.innerWidth / 2;
+              const y = canvasBounds
+                ? canvasBounds.top + canvasBounds.height / 2
+                : window.innerHeight / 2;
 
-          onAddNode(
-            screenToFlowPosition({
-              x,
-              y,
-            }),
-          );
-        }}
-      >
-        <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-      </button>
+              onAddNode(
+                screenToFlowPosition({
+                  x,
+                  y,
+                }),
+              );
+            }}
+          >
+            <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+          </button>
+        )}
+        {onAutoLayout && (
+          <button
+            type="button"
+            aria-label="Auto-layout graph"
+            title="Auto-layout graph"
+            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
+            onClick={() => {
+              onAutoLayout();
+              requestAnimationFrame(() => fitView({ padding: 0.25 }));
+            }}
+          >
+            <LayoutDashboard
+              aria-hidden="true"
+              className="h-4 w-4"
+              strokeWidth={2.25}
+            />
+          </button>
+        )}
+      </div>
     </Panel>
   );
 }
