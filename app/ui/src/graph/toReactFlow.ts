@@ -43,7 +43,9 @@ export function toReactFlowGraph(
   graph: RuntimeGraph,
   nodeRunStatuses: Record<string, NodeRunVisualStatus> = {},
 ): ReactFlowGraph {
-  const positions = createSimpleLayout(graph);
+  const positions = graph.nodes.every((node) => node.position)
+    ? {}
+    : createSimpleLayout(graph);
 
   return {
     nodes: graph.nodes.map((node) => ({

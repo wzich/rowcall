@@ -48,12 +48,15 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const outputs = data.outputs.length > 0 ? data.outputs.join(", ") : "none";
   const status = statusStyles[data.runStatus];
   const canEdit = Boolean(data.onCodeChange);
+  const isSelected = Boolean(selected);
   const preview = data.preview;
   const showOutputs = preview?.ok && preview.outputs.length > 0;
   const showStdout = Boolean(preview?.stdout);
   const showStderr = Boolean(preview?.stderr);
   const showError = Boolean(preview?.error);
   const hasPreview = showOutputs || showStdout || showStderr || showError;
+  const hasStalePreview = data.runStatus === "stale" && hasPreview;
+  const showPreviewBody = hasPreview && !hasStalePreview;
 
   return (
     <article
@@ -92,30 +95,38 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
           outputs: {outputs}
         </p>
       </div>
-      <div className="nodrag nopan p-2 [&_.cm-editor]:max-h-[180px] [&_.cm-editor]:rounded-md [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
-        <CodeMirror
-          value={data.code}
-          extensions={extensions}
-          readOnly={!canEdit}
-          onChange={(value) => data.onCodeChange?.(id, value)}
-          basicSetup={{
-            autocompletion: false,
-            closeBrackets: false,
-            foldGutter: false,
-            highlightActiveLine: false,
-            highlightActiveLineGutter: false,
-            lineNumbers: false,
-          }}
-          theme="light"
-        />
+      <div className="nodrag nopan p-2">
+        {isSelected
+          ? (
+            <div className="[&_.cm-editor]:max-h-[180px] [&_.cm-editor]:rounded-md [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
+              <CodeMirror
+                value={data.code}
+                extensions={extensions}
+                readOnly={!canEdit}
+                onChange={(value) => data.onCodeChange?.(id, value)}
+                basicSetup={{
+                  autocompletion: false,
+                  closeBrackets: false,
+                  foldGutter: false,
+                  highlightActiveLine: false,
+                  highlightActiveLineGutter: false,
+                  lineNumbers: false,
+                }}
+                theme="light"
+              />
+            </div>
+          )
+          : <CodePreview value={data.code} />}
       </div>
-      {hasPreview && (
-        <div
-          className={[
-            "space-y-2 border-t border-zinc-200 px-3 py-2",
-            data.runStatus === "stale" ? "opacity-70" : "",
-          ].join(" ")}
-        >
+      {hasStalePreview && (
+        <div className="border-t border-zinc-200 px-3 py-2">
+          <p className="text-[11px] font-medium uppercase text-amber-700">
+            Stale preview
+          </p>
+        </div>
+      )}
+      {showPreviewBody && (
+        <div className="space-y-2 border-t border-zinc-200 px-3 py-2">
           {showOutputs && preview && (
             <div className="flex flex-wrap gap-1.5">
               {preview.outputs.map((output) => (
@@ -145,11 +156,6 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
               value={preview.error}
               variant="danger"
             />
-          )}
-          {data.runStatus === "stale" && (
-            <p className="text-[11px] font-medium uppercase text-amber-700">
-              Stale preview
-            </p>
           )}
         </div>
       )}
@@ -192,6 +198,20 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   );
 }
 
+function CodePreview({ value }: { value: string }) {
+  const preview = truncateCodePreview(value);
+  const isTruncated = preview !== value.replace(/\s+$/u, "");
+
+  return (
+    <pre
+      className="max-h-[120px] overflow-hidden whitespace-pre-wrap break-words rounded-md bg-zinc-50 px-2 py-1.5 font-mono text-xs leading-5 text-zinc-800"
+      title={isTruncated ? "Code preview is truncated" : undefined}
+    >
+      {preview}
+    </pre>
+  );
+}
+
 function TextPreviewBlock({
   title,
   value,
@@ -220,6 +240,22 @@ function TextPreviewBlock({
       </pre>
     </div>
   );
+}
+
+function truncateCodePreview(value: string): string {
+  const normalized = value.replace(/\s+$/u, "");
+  const maxLength = 420;
+  const maxLines = 6;
+  const lines = normalized.split(/\r?\n/u);
+  const lineLimited = lines.length > maxLines
+    ? `${lines.slice(0, maxLines).join("\n")}\n...`
+    : normalized;
+
+  if (lineLimited.length <= maxLength) {
+    return lineLimited;
+  }
+
+  return `${lineLimited.slice(0, maxLength)}...`;
 }
 
 function truncatePreviewText(value: string): string {

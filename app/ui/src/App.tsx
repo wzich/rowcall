@@ -225,20 +225,23 @@ export default function App() {
     () => getNodeCanvasPreviews(executionStateByNodeId),
     [executionStateByNodeId],
   );
+  const graphNodeDetails = useMemo(
+    () => editableGraph ? getGraphNodeDetails(editableGraph) : [],
+    [editableGraph],
+  );
   const graphInspectorDetails = useMemo<GraphInspectorModel | null>(() => {
     if (!editableGraph) {
       return null;
     }
 
-    const details = getGraphNodeDetails(editableGraph);
-    const sourceNodeIds = details
+    const sourceNodeIds = graphNodeDetails
       .filter((detail) => detail.isSourceNode)
       .map((detail) => detail.id);
-    const sinkNodeIds = details
+    const sinkNodeIds = graphNodeDetails
       .filter((detail) => detail.isSinkNode)
       .map((detail) => detail.id);
     const isolatedNodeIds = editableGraph.nodes.length > 1
-      ? details
+      ? graphNodeDetails
         .filter((detail) => detail.isSourceNode && detail.isSinkNode)
         .map((detail) => detail.id)
       : [];
@@ -259,7 +262,7 @@ export default function App() {
         };
       }),
     };
-  }, [editableDocument?.globalsCode, editableGraph]);
+  }, [editableDocument?.globalsCode, editableGraph, graphNodeDetails]);
   const selectedNodeDetails = useMemo<NodeInspectorSelection | null>(() => {
     if (!editableGraph || selectedNodeId === null) {
       return null;
@@ -271,9 +274,7 @@ export default function App() {
       return null;
     }
 
-    const detail = getGraphNodeDetails(editableGraph).find((item) =>
-      item.id === selectedNodeId
-    );
+    const detail = graphNodeDetails.find((item) => item.id === selectedNodeId);
     const badges: NodeInspectorBadge[] = [];
     const canShowGraphPositionBadge = editableGraph.nodes.length > 1;
 
@@ -296,7 +297,7 @@ export default function App() {
       downstreamDependencies: detail?.downstreamDependencies ?? [],
       badges,
     };
-  }, [editableGraph, selectedNodeId]);
+  }, [editableGraph, graphNodeDetails, selectedNodeId]);
 
   function parseRunInputs(): Record<string, unknown> | null {
     const trimmedInputs = inputsText.trim();
@@ -494,6 +495,8 @@ export default function App() {
   ) => {
     setEditableDocument((current) => {
       if (!current) return current;
+      const node = current.nodes.find((item) => item.id === nodeId);
+      if (!node || arePositionsEqual(node.position, position)) return current;
 
       markDocumentEdited();
       return {
@@ -1022,4 +1025,17 @@ function areStringArraysEqual(first: string[], second: string[]): boolean {
   }
 
   return first.every((value, index) => value === second[index]);
+}
+
+function arePositionsEqual(
+  first: { x: number; y: number } | undefined,
+  second: { x: number; y: number },
+): boolean {
+  if (!first) {
+    return false;
+  }
+
+  const epsilon = 0.01;
+  return Math.abs(first.x - second.x) < epsilon &&
+    Math.abs(first.y - second.y) < epsilon;
 }

@@ -13,7 +13,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
 import {
@@ -138,15 +138,35 @@ export function Canvas({
       onNodeClick={handleNodeClick}
       onNodeDragStop={handleNodeDragStop}
       onPaneClick={onSelectionClear}
-      fitView
-      fitViewOptions={{ padding: 0.25 }}
+      autoPanOnNodeDrag={false}
       proOptions={{ hideAttribution: true }}
     >
+      <InitialFitView nodeCount={renderedNodes.length} />
       <Background color="#d4d4d8" gap={18} />
       <Controls />
       {onAddNode && <CanvasAddPanel onAddNode={onAddNode} />}
     </ReactFlow>
   );
+}
+
+function InitialFitView({ nodeCount }: { nodeCount: number }) {
+  const { fitView } = useReactFlow();
+  const hasFitViewRef = useRef(false);
+
+  useEffect(() => {
+    if (hasFitViewRef.current || nodeCount === 0) {
+      return;
+    }
+
+    hasFitViewRef.current = true;
+    const frameId = requestAnimationFrame(() => {
+      fitView({ padding: 0.25 });
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [fitView, nodeCount]);
+
+  return null;
 }
 
 function CanvasAddPanel({
