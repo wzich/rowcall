@@ -1094,7 +1094,7 @@ export function InspectorPanel({
               onClick={() => onRunNode(selectedNode.id)}
             >
               <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-              Run node
+              Run with cache
             </button>
           </div>
         )}
