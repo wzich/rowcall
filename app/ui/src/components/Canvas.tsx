@@ -21,6 +21,7 @@ import {
   type NodeCanvasPreview,
   type NodeRunVisualStatus,
   type PythonFlowNode,
+  type PythonNodeOutputOption,
   toReactFlowGraph,
 } from "../graph/toReactFlow.ts";
 import { PythonNode } from "./PythonNode.tsx";
@@ -34,6 +35,7 @@ type CanvasProps = {
   selectedNodeId: string | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
   nodePreviews: Record<string, NodeCanvasPreview>;
+  nodeOutputOptions: Record<string, PythonNodeOutputOption[]>;
   onAddNode?: (position: GraphPosition) => void;
   onAutoLayout?: () => void;
   onAddChildNode?: (nodeId: string) => void;
@@ -43,6 +45,10 @@ type CanvasProps = {
   onDeleteNode?: (nodeId: string) => void;
   onNodePositionChange: (nodeId: string, position: GraphPosition) => void;
   onNodeSelect: (nodeId: string) => void;
+  onOutputsChange?: (nodeId: string, outputs: string[]) => void;
+  onRunToNode?: (nodeId: string) => void;
+  outputsReadOnly?: boolean;
+  runToNodeDisabled?: boolean;
   onSelectionClear: () => void;
 };
 
@@ -51,6 +57,7 @@ export function Canvas({
   selectedNodeId,
   nodeRunStatuses,
   nodePreviews,
+  nodeOutputOptions,
   onAddNode,
   onAutoLayout,
   onAddChildNode,
@@ -60,6 +67,10 @@ export function Canvas({
   onDeleteNode,
   onNodePositionChange,
   onNodeSelect,
+  onOutputsChange,
+  onRunToNode,
+  outputsReadOnly = false,
+  runToNodeDisabled = false,
   onSelectionClear,
 }: CanvasProps) {
   const flowGraph = useMemo(() => toReactFlowGraph(graph), [graph]);
@@ -82,9 +93,14 @@ export function Canvas({
           ...node.data,
           runStatus: nodeRunStatuses[node.id] ?? "idle",
           preview: nodePreviews[node.id],
+          outputOptions: nodeOutputOptions[node.id] ?? [],
           onAddChild: onAddChildNode,
           onCodeChange: node.data.editable ? onCodeChange : undefined,
           onDelete: onDeleteNode,
+          onOutputsChange,
+          onRunToNode,
+          outputsReadOnly,
+          runToNodeDisabled,
         },
         selected: node.id === selectedNodeId,
       })),
@@ -92,10 +108,15 @@ export function Canvas({
       nodes,
       nodeRunStatuses,
       nodePreviews,
+      nodeOutputOptions,
       onAddChildNode,
       onCodeChange,
       onDeleteNode,
       selectedNodeId,
+      onOutputsChange,
+      onRunToNode,
+      outputsReadOnly,
+      runToNodeDisabled,
     ],
   );
   const handleNodeClick: NodeMouseHandler = (_event, node) => {

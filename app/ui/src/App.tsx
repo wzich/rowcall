@@ -40,8 +40,6 @@ const documentSourceValue = "document:active";
 
 export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [inputsText, setInputsText] = useState("{}");
-  const [inputsError, setInputsError] = useState<string | null>(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
   const [editableDocument, setEditableDocument] = useState<
     NodebookDocumentV1 | null
@@ -80,6 +78,7 @@ export default function App() {
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
   } = useExecutionSession(documentSourceValue);
+  const isGraphRunning = graphExecutionState?.status === "running";
 
   useEffect(() => {
     if (!documentQuery.isSuccess) {
@@ -229,6 +228,10 @@ export default function App() {
     () => getNodeCanvasPreviews(executionStateByNodeId),
     [executionStateByNodeId],
   );
+  const nodeOutputOptions = useMemo(
+    () => getNodeOutputOptionsById(editableGraph),
+    [editableGraph],
+  );
   const graphNodeDetails = useMemo(
     () => editableGraph ? getGraphNodeDetails(editableGraph) : [],
     [editableGraph],
@@ -304,43 +307,6 @@ export default function App() {
       badges,
     };
   }, [editableGraph, graphNodeDetails, selectedNodeId]);
-
-  function parseRunInputs(): Record<string, unknown> | null {
-    const trimmedInputs = inputsText.trim();
-
-    if (trimmedInputs.length === 0) {
-      setInputsError(null);
-      return {};
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmedInputs);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setInputsError(`Inputs must be valid JSON: ${message}`);
-      return null;
-    }
-
-    if (
-      typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-    ) {
-      setInputsError("Inputs must be a JSON object.");
-      return null;
-    }
-
-    setInputsError(null);
-    return parsed as Record<string, unknown>;
-  }
-
-  function handleInputsChange(value: string) {
-    setInputsText(value);
-    setInputsError(getInputsValidationError(value));
-  }
-
-  function isInputsTextValid(): boolean {
-    return getInputsValidationError(inputsText) === null;
-  }
 
   const markDocumentEdited = useCallback(() => {
     setSaveStatus("idle");
@@ -575,17 +541,12 @@ export default function App() {
       return;
     }
 
-    const inputs = parseRunInputs();
-    if (inputs === null) {
-      return;
-    }
-
     markNodeExecutionRunning(nodeId, "run_node");
     const abortController = startRunAbortController();
     runNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
-      inputs,
+      inputs: {},
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
@@ -599,17 +560,12 @@ export default function App() {
       return;
     }
 
-    const inputs = parseRunInputs();
-    if (inputs === null) {
-      return;
-    }
-
     markNodeExecutionRunning(nodeId, "run_to_node");
     const abortController = startRunAbortController();
     runToNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
-      inputs,
+      inputs: {},
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
@@ -623,16 +579,11 @@ export default function App() {
       return;
     }
 
-    const inputs = parseRunInputs();
-    if (inputs === null) {
-      return;
-    }
-
     markGraphExecutionRunning();
     const abortController = startRunAbortController();
     runGraphMutation.mutate({
       graph: editableGraph,
-      inputs,
+      inputs: {},
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
@@ -745,6 +696,7 @@ export default function App() {
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}
                 nodePreviews={nodePreviews}
+                nodeOutputOptions={nodeOutputOptions}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
                 onAutoLayout={isReadOnlyDocument ? undefined : handleAutoLayout}
                 onAddChildNode={canEditStructure
@@ -756,6 +708,10 @@ export default function App() {
                 onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
                 onNodePositionChange={handleNodePositionChange}
                 onNodeSelect={setSelectedNodeId}
+                onOutputsChange={handleOutputsChange}
+                onRunToNode={handleRunToNode}
+                outputsReadOnly={!canEditOutputs}
+                runToNodeDisabled={isGraphRunning}
                 onSelectionClear={() => setSelectedNodeId(null)}
               />
             </div>
@@ -766,13 +722,9 @@ export default function App() {
                 ? executionStateByNodeId[selectedNodeId] ?? null
                 : null}
               graphExecutionState={graphExecutionState}
-              inputsText={inputsText}
-              inputsError={inputsError}
-              areInputsValid={isInputsTextValid()}
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
-              onInputsChange={handleInputsChange}
               onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
               onRunNode={handleRunNode}
@@ -834,26 +786,6 @@ function PythonRuntimeBadge({
   );
 }
 
-function getInputsValidationError(inputsText: string): string | null {
-  const trimmedInputs = inputsText.trim();
-  if (trimmedInputs.length === 0) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmedInputs);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return `Inputs must be valid JSON: ${message}`;
-  }
-
-  if (
-    typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-  ) {
-    return "Inputs must be a JSON object.";
-  }
-
-  return null;
-}
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
@@ -1055,6 +987,57 @@ function getGraphNodeDetails(graph: RuntimeGraph) {
       isSinkNode: downstreamDependencies.length === 0,
     };
   });
+}
+
+function getNodeOutputOptionsById(
+  graph: RuntimeGraph | null,
+): Record<
+  string,
+  Array<{ name: string; source: "input" | "assigned" | "manual" }>
+> {
+  if (!graph) return {};
+
+  return Object.fromEntries(
+    graph.nodes.map((node) => [
+      node.id,
+      getNodeOutputOptions(
+        node.parameters ?? [],
+        inferAssignableOutputs(node.displayCode ?? node.code),
+        node.outputs,
+      ),
+    ]),
+  );
+}
+
+function getNodeOutputOptions(
+  inputNames: string[],
+  inferredOutputs: string[],
+  declaredOutputs: string[],
+): Array<{ name: string; source: "input" | "assigned" | "manual" }> {
+  const options: Array<
+    { name: string; source: "input" | "assigned" | "manual" }
+  > = [];
+  const seen = new Set<string>();
+
+  for (const name of inputNames) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "input" });
+  }
+
+  for (const name of inferredOutputs) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "assigned" });
+  }
+
+  for (const name of declaredOutputs) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "manual" });
+  }
+
+  return options;
 }
 
 function areStringArraysEqual(first: string[], second: string[]): boolean {

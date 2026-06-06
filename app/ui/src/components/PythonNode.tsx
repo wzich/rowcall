@@ -1,7 +1,8 @@
 import { python } from "@codemirror/lang-python";
 import CodeMirror from "@uiw/react-codemirror";
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
-import { Plus, Trash2 } from "lucide-react";
+import { Check, Play, Plus, Trash2 } from "lucide-react";
+import type { MouseEvent } from "react";
 import { useMemo } from "react";
 import type {
   NodeRunVisualStatus,
@@ -46,18 +47,46 @@ const statusStyles: Record<
 
 export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const extensions = useMemo(() => [python()], []);
-  const outputs = data.outputs.length > 0 ? data.outputs.join(", ") : "none";
   const status = statusStyles[data.runStatus];
   const canEdit = Boolean(data.onCodeChange);
   const isSelected = Boolean(selected);
+  const outputsReadOnly = data.outputsReadOnly || !data.editable;
+  const runToNodeTitle = data.runToNodeDisabled
+    ? "Run unavailable"
+    : "Run to node";
   const preview = data.preview;
-  const showOutputs = preview?.ok && preview.outputs.length > 0;
+  const previewOutputsByName = new Map(
+    preview?.ok ? preview.outputs.map((output) => [output.name, output]) : [],
+  );
+  const showRuntimeOutputTypes = data.outputs.some((output) =>
+    previewOutputsByName.has(output)
+  );
   const showStdout = Boolean(preview?.stdout);
   const showStderr = Boolean(preview?.stderr);
   const showError = Boolean(preview?.error);
-  const hasPreview = showOutputs || showStdout || showStderr || showError;
+  const hasPreview = showRuntimeOutputTypes || showStdout || showStderr ||
+    showError;
   const hasStalePreview = data.runStatus === "stale" && hasPreview;
-  const showPreviewBody = hasPreview && !hasStalePreview;
+  const showPreviewBody = (showStdout || showStderr || showError) &&
+    !hasStalePreview;
+
+  const handleOutputToggle = (name: string) => {
+    if (outputsReadOnly || !data.onOutputsChange) return;
+
+    const selectedOutputs = new Set(data.outputs);
+    if (selectedOutputs.has(name)) {
+      selectedOutputs.delete(name);
+    } else {
+      selectedOutputs.add(name);
+    }
+
+    data.onOutputsChange(
+      id,
+      data.outputOptions
+        .map((option) => option.name)
+        .filter((optionName) => selectedOutputs.has(optionName)),
+    );
+  };
 
   return (
     <article
@@ -78,6 +107,25 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
             {data.label}
           </h2>
           <div className="flex shrink-0 items-center gap-2">
+            {data.onRunToNode && (
+              <button
+                type="button"
+                aria-label={`Run to node ${data.label}`}
+                title={runToNodeTitle}
+                disabled={data.runToNodeDisabled}
+                className="nodrag nopan flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+                onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                  data.onRunToNode?.(id);
+                }}
+              >
+                <Play
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                  strokeWidth={2.5}
+                />
+              </button>
+            )}
             <span
               className={[
                 "h-2.5 w-2.5 shrink-0 rounded-full",
@@ -92,9 +140,6 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
             </span>
           </div>
         </div>
-        <p className="mt-1 truncate text-xs text-zinc-500">
-          outputs: {outputs}
-        </p>
       </div>
       <div className="nodrag nopan p-2">
         {isSelected
@@ -119,6 +164,23 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
           )
           : <CodePreview value={data.code} />}
       </div>
+      <div className="border-t border-zinc-200 px-3 py-2">
+        {isSelected
+          ? (
+            <OutputChecklist
+              outputs={data.outputs}
+              outputOptions={data.outputOptions}
+              readOnly={outputsReadOnly}
+              onToggle={handleOutputToggle}
+            />
+          )
+          : (
+            <OutputChips
+              outputs={data.outputs}
+              previewOutputsByName={previewOutputsByName}
+            />
+          )}
+      </div>
       {hasStalePreview && (
         <div className="border-t border-zinc-200 px-3 py-2">
           <p className="text-[11px] font-medium uppercase text-amber-700">
@@ -128,19 +190,6 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       )}
       {showPreviewBody && (
         <div className="space-y-2 border-t border-zinc-200 px-3 py-2">
-          {showOutputs && preview && (
-            <div className="flex flex-wrap gap-1.5">
-              {preview.outputs.map((output) => (
-                <span
-                  key={output.name}
-                  className="max-w-full truncate rounded border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] leading-none text-emerald-800"
-                  title={`${output.name} · ${output.type}`}
-                >
-                  {output.name} · {output.type}
-                </span>
-              ))}
-            </div>
-          )}
           {showStdout && preview && (
             <TextPreviewBlock title="stdout" value={preview.stdout} />
           )}
@@ -200,6 +249,124 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         className="h-3 w-3 border-2 border-white bg-zinc-500"
       />
     </article>
+  );
+}
+
+function OutputChecklist({
+  outputs,
+  outputOptions,
+  readOnly,
+  onToggle,
+}: {
+  outputs: string[];
+  outputOptions: PythonFlowNode["data"]["outputOptions"];
+  readOnly: boolean;
+  onToggle: (name: string) => void;
+}) {
+  if (outputOptions.length === 0) {
+    return (
+      <div className="space-y-1">
+        <OutputFooterLabel />
+        <p className="text-xs text-zinc-500">no outputs</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <OutputFooterLabel />
+        <span className="text-[11px] text-zinc-500">
+          {outputs.length} selected
+        </span>
+      </div>
+      <div className="grid max-h-32 grid-cols-2 gap-1.5 overflow-auto">
+        {outputOptions.map((option) => {
+          const checked = outputs.includes(option.name);
+          return (
+            <label
+              key={option.name}
+              className={`nodrag nopan flex min-w-0 items-center gap-1.5 rounded border px-2 py-1.5 text-xs ${
+                checked
+                  ? "border-zinc-300 bg-white text-zinc-900"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-500"
+              } ${
+                readOnly
+                  ? "cursor-not-allowed opacity-70"
+                  : "cursor-pointer hover:bg-zinc-100"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={checked}
+                disabled={readOnly}
+                onChange={() => onToggle(option.name)}
+              />
+              <span
+                className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                  checked
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-300 bg-white"
+                }`}
+                aria-hidden="true"
+              >
+                {checked && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+              </span>
+              <code className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                {option.name}
+              </code>
+              <span className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500">
+                {option.source}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function OutputChips({
+  outputs,
+  previewOutputsByName,
+}: {
+  outputs: string[];
+  previewOutputsByName: Map<string, { name: string; type: string }>;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <OutputFooterLabel />
+      {outputs.length === 0
+        ? <p className="text-xs text-zinc-500">no outputs</p>
+        : (
+          <div className="flex flex-wrap gap-1.5">
+            {outputs.map((name) => {
+              const previewOutput = previewOutputsByName.get(name);
+              const label = previewOutput
+                ? `${name} · ${previewOutput.type}`
+                : name;
+              return (
+                <span
+                  key={name}
+                  className="max-w-full truncate rounded border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] leading-none text-emerald-800"
+                  title={label}
+                >
+                  {label}
+                </span>
+              );
+            })}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function OutputFooterLabel() {
+  return (
+    <p className="text-[10px] font-medium uppercase leading-none text-zinc-500">
+      Outputs
+    </p>
   );
 }
 

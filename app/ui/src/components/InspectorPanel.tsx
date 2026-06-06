@@ -63,13 +63,9 @@ type InspectorPanelProps = {
   graph: GraphInspectorModel;
   selectedNodeExecutionState: ExecutionDisplayState | null;
   graphExecutionState: GraphExecutionDisplayState | null;
-  inputsText: string;
-  inputsError: string | null;
-  areInputsValid: boolean;
   traceEnabled: boolean;
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
-  onInputsChange: (value: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
@@ -465,33 +461,15 @@ function GraphInspector({
   graph,
   graphExecutionState,
   validationIssues,
-  inputsText,
-  inputsError,
-  traceEnabled,
-  onInputsChange,
-  onTraceEnabledChange,
   onNodeSelect,
 }: {
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
   validationIssues: InspectGraphValidationIssue[];
-  inputsText: string;
-  inputsError: string | null;
-  traceEnabled: boolean;
-  onInputsChange: (value: string) => void;
-  onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
     <div className="space-y-4">
-      <RunConfigEditor
-        value={inputsText}
-        error={inputsError}
-        traceEnabled={traceEnabled}
-        onChange={onInputsChange}
-        onTraceEnabledChange={onTraceEnabledChange}
-      />
-
       <ValidationIssues issues={validationIssues} />
 
       {graph.globalsCode.trim().length > 0 && (
@@ -824,25 +802,15 @@ function NodeInspector({
   selectedNode,
   executionState,
   validationIssues,
-  inputsText,
-  inputsError,
-  traceEnabled,
   readOnly,
-  onInputsChange,
   onOutputsChange,
-  onTraceEnabledChange,
   onNodeSelect,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   validationIssues: InspectGraphValidationIssue[];
-  inputsText: string;
-  inputsError: string | null;
-  traceEnabled: boolean;
   readOnly: boolean;
-  onInputsChange: (value: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
-  onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
@@ -870,14 +838,6 @@ function NodeInspector({
 
   return (
     <div className="space-y-4">
-      <RunConfigEditor
-        value={inputsText}
-        error={inputsError}
-        traceEnabled={traceEnabled}
-        onChange={onInputsChange}
-        onTraceEnabledChange={onTraceEnabledChange}
-      />
-
       <ValidationIssues issues={validationIssues} />
 
       <section>
@@ -1002,41 +962,16 @@ function getOutputOptions(
   return options;
 }
 
-function RunConfigEditor({
-  value,
-  error,
+function TraceToggle({
   traceEnabled,
-  onChange,
   onTraceEnabledChange,
 }: {
-  value: string;
-  error: string | null;
   traceEnabled: boolean;
-  onChange: (value: string) => void;
   onTraceEnabledChange: (value: boolean) => void;
 }) {
   return (
-    <section>
-      <label
-        className="block text-xs font-semibold uppercase text-zinc-500"
-        htmlFor="run-inputs"
-      >
-        Inputs
-      </label>
-      <textarea
-        id="run-inputs"
-        className={[
-          "mt-2 min-h-28 w-full resize-y rounded border bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:ring-2",
-          error
-            ? "border-red-300 focus:border-red-400 focus:ring-red-100"
-            : "border-zinc-300 focus:border-zinc-400 focus:ring-zinc-100",
-        ].join(" ")}
-        spellCheck={false}
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-      {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
-      <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700">
+    <section className="border-t border-zinc-200 pt-4">
+      <label className="flex items-center gap-2 text-sm text-zinc-700">
         <input
           type="checkbox"
           className="h-4 w-4 rounded border-zinc-300"
@@ -1090,13 +1025,9 @@ export function InspectorPanel({
   graph,
   selectedNodeExecutionState,
   graphExecutionState,
-  inputsText,
-  inputsError,
-  areInputsValid,
   traceEnabled,
   readOnly,
   onNodeSelect,
-  onInputsChange,
   onOutputsChange,
   onTraceEnabledChange,
   onRunNode,
@@ -1109,9 +1040,8 @@ export function InspectorPanel({
     "running";
   const isGraphRunning = graphExecutionState?.status === "running";
   const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
-  const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning ||
-    !areInputsValid;
-  const isGraphActionDisabled = isGraphRunning || !areInputsValid;
+  const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
+  const isGraphActionDisabled = isGraphRunning;
 
   return (
     <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-zinc-200 bg-white">
@@ -1189,35 +1119,31 @@ export function InspectorPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {selectedNode
-          ? (
-            <NodeInspector
-              selectedNode={selectedNode}
-              executionState={selectedNodeExecutionState}
-              validationIssues={validationIssues}
-              inputsText={inputsText}
-              inputsError={inputsError}
-              traceEnabled={traceEnabled}
-              readOnly={readOnly}
-              onInputsChange={onInputsChange}
-              onOutputsChange={onOutputsChange}
-              onTraceEnabledChange={onTraceEnabledChange}
-              onNodeSelect={onNodeSelect}
-            />
-          )
-          : (
-            <GraphInspector
-              graph={graph}
-              graphExecutionState={graphExecutionState}
-              validationIssues={validationIssues}
-              inputsText={inputsText}
-              inputsError={inputsError}
-              traceEnabled={traceEnabled}
-              onInputsChange={onInputsChange}
-              onTraceEnabledChange={onTraceEnabledChange}
-              onNodeSelect={onNodeSelect}
-            />
-          )}
+        <div className="space-y-4">
+          {selectedNode
+            ? (
+              <NodeInspector
+                selectedNode={selectedNode}
+                executionState={selectedNodeExecutionState}
+                validationIssues={validationIssues}
+                readOnly={readOnly}
+                onOutputsChange={onOutputsChange}
+                onNodeSelect={onNodeSelect}
+              />
+            )
+            : (
+              <GraphInspector
+                graph={graph}
+                graphExecutionState={graphExecutionState}
+                validationIssues={validationIssues}
+                onNodeSelect={onNodeSelect}
+              />
+            )}
+          <TraceToggle
+            traceEnabled={traceEnabled}
+            onTraceEnabledChange={onTraceEnabledChange}
+          />
+        </div>
       </div>
     </aside>
   );

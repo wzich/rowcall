@@ -6,16 +6,25 @@ export type PythonNodeData = {
   label: string;
   code: string;
   outputs: string[];
+  outputOptions: PythonNodeOutputOption[];
   editable: boolean;
   runStatus: NodeRunVisualStatus;
   preview?: NodeCanvasPreview;
   onAddChild?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onDelete?: (nodeId: string) => void;
+  onOutputsChange?: (nodeId: string, outputs: string[]) => void;
+  onRunToNode?: (nodeId: string) => void;
+  outputsReadOnly?: boolean;
+  runToNodeDisabled?: boolean;
 };
 
 export type PythonFlowNode = FlowNode<PythonNodeData, "pythonNode">;
 export type PythonFlowEdge = FlowEdge;
+export type PythonNodeOutputOption = {
+  name: string;
+  source: "input" | "assigned" | "manual";
+};
 export type NodeCanvasPreview = {
   ok: boolean;
   outputs: Array<{
@@ -58,6 +67,7 @@ export function toReactFlowGraph(
         label: node.functionName ?? node.id,
         code: node.displayCode ?? node.code,
         outputs: node.outputs,
+        outputOptions: [],
         editable: node.editable ?? true,
         runStatus: nodeRunStatuses[node.id] ?? "idle",
       },
