@@ -58,6 +58,60 @@ Deno.test("Python document runtime code executes through existing graph runner",
   }
 });
 
+Deno.test("edited Python document nodes execute with document globals", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/globals.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "GLOBAL_OFFSET = 2",
+      "",
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["x"])',
+      "def load_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_add", outputs=["y"])',
+      "def add_offset(x):",
+      "    y = x + GLOBAL_OFFSET",
+      '    return {"y": y}',
+      "",
+      "add_offset.depends_on(load_x)",
+      "",
+    ].join("\n"),
+  );
+
+  const decoded = await loadPythonDocument(documentPath);
+  if (!decoded.ok) {
+    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const editedDocument = {
+    ...decoded.document,
+    nodes: decoded.document.nodes.map((node) =>
+      node.id === "n_add"
+        ? {
+          ...node,
+          code: "y = x + GLOBAL_OFFSET + 1",
+          runtimeCode: undefined,
+        }
+        : node
+    ),
+  };
+
+  await clearRuntimeSessionCache();
+  try {
+    const response = await runGraph(toRuntimeGraph(editedDocument));
+    assertEquals(response.ok, true);
+    assertEquals(response.finalOutputsByNode.n_add.y.jsonValue, 4);
+  } finally {
+    await shutdownRuntimeSession();
+  }
+});
+
 Deno.test("loadPythonDocument applies optional sidecar positions", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/analysis.py`;
