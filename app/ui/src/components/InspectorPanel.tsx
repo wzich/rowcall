@@ -3,8 +3,7 @@ import type {
   NodeRunResult,
   ValuePreview,
 } from "../../../../types.ts";
-import { Play, Route, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, Play, Route, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 
@@ -17,6 +16,8 @@ export type NodeInspectorSelection = {
   code: string;
   editable: boolean;
   outputs: string[];
+  inferredOutputs: string[];
+  inputNames: string[];
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   badges: NodeInspectorBadge[];
@@ -69,7 +70,7 @@ type InspectorPanelProps = {
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onInputsChange: (value: string) => void;
-  onOutputsChange: (nodeId: string, outputsText: string) => void;
+  onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
@@ -840,24 +841,32 @@ function NodeInspector({
   traceEnabled: boolean;
   readOnly: boolean;
   onInputsChange: (value: string) => void;
-  onOutputsChange: (nodeId: string, outputsText: string) => void;
+  onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
-  const [outputsDraft, setOutputsDraft] = useState(() =>
-    selectedNode.outputs.join("\n")
+  const outputsReadOnly = readOnly || !selectedNode.editable;
+  const outputOptions = getOutputOptions(
+    selectedNode.inputNames,
+    selectedNode.inferredOutputs,
+    selectedNode.outputs,
   );
 
-  useEffect(() => {
-    setOutputsDraft(selectedNode.outputs.join("\n"));
-  }, [selectedNode.id, selectedNode.outputs]);
-
-  const handleOutputsDraftChange = (value: string) => {
-    setOutputsDraft(value);
+  const handleOutputToggle = (name: string) => {
     if (readOnly || !selectedNode.editable) return;
-    onOutputsChange(selectedNode.id, value);
+    const selectedOutputs = new Set(selectedNode.outputs);
+    if (selectedOutputs.has(name)) {
+      selectedOutputs.delete(name);
+    } else {
+      selectedOutputs.add(name);
+    }
+    onOutputsChange(
+      selectedNode.id,
+      outputOptions
+        .map((option) => option.name)
+        .filter((optionName) => selectedOutputs.has(optionName)),
+    );
   };
-  const outputsReadOnly = readOnly || !selectedNode.editable;
 
   return (
     <div className="space-y-4">
@@ -872,20 +881,68 @@ function NodeInspector({
       <ValidationIssues issues={validationIssues} />
 
       <section>
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Declared Outputs
-        </h3>
-        <textarea
-          className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-300 bg-white p-3 font-mono text-xs leading-5 text-zinc-900 shadow-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100"
-          spellCheck={false}
-          value={outputsDraft}
-          readOnly={outputsReadOnly}
-          onChange={(event) =>
-            handleOutputsDraftChange(event.currentTarget.value)}
-        />
-        <p className="mt-2 text-xs text-zinc-500">
-          One output name per line.
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold uppercase text-zinc-500">
+            Declared Outputs
+          </h3>
+          <span className="text-xs text-zinc-500">
+            {selectedNode.outputs.length} selected
+          </span>
+        </div>
+        {outputOptions.length === 0
+          ? (
+            <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-500">
+              No assignable outputs found.
+            </p>
+          )
+          : (
+            <ul className="mt-2 space-y-1.5">
+              {outputOptions.map((option) => {
+                const checked = selectedNode.outputs.includes(option.name);
+                return (
+                  <li key={option.name}>
+                    <label
+                      className={`flex items-center gap-2 rounded border px-3 py-2 text-sm ${
+                        checked
+                          ? "border-zinc-300 bg-white text-zinc-900"
+                          : "border-zinc-200 bg-zinc-50 text-zinc-500"
+                      } ${
+                        outputsReadOnly
+                          ? "cursor-not-allowed opacity-70"
+                          : "cursor-pointer hover:bg-zinc-100"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={checked}
+                        disabled={outputsReadOnly}
+                        onChange={() => handleOutputToggle(option.name)}
+                      />
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                          checked
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-300 bg-white"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {checked && (
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        )}
+                      </span>
+                      <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                        {option.name}
+                      </code>
+                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">
+                        {option.source}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
       </section>
 
       <DependencyList
@@ -912,6 +969,37 @@ function NodeInspector({
       <RunResult selectedNode={selectedNode} executionState={executionState} />
     </div>
   );
+}
+
+function getOutputOptions(
+  inputNames: string[],
+  inferredOutputs: string[],
+  declaredOutputs: string[],
+): Array<{ name: string; source: "input" | "assigned" | "manual" }> {
+  const options: Array<
+    { name: string; source: "input" | "assigned" | "manual" }
+  > = [];
+  const seen = new Set<string>();
+
+  for (const name of inputNames) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "input" });
+  }
+
+  for (const name of inferredOutputs) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "assigned" });
+  }
+
+  for (const name of declaredOutputs) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    options.push({ name, source: "manual" });
+  }
+
+  return options;
 }
 
 function RunConfigEditor({

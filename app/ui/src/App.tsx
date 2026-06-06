@@ -1,4 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import type { SyntaxNode } from "@lezer/common";
+import { parser as pythonParser } from "@lezer/python";
 import { Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -295,6 +297,8 @@ export default function App() {
       code: node.displayCode ?? node.code,
       editable: node.editable ?? true,
       outputs: node.outputs,
+      inferredOutputs: inferAssignableOutputs(node.displayCode ?? node.code),
+      inputNames: node.parameters ?? [],
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
       badges,
@@ -386,13 +390,24 @@ export default function App() {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
       if (!node || node.code === code) return current;
+      const previousInferredOutputs = new Set(
+        inferAssignableOutputs(node.displayCode ?? node.code),
+      );
+      const newlyInferredOutputs = inferAssignableOutputs(code).filter((name) =>
+        !previousInferredOutputs.has(name) && !node.outputs.includes(name)
+      );
+      const outputs = newlyInferredOutputs.length === 0
+        ? node.outputs
+        : [...node.outputs, ...newlyInferredOutputs];
 
       markDocumentEdited();
       markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
       return {
         ...current,
         nodes: current.nodes.map((item) =>
-          item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
+          item.id === nodeId
+            ? { ...item, code, outputs, runtimeCode: undefined }
+            : item
         ),
       };
     });
@@ -400,13 +415,8 @@ export default function App() {
 
   const handleOutputsChange = useCallback((
     nodeId: string,
-    outputsText: string,
+    outputs: string[],
   ) => {
-    const outputs = outputsText
-      .split(/\r?\n/)
-      .map((output) => output.trim())
-      .filter((output) => output.length > 0);
-
     setEditableDocument((current) => {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
@@ -1053,6 +1063,81 @@ function areStringArraysEqual(first: string[], second: string[]): boolean {
   }
 
   return first.every((value, index) => value === second[index]);
+}
+
+function inferAssignableOutputs(code: string): string[] {
+  const tree = pythonParser.parse(code);
+  const outputs: string[] = [];
+  const seen = new Set<string>();
+
+  const addOutput = (name: string) => {
+    if (!seen.has(name) && isValidPythonIdentifier(name)) {
+      seen.add(name);
+      outputs.push(name);
+    }
+  };
+
+  const visit = (node: SyntaxNode) => {
+    if (node.name === "AssignStatement") {
+      collectAssignmentTargets(node, code, addOutput);
+      return;
+    }
+
+    if (node.name === "FunctionDefinition" || node.name === "ClassDefinition") {
+      return;
+    }
+
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      visit(child);
+    }
+  };
+
+  visit(tree.topNode);
+
+  return outputs;
+}
+
+function collectAssignmentTargets(
+  node: SyntaxNode,
+  code: string,
+  addOutput: (name: string) => void,
+) {
+  let segmentStart: SyntaxNode | null = node.firstChild;
+
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name !== "AssignOp") continue;
+
+    for (
+      let target = segmentStart;
+      target && target.from < child.from;
+      target = target.nextSibling
+    ) {
+      collectBindingNames(target, code, addOutput);
+    }
+
+    segmentStart = child.nextSibling;
+  }
+}
+
+function collectBindingNames(
+  node: SyntaxNode,
+  code: string,
+  addOutput: (name: string) => void,
+) {
+  if (node.name === "VariableName") {
+    addOutput(code.slice(node.from, node.to));
+    return;
+  }
+
+  if (node.name === "TupleExpression" || node.name === "ArrayExpression") {
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      collectBindingNames(child, code, addOutput);
+    }
+  }
+}
+
+function isValidPythonIdentifier(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function arePositionsEqual(
