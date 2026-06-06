@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import polars as pl
-from nodebook import node
+from nodebook import display, node
 
 
 DATA_PATH = Path("examples/data/orders.csv")
@@ -49,7 +49,7 @@ def summarize_by_region(orders):
 
 @node(id="n_orders_render", outputs=[])
 def render_summary(summary):
-    print(summary)
+    display(summary)
     return {}
 
 

@@ -25,6 +25,16 @@ async function collectEvents(
   return collected;
 }
 
+async function pythonCanImport(moduleName: string): Promise<boolean> {
+  const command = new Deno.Command(await resolvePythonCommand(), {
+    args: ["-c", `import ${moduleName}`],
+    stdout: "null",
+    stderr: "null",
+  });
+  const output = await command.output();
+  return output.success;
+}
+
 function runtimeTest(
   name: string,
   fn: () => Promise<void>,
@@ -106,6 +116,136 @@ runtimeTest(
         },
       },
     });
+  },
+);
+
+runtimeTest(
+  "streamRunGraph includes rich pandas table previews when pandas is available",
+  async () => {
+    if (!(await pythonCanImport("pandas"))) return;
+
+    await clearRuntimeSessionCache();
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code:
+            'import pandas as pd\ndf = pd.DataFrame({"name": ["Ada", "Grace"], "score": [10, 12]})',
+          outputs: ["df"],
+        },
+      ],
+      edges: [],
+    };
+
+    const events = await collectEvents(streamRunGraph("run-pandas-1", graph));
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+
+    if (finalEvent.type !== "run_completed") {
+      throw new Error("Expected run_completed");
+    }
+
+    const table = finalEvent.response.finalOutputsByNode.a.df.table;
+    assertExists(table);
+    assertEquals(table.columns.map((column) => column.name), ["name", "score"]);
+    assertEquals(table.rows, [["Ada", 10], ["Grace", 12]]);
+    assertEquals(table.index, [0, 1]);
+    assertEquals(table.rowCount, 2);
+    assertEquals(table.columnCount, 2);
+    assertEquals(table.truncated, false);
+  },
+);
+
+runtimeTest(
+  "streamRunGraph includes rich polars table previews and display events when polars is available",
+  async () => {
+    if (!(await pythonCanImport("polars"))) return;
+
+    await clearRuntimeSessionCache();
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code:
+            'import polars as pl\nfrom nodebook import display\ndf = pl.DataFrame({"name": ["Ada", "Grace"], "score": [10, 12]})\ndisplay(df.head(1))',
+          outputs: ["df"],
+        },
+      ],
+      edges: [],
+    };
+
+    const events = await collectEvents(streamRunGraph("run-polars-1", graph));
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+
+    if (finalEvent.type !== "run_completed") {
+      throw new Error("Expected run_completed");
+    }
+
+    const result = finalEvent.response.resultsByNode.a;
+    const outputTable = result.outputs.df.table;
+    assertExists(outputTable);
+    assertEquals(outputTable.columns.map((column) => column.name), [
+      "name",
+      "score",
+    ]);
+    assertEquals(outputTable.rows, [["Ada", 10], ["Grace", 12]]);
+    assertEquals(outputTable.rowCount, 2);
+    assertEquals(outputTable.columnCount, 2);
+
+    assertEquals(result.displays.length, 1);
+    const displayTable = result.displays[0].value.table;
+    assertExists(displayTable);
+    assertEquals(displayTable.rows, [["Ada", 10]]);
+  },
+);
+
+runtimeTest(
+  "streamRunGraph preserves inline stdout and display event order",
+  async () => {
+    await clearRuntimeSessionCache();
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code:
+            'from nodebook import display\nprint("before")\ndisplay({"x": 1})\nprint("after")\ndisplay(2)',
+          outputs: [],
+        },
+      ],
+      edges: [],
+    };
+
+    const events = await collectEvents(
+      streamRunGraph("run-inline-display-1", graph, {}, true),
+    );
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+
+    if (finalEvent.type !== "run_completed") {
+      throw new Error("Expected run_completed");
+    }
+
+    const result = finalEvent.response.resultsByNode.a;
+    assertEquals(result.stdout, "before\nafter\n");
+    assertEquals(result.displays.length, 2);
+    assertEquals(result.outputEvents.map((event) => event.kind), [
+      "stdout",
+      "display",
+      "stdout",
+      "display",
+    ]);
+    assertEquals(result.outputEvents[0], { kind: "stdout", text: "before\n" });
+    assertEquals(result.outputEvents[2], { kind: "stdout", text: "after\n" });
+
+    const trace = finalEvent.response.trace;
+    assertExists(trace);
+    assertEquals(trace[0].outputEvents.map((event) => event.kind), [
+      "stdout",
+      "display",
+      "stdout",
+      "display",
+    ]);
   },
 );
 

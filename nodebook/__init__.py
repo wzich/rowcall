@@ -55,4 +55,14 @@ def _depends_on_for(function: FunctionT) -> Callable[..., FunctionT]:
     return depends_on
 
 
-__all__ = ["NodebookNodeError", "node"]
+def display(value: Any) -> None:
+    """Display a value when running inside Nodebook.
+
+    The active runtime replaces this function while executing a node. Outside
+    Nodebook it is intentionally a no-op so authored modules remain importable.
+    """
+
+    return None
+
+
+__all__ = ["NodebookNodeError", "display", "node"]

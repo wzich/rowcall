@@ -1,6 +1,10 @@
 import type {
+  DisplayPreview,
   ExecutionResponse,
   NodeRunResult,
+  OutputEvent,
+  TableCellPreview,
+  TablePreview,
   ValuePreview,
 } from "../../../../types.ts";
 import { Check, Play, Route, X } from "lucide-react";
@@ -183,28 +187,187 @@ function PreviewBlock(
   return (
     <div className="mt-2 space-y-2">
       {entries.map(([name, preview]) => (
-        <div
-          key={name}
-          className="rounded border border-zinc-200 bg-zinc-50 p-3"
-        >
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="font-mono text-sm font-semibold text-zinc-900">
-              {preview.name}
-            </span>
-            <span className="font-mono text-xs text-zinc-500">
-              {preview.type}
-            </span>
-          </div>
+        <PreviewCard key={name} preview={preview} />
+      ))}
+    </div>
+  );
+}
+
+function TablePreviewBlock({ table }: { table: TablePreview }) {
+  return (
+    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white">
+      <div className="max-h-80 overflow-auto">
+        <table className="min-w-full border-separate border-spacing-0 text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600">
+            <tr>
+              {table.index && (
+                <th className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium">
+                  index
+                </th>
+              )}
+              {table.columns.map((column) => (
+                <th
+                  key={column.name}
+                  className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium last:border-r-0"
+                >
+                  <div className="max-w-44 truncate text-zinc-800">
+                    {column.name}
+                  </div>
+                  {column.dtype && (
+                    <div className="max-w-44 truncate font-mono text-[10px] font-normal text-zinc-500">
+                      {column.dtype}
+                    </div>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="odd:bg-white even:bg-zinc-50">
+                {table.index && (
+                  <td className="border-b border-r border-zinc-100 px-2 py-1.5 font-mono text-zinc-500">
+                    <CellValue value={table.index[rowIndex] ?? null} />
+                  </td>
+                )}
+                {row.map((cell, columnIndex) => (
+                  <td
+                    key={columnIndex}
+                    className="border-b border-r border-zinc-100 px-2 py-1.5 last:border-r-0"
+                  >
+                    <CellValue value={cell} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {table.truncated && (
+        <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500">
+          Showing {table.rows.length} of {table.rowCount} rows and{" "}
+          {table.columns.length} of {table.columnCount} columns.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CellValue({ value }: { value: TableCellPreview }) {
+  if (value === null) {
+    return <span className="font-mono text-zinc-400">null</span>;
+  }
+  if (typeof value === "boolean") {
+    return <span className="font-mono text-sky-700">{String(value)}</span>;
+  }
+  if (typeof value === "number") {
+    return <span className="font-mono text-zinc-800">{value}</span>;
+  }
+  if (typeof value === "string") {
+    return <span className="block max-w-56 truncate">{value}</span>;
+  }
+  if (value.kind === "nan") {
+    return <span className="font-mono text-zinc-400">NaN</span>;
+  }
+  if (value.kind === "datetime") {
+    return (
+      <span className="block max-w-56 truncate font-mono text-zinc-700">
+        {value.value}
+      </span>
+    );
+  }
+  return <span className="block max-w-56 truncate">{value.value}</span>;
+}
+
+function DisplayBlock({ displays }: { displays: DisplayPreview[] }) {
+  if (displays.length === 0) return null;
+
+  return (
+    <section>
+      <h4 className="text-xs font-semibold uppercase text-zinc-500">
+        Displays
+      </h4>
+      <div className="mt-2 space-y-2">
+        {displays.map((display, index) => (
+          <PreviewCard
+            key={index}
+            preview={{ ...display.value, name: `display ${index + 1}` }}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InlineOutputBlock({
+  events,
+  stdout,
+  displays,
+}: {
+  events?: OutputEvent[];
+  stdout: string;
+  displays: DisplayPreview[];
+}) {
+  if (events && events.length > 0) {
+    return (
+      <section>
+        <h4 className="text-xs font-semibold uppercase text-zinc-500">
+          Output
+        </h4>
+        <div className="mt-2 space-y-2">
+          {events.map((event, index) =>
+            event.kind === "stdout"
+              ? (
+                <pre
+                  key={index}
+                  className="max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900"
+                >
+                  {event.text}
+                </pre>
+              )
+              : (
+                <PreviewCard
+                  key={index}
+                  preview={{ ...event.value, name: `display ${index + 1}` }}
+                />
+              )
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <DisplayBlock displays={displays} />
+      <TextOutputBlock title="Stdout" value={stdout} />
+    </>
+  );
+}
+
+function PreviewCard({ preview }: { preview: ValuePreview }) {
+  return (
+    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-mono text-sm font-semibold text-zinc-900">
+          {preview.name}
+        </span>
+        <span className="font-mono text-xs text-zinc-500">
+          {preview.type}
+        </span>
+      </div>
+      {preview.table
+        ? <TablePreviewBlock table={preview.table} />
+        : (
           <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800">
             {preview.repr}
           </pre>
-          {preview.warning && (
-            <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-              {preview.warning}
-            </p>
-          )}
-        </div>
-      ))}
+        )}
+      {preview.warning && (
+        <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+          {preview.warning}
+        </p>
+      )}
     </div>
   );
 }
@@ -336,8 +499,12 @@ function RunResult({
               : <PreviewBlock previews={nodeResult.outputs} />}
           </section>
 
+          <InlineOutputBlock
+            events={nodeResult.outputEvents}
+            stdout={nodeResult.stdout}
+            displays={nodeResult.displays}
+          />
           <WarningList warnings={nodeResult.warnings} />
-          <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
           <TextOutputBlock
             title="Stderr"
             value={nodeResult.stderr}
@@ -421,8 +588,12 @@ function RunResult({
             : <PreviewBlock previews={outputs} />}
         </section>
 
+        <InlineOutputBlock
+          events={nodeResult?.outputEvents}
+          stdout={nodeResult?.stdout ?? ""}
+          displays={nodeResult?.displays ?? []}
+        />
         <WarningList warnings={nodeResult?.warnings ?? []} />
-        <TextOutputBlock title="Stdout" value={nodeResult?.stdout ?? ""} />
         <TextOutputBlock
           title="Stderr"
           value={nodeResult?.stderr ?? ""}
@@ -780,8 +951,12 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
           <PreviewBlock previews={step.outputs} />
         </section>
 
+        <InlineOutputBlock
+          events={step.outputEvents}
+          stdout={step.stdout}
+          displays={step.displays}
+        />
         <WarningList warnings={step.warnings} />
-        <TextOutputBlock title="Stdout" value={step.stdout} />
         <TextOutputBlock title="Stderr" value={step.stderr} variant="danger" />
         {step.error && (
           <section>
@@ -1044,7 +1219,7 @@ export function InspectorPanel({
   const isGraphActionDisabled = isGraphRunning;
 
   return (
-    <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-zinc-200 bg-white">
+    <aside className="flex h-full w-[560px] shrink-0 flex-col border-l border-zinc-200 bg-white">
       <div className="border-b border-zinc-200 px-5 py-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase text-zinc-500">

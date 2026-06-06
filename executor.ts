@@ -593,6 +593,10 @@ export function printNodeRunResult(result: NodeRunResult): void {
   }
   console.log("outputs:");
   console.log(result.outputs);
+  if (result.displays.length > 0) {
+    console.log("displays:");
+    console.log(result.displays);
+  }
 
   if (!result.ok && result.error) {
     console.log(`error: ${result.error}`);

@@ -4,6 +4,7 @@ import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
 import { Check, Play, Plus, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useMemo } from "react";
+import type { TableCellPreview, TablePreview } from "../../../../types.ts";
 import type {
   NodeRunVisualStatus,
   PythonFlowNode,
@@ -64,10 +65,17 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const showStdout = Boolean(preview?.stdout);
   const showStderr = Boolean(preview?.stderr);
   const showError = Boolean(preview?.error);
-  const hasPreview = showRuntimeOutputTypes || showStdout || showStderr ||
-    showError;
+  const tablePreviews = preview?.ok ? getNodeTablePreviews(preview) : [];
+  const visibleTablePreviews = tablePreviews.slice(0, 2);
+  const hiddenTablePreviewCount = Math.max(
+    0,
+    tablePreviews.length - visibleTablePreviews.length,
+  );
+  const showTables = visibleTablePreviews.length > 0;
+  const hasPreview = showRuntimeOutputTypes || showTables || showStdout ||
+    showStderr || showError;
   const hasStalePreview = data.runStatus === "stale" && hasPreview;
-  const showPreviewBody = (showStdout || showStderr || showError) &&
+  const showPreviewBody = (showTables || showStdout || showStderr || showError) &&
     !hasStalePreview;
 
   const handleOutputToggle = (name: string) => {
@@ -190,6 +198,23 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       )}
       {showPreviewBody && (
         <div className="space-y-2 border-t border-zinc-200 px-3 py-2">
+          {showTables && (
+            <div className="space-y-2">
+              {visibleTablePreviews.map((tablePreview) => (
+                <CompactTablePreview
+                  key={tablePreview.key}
+                  title={tablePreview.title}
+                  table={tablePreview.table}
+                />
+              ))}
+              {hiddenTablePreviewCount > 0 && (
+                <p className="text-[11px] text-zinc-500">
+                  +{hiddenTablePreviewCount} more table preview
+                  {hiddenTablePreviewCount === 1 ? "" : "s"}
+                </p>
+              )}
+            </div>
+          )}
           {showStdout && preview && (
             <TextPreviewBlock title="stdout" value={preview.stdout} />
           )}
@@ -250,6 +275,141 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       />
     </article>
   );
+}
+
+function getNodeTablePreviews(
+  preview: NonNullable<PythonFlowNode["data"]["preview"]>,
+): Array<{ key: string; title: string; table: TablePreview }> {
+  const outputEvents = preview.outputEvents ?? [];
+  return outputEvents.flatMap((event, index) =>
+    event.kind === "display" && event.value.table
+      ? [{
+        key: `display:${index}`,
+        title: `display ${index + 1}`,
+        table: event.value.table,
+      }]
+      : []
+  );
+}
+
+function CompactTablePreview({
+  title,
+  table,
+}: {
+  title: string;
+  table: TablePreview;
+}) {
+  const columns = Array.isArray(table.columns) ? table.columns.slice(0, 5) : [];
+  const rows = Array.isArray(table.rows) ? table.rows.slice(0, 5) : [];
+  const rowIndexes = Array.isArray(table.index) ? table.index.slice(0, 5) : null;
+  if (columns.length === 0) {
+    return null;
+  }
+  const clippedRows = table.rowCount > rows.length;
+  const clippedColumns = table.columnCount > columns.length;
+
+  return (
+    <div className="overflow-hidden rounded border border-zinc-200 bg-white">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-2 py-1">
+        <span className="min-w-0 truncate font-mono text-[11px] font-semibold text-zinc-800">
+          {title}
+        </span>
+        <span className="shrink-0 text-[10px] text-zinc-500">
+          {table.rowCount} x {table.columnCount}
+        </span>
+      </div>
+      <div className="overflow-hidden">
+        <table className="w-full table-fixed border-separate border-spacing-0 text-left text-[10px]">
+          <thead className="bg-zinc-100 text-zinc-600">
+            <tr>
+              {rowIndexes && (
+                <th className="w-14 border-b border-r border-zinc-200 px-1.5 py-1 font-medium">
+                  index
+                </th>
+              )}
+              {columns.map((column) => (
+                <th
+                  key={column.name}
+                  className="border-b border-r border-zinc-200 px-1.5 py-1 font-medium last:border-r-0"
+                >
+                  <span className="block truncate" title={column.name}>
+                    {column.name}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="odd:bg-white even:bg-zinc-50">
+                {rowIndexes && (
+                  <td className="border-b border-r border-zinc-100 px-1.5 py-1 font-mono text-zinc-500">
+                    <CompactCellValue value={rowIndexes[rowIndex] ?? null} />
+                  </td>
+                )}
+                {columns.map((column, columnIndex) => (
+                  <td
+                    key={column.name}
+                    className="border-b border-r border-zinc-100 px-1.5 py-1 last:border-r-0"
+                  >
+                    <CompactCellValue
+                      value={Array.isArray(row) ? row[columnIndex] ?? null : null}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(table.truncated || clippedRows || clippedColumns) && (
+        <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] text-zinc-500">
+          Showing {rows.length} of {table.rowCount} rows and {columns.length} of{" "}
+          {table.columnCount} columns
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CompactCellValue({ value }: { value: TableCellPreview }) {
+  const rendered = renderCompactCellValue(value);
+  return (
+    <span
+      className={[
+        "block truncate",
+        rendered.muted ? "text-zinc-400" : "text-zinc-800",
+        rendered.mono ? "font-mono" : "",
+      ].join(" ")}
+      title={rendered.title}
+    >
+      {rendered.label}
+    </span>
+  );
+}
+
+function renderCompactCellValue(
+  value: TableCellPreview,
+): { label: string; title: string; muted: boolean; mono: boolean } {
+  if (value === null) {
+    return { label: "null", title: "null", muted: true, mono: true };
+  }
+  if (typeof value === "string") {
+    return { label: value, title: value, muted: false, mono: false };
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    const label = String(value);
+    return { label, title: label, muted: false, mono: true };
+  }
+  if (value.kind === "nan") {
+    return { label: "NaN", title: "NaN", muted: true, mono: true };
+  }
+  return {
+    label: value.value,
+    title: value.value,
+    muted: false,
+    mono: value.kind === "datetime",
+  };
 }
 
 function OutputChecklist({

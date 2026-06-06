@@ -29,14 +29,46 @@ export type ValuePreview = {
   type: string;
   repr: string;
   jsonValue?: unknown;
+  table?: TablePreview;
   warning?: string;
 };
+
+export type TableCellPreview =
+  | string
+  | number
+  | boolean
+  | null
+  | { kind: "nan" }
+  | { kind: "datetime"; value: string }
+  | { kind: "repr"; value: string };
+
+export type TablePreview = {
+  columns: Array<{
+    name: string;
+    dtype?: string;
+  }>;
+  rows: TableCellPreview[][];
+  index?: TableCellPreview[];
+  rowCount: number;
+  columnCount: number;
+  truncated: boolean;
+};
+
+export type DisplayPreview = {
+  value: ValuePreview;
+};
+
+export type OutputEvent =
+  | { kind: "stdout"; text: string }
+  | { kind: "display"; value: ValuePreview };
 
 export type NodeRunResult = {
   ok: boolean;
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
+  displays: DisplayPreview[];
+  outputEvents: OutputEvent[];
   warnings: string[];
   error?: string;
 };
@@ -87,6 +119,8 @@ export type ExecutionStepTrace = {
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
+  displays: DisplayPreview[];
+  outputEvents: OutputEvent[];
   warnings: string[];
   error: string | null;
 };

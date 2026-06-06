@@ -1,5 +1,6 @@
 import contextlib
 import copy
+import math
 import hashlib
 import io
 import json
@@ -15,6 +16,9 @@ JSON_PREVIEW_BYTE_LIMIT = 16_000
 JSON_PREVIEW_MAX_DEPTH = 6
 JSON_PREVIEW_MAX_NODES = 1_000
 JSON_PREVIEW_MAX_CONTAINER_ITEMS = 200
+TABLE_PREVIEW_MAX_ROWS = 50
+TABLE_PREVIEW_MAX_COLUMNS = 30
+TABLE_PREVIEW_MAX_CELL_REPR = 200
 
 
 def emit(event: dict) -> None:
@@ -57,6 +61,8 @@ def make_error_result(message: str, stdout: str = "", stderr: str = "") -> dict:
         "stdout": stdout,
         "stderr": stderr,
         "outputs": {},
+        "displays": [],
+        "outputEvents": [],
         "warnings": [],
         "error": message,
     }
@@ -161,6 +167,138 @@ def make_json_preview_value(value: Any) -> Any:
     return candidate
 
 
+def is_nan_like(value: Any) -> bool:
+    try:
+        if isinstance(value, float):
+            return math.isnan(value)
+    except TypeError:
+        return False
+
+    try:
+        import pandas as pd
+
+        return bool(pd.isna(value))
+    except (ImportError, TypeError, ValueError):
+        return False
+
+
+def table_cell_preview(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if is_nan_like(value):
+        return {"kind": "nan"}
+
+    if type(value) in (bool, int, str):
+        return value
+
+    if type(value) is float:
+        if not math.isfinite(value):
+            return {"kind": "repr", "value": repr(value)}
+        return value
+
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        try:
+            return {"kind": "datetime", "value": str(isoformat())}
+        except Exception:
+            pass
+
+    try:
+        import numpy as np
+
+        if isinstance(value, np.generic):
+            return table_cell_preview(value.item())
+    except ImportError:
+        pass
+
+    try:
+        text = repr(value)
+    except Exception as exc:
+        text = f"<repr failed: {exc}>"
+
+    return {"kind": "repr", "value": truncate_text(text, TABLE_PREVIEW_MAX_CELL_REPR)}
+
+
+def make_pandas_table_preview(value: Any) -> dict | None:
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    if isinstance(value, pd.Series):
+        frame = value.to_frame()
+    elif isinstance(value, pd.DataFrame):
+        frame = value
+    else:
+        return None
+
+    row_count, column_count = frame.shape
+    sliced = frame.iloc[:TABLE_PREVIEW_MAX_ROWS, :TABLE_PREVIEW_MAX_COLUMNS]
+
+    return {
+        "columns": [
+            {"name": str(column), "dtype": str(dtype)}
+            for column, dtype in zip(sliced.columns, sliced.dtypes)
+        ],
+        "index": [table_cell_preview(item) for item in sliced.index.tolist()],
+        "rows": [
+            [table_cell_preview(item) for item in row]
+            for row in sliced.itertuples(index=False, name=None)
+        ],
+        "rowCount": row_count,
+        "columnCount": column_count,
+        "truncated": row_count > TABLE_PREVIEW_MAX_ROWS
+        or column_count > TABLE_PREVIEW_MAX_COLUMNS,
+    }
+
+
+def make_polars_table_preview(value: Any) -> dict | None:
+    try:
+        import polars as pl
+    except ImportError:
+        return None
+
+    if isinstance(value, pl.Series):
+        frame = value.to_frame()
+    elif isinstance(value, pl.DataFrame):
+        frame = value
+    else:
+        return None
+
+    row_count, column_count = frame.shape
+    sliced = frame.head(TABLE_PREVIEW_MAX_ROWS)
+    columns = sliced.columns[:TABLE_PREVIEW_MAX_COLUMNS]
+    sliced = sliced.select(columns) if columns else sliced
+    dtype_by_column = dict(zip(sliced.columns, sliced.dtypes))
+
+    return {
+        "columns": [
+            {"name": column, "dtype": str(dtype_by_column[column])}
+            for column in sliced.columns
+        ],
+        "rows": [
+            [table_cell_preview(item) for item in row]
+            for row in sliced.iter_rows()
+        ],
+        "rowCount": row_count,
+        "columnCount": column_count,
+        "truncated": row_count > TABLE_PREVIEW_MAX_ROWS
+        or column_count > TABLE_PREVIEW_MAX_COLUMNS,
+    }
+
+
+def make_table_preview(value: Any) -> dict | None:
+    for previewer in (make_pandas_table_preview, make_polars_table_preview):
+        try:
+            preview = previewer(value)
+        except Exception:
+            preview = None
+        if preview is not None:
+            return preview
+    return None
+
+
 def preview_value(name: str, value: Any, warning: str | None = None) -> dict:
     stdio_warning = None
     try:
@@ -186,8 +324,11 @@ def preview_value(name: str, value: Any, warning: str | None = None) -> dict:
     if combined_warning:
         preview["warning"] = combined_warning
 
-    # Keep this deliberately conservative. Rich previews for dataframes, arrays,
-    # and object handles belong in later phases; this field is only for small,
+    table_preview = make_table_preview(value)
+    if table_preview is not None:
+        preview["table"] = table_preview
+
+    # Keep this deliberately conservative. This field is only for small,
     # plain JSON-compatible values that are cheap and safe to ship to the UI.
     try:
         preview["jsonValue"] = make_json_preview_value(value)
@@ -331,6 +472,56 @@ def build_inputs_for_step(
             warnings.append(warning)
 
     return scoped_inputs, warnings
+
+
+def append_stdout_event(output_events: list[dict], text: str) -> None:
+    if not text:
+        return
+    if output_events and output_events[-1]["kind"] == "stdout":
+        output_events[-1]["text"] += text
+    else:
+        output_events.append({"kind": "stdout", "text": text})
+
+
+class CapturedStdout(io.StringIO):
+    def __init__(self, output_events: list[dict]) -> None:
+        super().__init__()
+        self.output_events = output_events
+
+    def write(self, text: str) -> int:
+        append_stdout_event(self.output_events, text)
+        return super().write(text)
+
+
+def make_display_collector(
+    displays: list[dict],
+    output_events: list[dict],
+) -> Callable[[Any], None]:
+    def display(value: Any) -> None:
+        display_preview = {"value": preview_value("display", value)}
+        displays.append(display_preview)
+        output_events.append({"kind": "display", "value": display_preview["value"]})
+
+    return display
+
+
+@contextlib.contextmanager
+def active_nodebook_display(display: Callable[[Any], None]):
+    try:
+        import nodebook
+    except ImportError:
+        yield
+        return
+
+    previous_display = getattr(nodebook, "display", None)
+    nodebook.display = display
+    try:
+        yield
+    finally:
+        if previous_display is None:
+            delattr(nodebook, "display")
+        else:
+            nodebook.display = previous_display
 
 
 def canonical_json(value: Any) -> str:
@@ -553,17 +744,23 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
                 outputs_by_node,
             )
         scope = dict(inputs)
-        stdout_buffer = io.StringIO()
+        output_events: list[dict] = []
+        stdout_buffer = CapturedStdout(output_events)
         stderr_buffer = io.StringIO()
+        displays: list[dict] = []
+        scope["display"] = make_display_collector(displays, output_events)
         result_warnings = list(input_warnings)
 
         try:
-            with contextlib.redirect_stdout(stdout_buffer):
-                with contextlib.redirect_stderr(stderr_buffer):
-                    exec(node["code"], scope, scope)
+            with active_nodebook_display(scope["display"]):
+                with contextlib.redirect_stdout(stdout_buffer):
+                    with contextlib.redirect_stderr(stderr_buffer):
+                        exec(node["code"], scope, scope)
         except Exception as exc:
             stderr_text = stderr_buffer.getvalue() + traceback.format_exc()
             result = make_error_result(str(exc), stdout_buffer.getvalue(), stderr_text)
+            result["displays"] = displays
+            result["outputEvents"] = output_events
             result["warnings"] = result_warnings
             results_by_node[node_id] = result
             executed_node_ids.append(node_id)
@@ -582,6 +779,8 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
                         "stdout": result["stdout"],
                         "stderr": result["stderr"],
                         "outputs": {},
+                        "displays": displays,
+                        "outputEvents": output_events,
                         "warnings": result_warnings,
                         "error": result["error"],
                     }
@@ -621,6 +820,8 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
                     stdout_buffer.getvalue(),
                     stderr_buffer.getvalue(),
                 )
+                result["displays"] = displays
+                result["outputEvents"] = output_events
                 result["warnings"] = result_warnings
                 results_by_node[node_id] = result
                 executed_node_ids.append(node_id)
@@ -639,6 +840,8 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
                             "stdout": result["stdout"],
                             "stderr": result["stderr"],
                             "outputs": {},
+                            "displays": displays,
+                            "outputEvents": output_events,
                             "warnings": result_warnings,
                             "error": result["error"],
                         }
@@ -684,6 +887,8 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
             "stdout": stdout_buffer.getvalue(),
             "stderr": stderr_buffer.getvalue(),
             "outputs": output_previews,
+            "displays": displays,
+            "outputEvents": output_events,
             "warnings": result_warnings,
         }
         results_by_node[node_id] = result
@@ -702,6 +907,8 @@ def run_plan(payload: dict, session: RuntimeSession | None = None) -> dict:
                     "stdout": result["stdout"],
                     "stderr": result["stderr"],
                     "outputs": output_previews,
+                    "displays": displays,
+                    "outputEvents": output_events,
                     "warnings": result_warnings,
                     "error": None,
                 }

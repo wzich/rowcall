@@ -35,6 +35,7 @@ import {
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
+import type { NodeRunResult } from "../../../types.ts";
 
 const documentSourceValue = "document:active";
 
@@ -820,6 +821,7 @@ function getNodeCanvasPreview(
       return {
         ok: false,
         outputs: [],
+        outputEvents: [],
         stdout: "",
         stderr: "",
         error: state.response.error.message,
@@ -831,6 +833,7 @@ function getNodeCanvasPreview(
     return {
       ok: false,
       outputs: [],
+      outputEvents: [],
       stdout: "",
       stderr: "",
       error: state.message,
@@ -840,21 +843,17 @@ function getNodeCanvasPreview(
   return null;
 }
 
-function resultToCanvasPreview(result: {
-  ok: boolean;
-  outputs: Record<string, { name: string; type: string }>;
-  stdout: string;
-  stderr: string;
-  error?: string;
-}): NodeCanvasPreview | null {
+function resultToCanvasPreview(result: NodeRunResult): NodeCanvasPreview | null {
   const preview: NodeCanvasPreview = {
     ok: result.ok,
     outputs: result.ok
       ? Object.entries(result.outputs).map(([name, output]) => ({
         name: output.name || name,
         type: output.type,
+        table: output.table,
       }))
       : [],
+    outputEvents: result.outputEvents ?? [],
     stdout: result.stdout,
     stderr: result.stderr,
     error: result.error ?? null,
@@ -862,6 +861,7 @@ function resultToCanvasPreview(result: {
 
   if (
     preview.outputs.length === 0 &&
+    preview.outputEvents.length === 0 &&
     preview.stdout.length === 0 &&
     preview.stderr.length === 0 &&
     preview.error === null
