@@ -3,6 +3,7 @@ import type {
   NodeRunResult,
   ValuePreview,
 } from "../../../../types.ts";
+import { Play, Route, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
@@ -1035,19 +1036,20 @@ export function InspectorPanel({
             <button
               type="button"
               aria-label="Show graph inspector"
-              className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 text-sm text-zinc-600 hover:bg-zinc-100"
+              className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100"
               onClick={onSelectionClear}
             >
-              x
+              <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
             </button>
           )}
           {!selectedNode && (
             <button
               type="button"
-              className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
               disabled={isGraphActionDisabled}
               onClick={onRunGraph}
             >
+              <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
               {isGraphRunning ? "Running..." : "Run graph"}
             </button>
           )}
@@ -1074,18 +1076,24 @@ export function InspectorPanel({
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
               disabled={areNodeActionsDisabled}
               onClick={() => onRunToNode(selectedNode.id)}
             >
+              <Route
+                aria-hidden="true"
+                className="h-4 w-4"
+                strokeWidth={2.25}
+              />
               {isAnyRunBlockingNodeActions ? "Running..." : "Run to node"}
             </button>
             <button
               type="button"
-              className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+              className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
               disabled={areNodeActionsDisabled}
               onClick={() => onRunNode(selectedNode.id)}
             >
+              <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
               Run node
             </button>
           </div>

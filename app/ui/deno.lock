@@ -11,6 +11,7 @@
     "npm:@uiw/react-codemirror@4.25.9": "4.25.9_@babel+runtime@7.29.2_@codemirror+state@6.6.0_@codemirror+theme-one-dark@6.1.3_@codemirror+view@6.41.0_codemirror@6.0.2_react@19.2.5_react-dom@19.2.5__react@19.2.5_@codemirror+autocomplete@6.20.1_@codemirror+language@6.12.3_@codemirror+lint@6.9.5_@codemirror+search@6.6.0",
     "npm:@vitejs/plugin-react@5.2.0": "5.2.0_vite@7.3.2",
     "npm:@xyflow/react@12.10.2": "12.10.2_react@19.2.5_react-dom@19.2.5__react@19.2.5_@types+react@19.2.14",
+    "npm:lucide-react@1.17.0": "1.17.0_react@19.2.5",
     "npm:react-dom@19.2.5": "19.2.5_react@19.2.5",
     "npm:react@19.2.5": "19.2.5",
     "npm:tailwindcss@4.2.2": "4.2.2",
@@ -1053,6 +1054,12 @@
         "yallist"
       ]
     },
+    "lucide-react@1.17.0_react@19.2.5": {
+      "integrity": "sha512-9FA9evdox/JQL5PT57fdA1x/yg8T7knJ98+zjTL3UfKza6pflQUUh3XtaQIHKvnsJw1lmsEyHVlt5jchYxOQ5w==",
+      "dependencies": [
+        "react"
+      ]
+    },
     "magic-string@0.30.21": {
       "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
       "dependencies": [
@@ -1218,6 +1225,7 @@
       "npm:@uiw/react-codemirror@4.25.9",
       "npm:@vitejs/plugin-react@5.2.0",
       "npm:@xyflow/react@12.10.2",
+      "npm:lucide-react@1.17.0",
       "npm:react-dom@19.2.5",
       "npm:react@19.2.5",
       "npm:tailwindcss@4.2.2",

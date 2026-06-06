@@ -1,6 +1,7 @@
 import { python } from "@codemirror/lang-python";
 import CodeMirror from "@uiw/react-codemirror";
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
+import { Plus, Trash2 } from "lucide-react";
 import { useMemo } from "react";
 import type {
   NodeRunVisualStatus,
@@ -170,10 +171,10 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
               type="button"
               aria-label={`Add child node after ${data.label}`}
               title="Add child node"
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-base font-semibold text-zinc-700 hover:bg-zinc-100"
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
               onClick={() => data.onAddChild?.(id)}
             >
-              +
+              <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
             </button>
           )}
           {data.onDelete && (
@@ -181,10 +182,14 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
               type="button"
               aria-label={`Delete node ${data.label}`}
               title="Delete node"
-              className="flex h-7 w-7 items-center justify-center rounded border border-red-200 text-xs font-semibold text-red-600 hover:bg-red-50"
+              className="flex h-7 w-7 items-center justify-center rounded border border-red-200 text-red-600 hover:bg-red-50"
               onClick={() => data.onDelete?.(id)}
             >
-              x
+              <Trash2
+                aria-hidden="true"
+                className="h-3.5 w-3.5"
+                strokeWidth={2.25}
+              />
             </button>
           )}
         </div>

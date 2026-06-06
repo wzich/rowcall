@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   inspectGraphText,
@@ -638,10 +639,13 @@ export default function App() {
           )}
           <button
             type="button"
-            className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
+            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
             disabled={!editableDocument || saveDocumentMutation.isPending}
             onClick={handleSaveDocument}
           >
+            {!isReadOnlyDocument && (
+              <Save aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+            )}
             {isReadOnlyDocument
               ? "Read-only"
               : saveDocumentMutation.isPending

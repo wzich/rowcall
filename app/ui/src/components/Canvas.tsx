@@ -13,6 +13,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
@@ -182,7 +183,7 @@ function CanvasAddPanel({
         type="button"
         aria-label="Add node"
         title="Add node"
-        className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-xl font-semibold text-zinc-700 shadow-sm hover:bg-zinc-100"
+        className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
         onClick={() => {
           const canvasBounds = document
             .querySelector(".react-flow")
@@ -202,7 +203,7 @@ function CanvasAddPanel({
           );
         }}
       >
-        +
+        <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
       </button>
     </Panel>
   );
