@@ -309,29 +309,34 @@ function InlineOutputBlock({
   displays: DisplayPreview[];
 }) {
   if (events && events.length > 0) {
+    let displayIndex = 0;
+
     return (
       <section>
         <h4 className="text-xs font-semibold uppercase text-zinc-500">
           Output
         </h4>
         <div className="mt-2 space-y-2">
-          {events.map((event, index) =>
-            event.kind === "stdout"
-              ? (
+          {events.map((event, index) => {
+            if (event.kind === "stdout") {
+              return (
                 <pre
                   key={index}
                   className="max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900"
                 >
                   {event.text}
                 </pre>
-              )
-              : (
-                <PreviewCard
-                  key={index}
-                  preview={{ ...event.value, name: `display ${index + 1}` }}
-                />
-              )
-          )}
+              );
+            }
+
+            displayIndex += 1;
+            return (
+              <PreviewCard
+                key={index}
+                preview={{ ...event.value, name: `display ${displayIndex}` }}
+              />
+            );
+          })}
         </div>
       </section>
     );
