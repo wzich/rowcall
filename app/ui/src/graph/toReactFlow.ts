@@ -16,6 +16,7 @@ export type PythonNodeData = {
   onDelete?: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
+  onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
 };

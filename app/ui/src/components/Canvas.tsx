@@ -14,7 +14,14 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { LayoutDashboard, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  type KeyboardEvent,
+  type MutableRefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
 import {
@@ -47,6 +54,7 @@ type CanvasProps = {
   onNodeSelect: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
+  onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
   onSelectionClear: () => void;
@@ -69,6 +77,7 @@ export function Canvas({
   onNodeSelect,
   onOutputsChange,
   onRunToNode,
+  onSaveDocument,
   outputsReadOnly = false,
   runToNodeDisabled = false,
   onSelectionClear,
@@ -76,6 +85,8 @@ export function Canvas({
   const flowGraph = useMemo(() => toReactFlowGraph(graph), [graph]);
   const [nodes, setNodes, onNodesChange] = useNodesState(flowGraph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flowGraph.edges);
+  const shortcutScopeRef = useRef<HTMLDivElement>(null);
+  const addNodeAtCanvasCenterRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     setNodes(flowGraph.nodes);
@@ -99,6 +110,7 @@ export function Canvas({
           onDelete: onDeleteNode,
           onOutputsChange,
           onRunToNode,
+          onSaveDocument,
           outputsReadOnly,
           runToNodeDisabled,
         },
@@ -115,13 +127,19 @@ export function Canvas({
       selectedNodeId,
       onOutputsChange,
       onRunToNode,
+      onSaveDocument,
       outputsReadOnly,
       runToNodeDisabled,
     ],
   );
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
+    shortcutScopeRef.current?.focus();
     onNodeSelect(node.id);
   };
+  const handlePaneClick = useCallback(() => {
+    shortcutScopeRef.current?.focus();
+    onSelectionClear();
+  }, [onSelectionClear]);
   const handleNodesChange = useCallback<OnNodesChange<PythonFlowNode>>((
     changes,
   ) => {
@@ -150,32 +168,125 @@ export function Canvas({
 
     onConnectNodes?.(connection.source, connection.target);
   }, [onConnectNodes]);
+  useEffect(() => {
+    addNodeAtCanvasCenterRef.current = () => {
+      onAddNode?.({ x: 0, y: 0 });
+    };
+  }, [onAddNode]);
+  const handleCanvasKeyDown = useCallback((
+    event: KeyboardEvent<HTMLDivElement>,
+  ) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      onSaveDocument?.();
+      return;
+    }
+
+    if (
+      event.shiftKey && event.key === "Enter" && selectedNodeId &&
+      onRunToNode && !runToNodeDisabled
+    ) {
+      event.preventDefault();
+      void onRunToNode(selectedNodeId);
+      return;
+    }
+
+    if (
+      event.key.toLowerCase() === "a" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      if (!onAddChildNode && !onAddNode) {
+        return;
+      }
+
+      event.preventDefault();
+      if (selectedNodeId && onAddChildNode) {
+        onAddChildNode(selectedNodeId);
+      } else {
+        addNodeAtCanvasCenterRef.current();
+      }
+    }
+  }, [
+    onAddChildNode,
+    onAddNode,
+    onRunToNode,
+    onSaveDocument,
+    selectedNodeId,
+    runToNodeDisabled,
+  ]);
 
   return (
-    <ReactFlow
-      nodes={renderedNodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      onNodesChange={handleNodesChange}
-      onEdgesChange={handleEdgesChange}
-      onConnect={handleConnect}
-      onNodeClick={handleNodeClick}
-      onNodeDragStop={handleNodeDragStop}
-      onPaneClick={onSelectionClear}
-      autoPanOnNodeDrag={false}
-      proOptions={{ hideAttribution: true }}
+    <div
+      data-shortcut-scope="canvas"
+      ref={shortcutScopeRef}
+      tabIndex={0}
+      className="h-full outline-none"
+      onKeyDown={handleCanvasKeyDown}
     >
-      <InitialFitView nodeCount={renderedNodes.length} />
-      <Background color="#d4d4d8" gap={18} />
-      <Controls />
-      {(onAddNode || onAutoLayout) && (
-        <CanvasToolsPanel
+      <ReactFlow
+        nodes={renderedNodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
+        onConnect={handleConnect}
+        onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
+        onPaneClick={handlePaneClick}
+        autoPanOnNodeDrag={false}
+        proOptions={{ hideAttribution: true }}
+      >
+        <CanvasShortcutBridge
+          addNodeAtCanvasCenterRef={addNodeAtCanvasCenterRef}
           onAddNode={onAddNode}
-          onAutoLayout={onAutoLayout}
         />
-      )}
-    </ReactFlow>
+        <InitialFitView nodeCount={renderedNodes.length} />
+        <Background color="#d4d4d8" gap={18} />
+        <Controls />
+        {(onAddNode || onAutoLayout) && (
+          <CanvasToolsPanel
+            onAddNode={onAddNode}
+            onAutoLayout={onAutoLayout}
+          />
+        )}
+      </ReactFlow>
+    </div>
   );
+}
+
+function CanvasShortcutBridge({
+  addNodeAtCanvasCenterRef,
+  onAddNode,
+}: {
+  addNodeAtCanvasCenterRef: MutableRefObject<() => void>;
+  onAddNode?: (position: GraphPosition) => void;
+}) {
+  const { screenToFlowPosition } = useReactFlow();
+
+  useEffect(() => {
+    addNodeAtCanvasCenterRef.current = () => {
+      if (!onAddNode) {
+        return;
+      }
+
+      const canvasBounds = document
+        .querySelector(".react-flow")
+        ?.getBoundingClientRect();
+      const x = canvasBounds
+        ? canvasBounds.left + canvasBounds.width / 2
+        : window.innerWidth / 2;
+      const y = canvasBounds
+        ? canvasBounds.top + canvasBounds.height / 2
+        : window.innerHeight / 2;
+
+      onAddNode(screenToFlowPosition({ x, y }));
+    };
+  }, [addNodeAtCanvasCenterRef, onAddNode, screenToFlowPosition]);
+
+  return null;
 }
 
 function InitialFitView({ nodeCount }: { nodeCount: number }) {

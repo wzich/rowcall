@@ -1,4 +1,5 @@
 import { python } from "@codemirror/lang-python";
+import { keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
 import { Check, Play, Plus, Trash2 } from "lucide-react";
@@ -47,14 +48,36 @@ const statusStyles: Record<
 };
 
 export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
-  const extensions = useMemo(() => [python()], []);
+  const extensions = useMemo(() => [
+    python(),
+    keymap.of([
+      {
+        key: "Shift-Enter",
+        run: () => {
+          if (!data.onRunToNode || data.runToNodeDisabled) {
+            return true;
+          }
+
+          data.onRunToNode(id);
+          return true;
+        },
+      },
+      {
+        key: "Mod-s",
+        run: () => {
+          data.onSaveDocument?.();
+          return true;
+        },
+      },
+    ]),
+  ], [data.onRunToNode, data.onSaveDocument, data.runToNodeDisabled, id]);
   const status = statusStyles[data.runStatus];
   const canEdit = Boolean(data.onCodeChange);
   const isSelected = Boolean(selected);
   const outputsReadOnly = data.outputsReadOnly || !data.editable;
   const runToNodeTitle = data.runToNodeDisabled
     ? "Run unavailable"
-    : "Run to node";
+    : "Run to node (Shift+Enter)";
   const preview = data.preview;
   const previewOutputsByName = new Map(
     preview?.ok ? preview.outputs.map((output) => [output.name, output]) : [],
@@ -153,21 +176,23 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         {isSelected
           ? (
             <div className="[&_.cm-editor]:max-h-[180px] [&_.cm-editor]:rounded-md [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
-              <CodeMirror
-                value={data.code}
-                extensions={extensions}
-                readOnly={!canEdit}
-                onChange={(value) => data.onCodeChange?.(id, value)}
-                basicSetup={{
-                  autocompletion: false,
-                  closeBrackets: true,
-                  foldGutter: false,
-                  highlightActiveLine: false,
-                  highlightActiveLineGutter: true,
-                  lineNumbers: false,
-                }}
-                theme="light"
-              />
+              <div data-shortcut-scope="editor">
+                <CodeMirror
+                  value={data.code}
+                  extensions={extensions}
+                  readOnly={!canEdit}
+                  onChange={(value) => data.onCodeChange?.(id, value)}
+                  basicSetup={{
+                    autocompletion: false,
+                    closeBrackets: true,
+                    foldGutter: false,
+                    highlightActiveLine: false,
+                    highlightActiveLineGutter: true,
+                    lineNumbers: false,
+                  }}
+                  theme="light"
+                />
+              </div>
             </div>
           )
           : <CodePreview value={data.code} />}
@@ -244,7 +269,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
             <button
               type="button"
               aria-label={`Add child node after ${data.label}`}
-              title="Add child node"
+              title="Add child node (A)"
               className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
               onClick={() => data.onAddChild?.(id)}
             >

@@ -624,6 +624,7 @@ export default function App() {
           )}
           <button
             type="button"
+            title={isReadOnlyDocument ? "Read-only" : "Save (Ctrl+S)"}
             className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
             disabled={!editableDocument || saveDocumentMutation.isPending}
             onClick={handleSaveDocument}
@@ -711,6 +712,7 @@ export default function App() {
                 onNodeSelect={setSelectedNodeId}
                 onOutputsChange={handleOutputsChange}
                 onRunToNode={handleRunToNode}
+                onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
                 runToNodeDisabled={isGraphRunning}
                 onSelectionClear={() => setSelectedNodeId(null)}
@@ -734,10 +736,31 @@ export default function App() {
               onSelectionClear={() => setSelectedNodeId(null)}
               validationIssues={validationIssues}
             />
+            <ShortcutHintPanel />
           </div>
         )}
       </main>
     </div>
+  );
+}
+
+function ShortcutHintPanel() {
+  return (
+    <aside className="pointer-events-none absolute bottom-3 left-3 hidden rounded border border-zinc-200 bg-white/90 px-3 py-2 text-[11px] text-zinc-500 shadow-sm backdrop-blur md:block">
+      <span className="mr-2 font-medium text-zinc-700">Shortcuts</span>
+      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+        Shift+Enter
+      </kbd>
+      <span className="mx-1">run to node</span>
+      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+        A
+      </kbd>
+      <span className="mx-1">add child</span>
+      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+        Ctrl+S
+      </kbd>
+      <span className="ml-1">save</span>
+    </aside>
   );
 }
 
