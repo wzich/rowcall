@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
 import { Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   inspectGraphText,
   type InspectGraphValidationIssue,
@@ -53,9 +53,11 @@ export default function App() {
   >("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
+  const editGenerationRef = useRef(0);
   const documentQuery = useQuery({
     queryKey: ["nodebook-document", "active"],
     queryFn: loadDocument,
+    refetchOnWindowFocus: false,
   });
   const pythonRuntimeQuery = useQuery({
     queryKey: ["runtime", "python"],
@@ -100,6 +102,7 @@ export default function App() {
     setValidationIssues([]);
     setSaveStatus("idle");
     setSaveError(null);
+    editGenerationRef.current = 0;
   }, [documentQuery.data, documentQuery.isSuccess]);
 
   const saveDocumentMutation = useMutation({
@@ -107,11 +110,14 @@ export default function App() {
     onMutate: () => {
       setSaveStatus("saving");
       setSaveError(null);
+      return { editGeneration: editGenerationRef.current };
     },
-    onSuccess: (result) => {
+    onSuccess: (result, _variables, context) => {
       setDocumentPath(result.path);
-      setEditableDocument(result.document);
-      setSaveStatus("saved");
+      if (context?.editGeneration === editGenerationRef.current) {
+        setEditableDocument(result.document);
+        setSaveStatus("saved");
+      }
     },
     onError: (error) => {
       setSaveStatus("error");
@@ -310,6 +316,7 @@ export default function App() {
   }, [editableGraph, graphNodeDetails, selectedNodeId]);
 
   const markDocumentEdited = useCallback(() => {
+    editGenerationRef.current += 1;
     setSaveStatus("idle");
     setSaveError(null);
   }, []);
