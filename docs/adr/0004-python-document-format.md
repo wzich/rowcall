@@ -6,10 +6,9 @@ Proposed
 
 ## Context
 
-Nodebook documents currently store node code as strings inside JSON files. This
-worked for the prototype because it made graph loading and canvas persistence
-simple, but it makes user code harder to review, search, refactor, lint, test,
-and edit outside the Nodebook UI.
+The first Nodebook prototype stored node code as strings inside JSON files. That
+made graph loading and canvas persistence simple, but it made user code harder
+to review, search, refactor, lint, test, and edit outside the Nodebook UI.
 
 Nodebook should feel like a visual editor for a real Python program, not like an
 application-private document format that happens to contain Python snippets.
@@ -135,11 +134,12 @@ The migration should be staged.
 2. Build a Python document loader that turns a `.py` file into the existing
    runtime `Graph` shape plus document metadata.
 3. Add optional sidecar loading for positions and UI-only state.
-4. Keep the existing JSON document support as a legacy/import path during the
-   migration.
-5. Update save behavior so normal UI-authored node edits regenerate the
-   function body and return dictionary while custom returns are preserved or
-   flagged with specific validation errors.
+4. Update save behavior so normal UI-authored node edits regenerate the function
+   body and return dictionary while custom returns are preserved or flagged with
+   specific validation errors.
+5. Remove persisted JSON document loading and saving once Python documents are
+   the only canonical document format. Keep `.nodebook.json` sidecars because
+   they store UI-only canvas metadata, not embedded node code.
 6. Add file watching and reconciliation later so external `.py` edits can
    refresh the canvas without requiring a full restart. The Python file is the
    authority when it changes externally. If there are no unsaved canvas edits,

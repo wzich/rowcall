@@ -1,6 +1,4 @@
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
-import type { GraphSource } from "./graphSources.ts";
-import { toInspectRequest } from "./graphSources.ts";
 
 export type InspectGraphSummary = {
   nodeCount: number;
@@ -46,19 +44,10 @@ export type InspectGraphError = {
 export type InspectGraphResult = InspectGraphSuccess | InspectGraphError;
 
 export async function inspectGraph(
-  source: GraphSource,
-): Promise<InspectGraphResult> {
-  return await inspectGraphRequest(toInspectRequest(source));
-}
-
-export async function inspectGraphText(
-  text: string,
+  graph: RuntimeGraph,
 ): Promise<InspectGraphResult> {
   return await inspectGraphRequest({
-    source: {
-      type: "text",
-      text,
-    },
+    graph,
   });
 }
 

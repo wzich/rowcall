@@ -1,4 +1,0 @@
-name: localhost
-variables:
-  - name: HOST
-    value: http://localhost:8000

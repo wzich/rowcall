@@ -4,7 +4,7 @@ import { parser as pythonParser } from "@lezer/python";
 import { Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  inspectGraphText,
+  inspectGraph,
   type InspectGraphValidationIssue,
 } from "./api/inspectGraph.ts";
 import {
@@ -521,7 +521,7 @@ export default function App() {
       return false;
     }
 
-    const result = await inspectGraphText(JSON.stringify(editableGraph));
+    const result = await inspectGraph(editableGraph);
     if (!result.ok) {
       setValidationIssues(
         result.error.issues ?? [{

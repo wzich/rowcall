@@ -8,7 +8,6 @@ import {
   getSourceNodes,
   validateGraph,
 } from "./graph.ts";
-import { loadGraphFile } from "./utils.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
 import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
 import { loadPythonDocument, savePythonDocument } from "./python_document.ts";
@@ -51,7 +50,6 @@ type ApiError = {
     | "node_not_found"
     | "runtime_inspection_error"
     | "document_decode_error"
-    | "unsupported_document_write"
     | "document_write_error"
     | "validation_error";
   message: string;
@@ -110,12 +108,6 @@ function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
   });
 }
 
-async function loadJsonDocument(path: string) {
-  const text = await Deno.readTextFile(path);
-  const json = JSON.parse(text);
-  return decodeNodebookDocument(json);
-}
-
 function getActiveDocumentPath(args: string[]): string {
   const documentFlagIndex = args.findIndex((arg) => arg === "--document");
   if (documentFlagIndex >= 0 && args[documentFlagIndex + 1] === undefined) {
@@ -153,28 +145,6 @@ async function ensureActiveDocumentExists(path: string): Promise<void> {
     console.error(`Nodebook Python document does not exist: ${path}`);
     Deno.exit(1);
   }
-}
-
-async function ensureParentDirectoryExists(path: string): Promise<void> {
-  const directory = getDirectoryName(path);
-  if (directory === null) {
-    return;
-  }
-
-  await Deno.mkdir(directory, { recursive: true });
-}
-
-function getDirectoryName(path: string): string | null {
-  const normalizedPath = path.replaceAll("\\", "/");
-  const separatorIndex = normalizedPath.lastIndexOf("/");
-  if (separatorIndex < 0) {
-    return null;
-  }
-  if (separatorIndex === 0) {
-    return "/";
-  }
-
-  return path.slice(0, separatorIndex);
 }
 
 function wantsExecutionStream(
@@ -270,16 +240,6 @@ async function serveBuiltUiIndex(): Promise<Response> {
   }
 }
 
-async function writeNodebookDocument(
-  path: string,
-  document: NodebookDocumentV1,
-): Promise<void> {
-  await Deno.writeTextFile(
-    path,
-    `${JSON.stringify(formatDocument(document), null, 2)}\n`,
-  );
-}
-
 function streamExecutionEvents(
   runId: string,
   runType: ExecutionStreamEvent["runType"],
@@ -333,65 +293,15 @@ function streamExecutionEvents(
 
 app.post("/inspect", async (c) => {
   const body = await c.req.json();
-  const sourceType = body.source.type;
 
-  let graph: Graph = { nodes: [], edges: [] };
-
-  if (sourceType === "path") {
-    try {
-      const rawGraph = await loadGraphFile(body.source.path);
-      const resolved = decodeAndValidateGraph(rawGraph);
-      if (!resolved.ok) {
-        return c.json(
-          resolved,
-          422,
-        );
-      }
-
-      graph = resolved.graph;
-    } catch {
-      return c.json(
-        errorResponse({
-          kind: "file_read_error",
-          message: `Unable to read graph file: ${body.source.path}`,
-        }),
-        500,
-      );
-    }
-  } else if (sourceType === "text") {
-    try {
-      const json = JSON.parse(body.source.text);
-      const resolved = decodeAndValidateGraph(json);
-      if (!resolved.ok) {
-        return c.json(
-          resolved,
-          422,
-        );
-      }
-
-      graph = resolved.graph;
-    } catch {
-      return c.json(
-        errorResponse({
-          kind: "invalid_json",
-          message: "Unable to parse provided JSON text",
-          issues: [{
-            kind: "invalid_json",
-            message: "Unable to parse provided JSON text",
-          }],
-        }),
-        400,
-      );
-    }
-  } else {
+  const resolved = decodeAndValidateGraph(body.graph);
+  if (!resolved.ok) {
     return c.json(
-      errorResponse({
-        kind: "invalid_request",
-        message: "Must provide graph with either path or text",
-      }),
-      400,
+      resolved,
+      422,
     );
   }
+  const graph = resolved.graph;
 
   const upstream = buildUpstreamAdjacency(graph);
   const downstream = buildDownstreamAdjacency(graph);
@@ -420,9 +330,7 @@ app.post("/inspect", async (c) => {
 
 app.get("/document", async (c) => {
   try {
-    const decoded = activeDocumentPath.endsWith(".py")
-      ? await loadPythonDocument(activeDocumentPath)
-      : await loadJsonDocument(activeDocumentPath);
+    const decoded = await loadPythonDocument(activeDocumentPath);
 
     if (!decoded.ok) {
       return c.json(documentDecodeError(decoded.issues), 422);
@@ -434,20 +342,6 @@ app.get("/document", async (c) => {
       path: activeDocumentPath,
     });
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      return c.json(
-        errorResponse({
-          kind: "invalid_json",
-          message: "Unable to parse active Nodebook document",
-          issues: [{
-            kind: "invalid_json",
-            message: "Unable to parse active Nodebook document",
-          }],
-        }),
-        400,
-      );
-    }
-
     return c.json(
       errorResponse({
         kind: "file_read_error",
@@ -500,41 +394,23 @@ app.put("/document", async (c) => {
     return c.json(documentDecodeError(decoded.issues), 422);
   }
 
-  if (activeDocumentPath.endsWith(".py")) {
-    try {
-      const saved = await savePythonDocument(
-        activeDocumentPath,
-        decoded.document,
-      );
-      if (!saved.ok) {
-        return c.json(documentDecodeError(saved.issues), 409);
-      }
-
-      return c.json({
-        ok: true,
-        document: formatDocument(saved.document),
-        path: activeDocumentPath,
-      });
-    } catch (error) {
-      console.error(
-        `Failed to write Python Nodebook document at ${activeDocumentPath}:`,
-      );
-      console.error(error);
-      return c.json(
-        errorResponse({
-          kind: "document_write_error",
-          message: `Unable to write Nodebook document: ${activeDocumentPath}`,
-        }),
-        500,
-      );
-    }
-  }
-
   try {
-    await writeNodebookDocument(activeDocumentPath, decoded.document);
+    const saved = await savePythonDocument(
+      activeDocumentPath,
+      decoded.document,
+    );
+    if (!saved.ok) {
+      return c.json(documentDecodeError(saved.issues), 409);
+    }
+
+    return c.json({
+      ok: true,
+      document: formatDocument(saved.document),
+      path: activeDocumentPath,
+    });
   } catch (error) {
     console.error(
-      `Failed to write Nodebook document at ${activeDocumentPath}:`,
+      `Failed to write Python Nodebook document at ${activeDocumentPath}:`,
     );
     console.error(error);
     return c.json(
@@ -545,12 +421,6 @@ app.put("/document", async (c) => {
       500,
     );
   }
-
-  return c.json({
-    ok: true,
-    document: decoded.document,
-    path: activeDocumentPath,
-  });
 });
 
 app.post("/run-node", async (c) => {
