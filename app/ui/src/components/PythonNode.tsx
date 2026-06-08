@@ -10,6 +10,7 @@ import type {
   NodeRunVisualStatus,
   PythonFlowNode,
 } from "../graph/toReactFlow.ts";
+import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 
 const statusStyles: Record<
   NodeRunVisualStatus,
@@ -529,13 +530,16 @@ function OutputChips({
             {outputs.map((name) => {
               const previewOutput = previewOutputsByName.get(name);
               const label = previewOutput
+                ? `${name} · ${formatPythonType(previewOutput.type)}`
+                : name;
+              const title = previewOutput
                 ? `${name} · ${previewOutput.type}`
                 : name;
               return (
                 <span
                   key={name}
                   className="max-w-full truncate rounded border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] leading-none text-emerald-800"
-                  title={label}
+                  title={title}
                 >
                   {label}
                 </span>

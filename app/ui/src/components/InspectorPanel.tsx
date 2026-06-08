@@ -10,6 +10,7 @@ import type {
 import { Check, Play, Route, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
+import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -351,14 +352,16 @@ function InlineOutputBlock({
 }
 
 function PreviewCard({ preview }: { preview: ValuePreview }) {
+  const typeLabel = formatPythonType(preview.type);
+
   return (
     <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="font-mono text-sm font-semibold text-zinc-900">
           {preview.name}
         </span>
-        <span className="font-mono text-xs text-zinc-500">
-          {preview.type}
+        <span className="font-mono text-xs text-zinc-500" title={preview.type}>
+          {typeLabel}
         </span>
       </div>
       {preview.table
