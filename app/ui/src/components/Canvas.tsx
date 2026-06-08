@@ -142,8 +142,10 @@ export function Canvas({
       runToNodeDisabled,
     ],
   );
-  const handleNodeClick: NodeMouseHandler = (_event, node) => {
-    shortcutScopeRef.current?.focus();
+  const handleNodeClick: NodeMouseHandler = (event, node) => {
+    if (!isInteractiveShortcutTarget(event.target)) {
+      shortcutScopeRef.current?.focus();
+    }
     onNodeSelect(node.id);
   };
   const handlePaneClick = useCallback(() => {
@@ -283,6 +285,11 @@ function isCanvasShortcutEvent(event: KeyboardEvent<HTMLDivElement>): boolean {
   }
 
   return !target.closest(interactiveShortcutTargetSelector);
+}
+
+function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
+  return target instanceof Element &&
+    Boolean(target.closest(interactiveShortcutTargetSelector));
 }
 
 function CanvasShortcutBridge({
