@@ -37,6 +37,16 @@ const nodeTypes = {
   pythonNode: PythonNode,
 } satisfies NodeTypes;
 
+const interactiveShortcutTargetSelector = [
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "[contenteditable]",
+  "[role='textbox']",
+  ".cm-editor",
+].join(",");
+
 type CanvasProps = {
   graph: RuntimeGraph;
   selectedNodeId: string | null;
@@ -176,6 +186,10 @@ export function Canvas({
   const handleCanvasKeyDown = useCallback((
     event: KeyboardEvent<HTMLDivElement>,
   ) => {
+    if (!isCanvasShortcutEvent(event)) {
+      return;
+    }
+
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       onSaveDocument?.();
@@ -255,6 +269,20 @@ export function Canvas({
       </ReactFlow>
     </div>
   );
+}
+
+function isCanvasShortcutEvent(event: KeyboardEvent<HTMLDivElement>): boolean {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return true;
+  }
+
+  const shortcutScope = target.closest("[data-shortcut-scope]");
+  if (shortcutScope !== event.currentTarget) {
+    return false;
+  }
+
+  return !target.closest(interactiveShortcutTargetSelector);
 }
 
 function CanvasShortcutBridge({
