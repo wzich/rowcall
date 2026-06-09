@@ -37,6 +37,9 @@ const nodeTypes = {
   pythonNode: PythonNode,
 } satisfies NodeTypes;
 
+const minCanvasZoom = 0.05;
+const maxCanvasZoom = 2;
+
 const interactiveShortcutTargetSelector = [
   "button",
   "input",
@@ -253,6 +256,8 @@ export function Canvas({
         onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
         autoPanOnNodeDrag={false}
+        minZoom={minCanvasZoom}
+        maxZoom={maxCanvasZoom}
         proOptions={{ hideAttribution: true }}
       >
         <CanvasShortcutBridge
