@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n_load_orders",
+      "position": {
+        "x": 84,
+        "y": -112
+      }
+    },
+    {
+      "id": "n_load_customers",
+      "position": {
+        "x": 960,
+        "y": -128
+      }
+    },
+    {
+      "id": "n_load_campaigns",
+      "position": {
+        "x": 1838,
+        "y": -124
+      }
+    },
+    {
+      "id": "n_load_support",
+      "position": {
+        "x": 2716,
+        "y": -154
+      }
+    },
+    {
+      "id": "n_prepare_orders",
+      "position": {
+        "x": 84,
+        "y": 226
+      }
+    },
+    {
+      "id": "n_prepare_customers",
+      "position": {
+        "x": 960,
+        "y": 230
+      }
+    },
+    {
+      "id": "n_prepare_campaigns",
+      "position": {
+        "x": 1838,
+        "y": 234
+      }
+    },
+    {
+      "id": "n_summarize_support",
+      "position": {
+        "x": 2714,
+        "y": 236
+      }
+    },
+    {
+      "id": "n_build_customer_facts",
+      "position": {
+        "x": 966,
+        "y": 694
+      }
+    },
+    {
+      "id": "n_campaign_roi",
+      "position": {
+        "x": -112,
+        "y": 1240
+      }
+    },
+    {
+      "id": "n_segment_revenue",
+      "position": {
+        "x": 968,
+        "y": 1238
+      }
+    },
+    {
+      "id": "n_retention_risk",
+      "position": {
+        "x": 2092,
+        "y": 1234
+      }
+    }
+  ]
+}
