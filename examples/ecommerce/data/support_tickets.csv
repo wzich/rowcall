@@ -1,0 +1,15 @@
+ticket_id,customer_id,opened_date,category,priority
+T1001,C001,2026-01-11,billing,low
+T1002,C002,2026-01-24,fulfillment,medium
+T1003,C003,2026-01-28,technical,high
+T1004,C003,2026-02-03,technical,medium
+T1005,C005,2026-02-06,billing,low
+T1006,C006,2026-02-08,onboarding,medium
+T1007,C007,2026-02-15,technical,high
+T1008,C008,2026-02-17,billing,medium
+T1009,C010,2026-02-22,technical,high
+T1010,C010,2026-03-01,technical,high
+T1011,C011,2026-03-05,onboarding,low
+T1012,C012,2026-03-08,fulfillment,medium
+T1013,C002,2026-03-14,billing,low
+T1014,C004,2026-03-18,technical,high

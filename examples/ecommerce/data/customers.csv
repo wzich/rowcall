@@ -1,0 +1,13 @@
+customer_id,customer_name,region,segment,signup_date,acquisition_campaign
+C001,Ada Johnson,West,enterprise,2025-05-12,Spring Launch
+C002,Ben Patel,East,mid-market,2025-08-20,Search Always-On
+C003,Cora Lee,West,enterprise,2024-12-01,Spring Launch
+C004,Drew Smith,South,small business,2025-11-05,Partner Webinar
+C005,Eli Brown,North,mid-market,2025-06-17,Search Always-On
+C006,Finn Garcia,East,small business,2026-01-02,Social Retargeting
+C007,Gia Wilson,South,mid-market,2025-09-15,Partner Webinar
+C008,Hana Kim,North,enterprise,2025-03-03,Spring Launch
+C009,Ivan Davis,East,small business,2025-12-12,Social Retargeting
+C010,Jules Chen,South,enterprise,2024-10-27,Partner Webinar
+C011,Kai Martin,North,small business,2026-01-25,Search Always-On
+C012,Lena Moore,West,mid-market,2025-07-08,Social Retargeting
