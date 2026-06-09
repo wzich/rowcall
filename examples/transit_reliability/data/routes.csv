@@ -1,0 +1,7 @@
+route_id,route_name,mode,region,is_express
+R10,Green Loop,bus,Central,false
+R20,Airport Express,rail,North,true
+R30,Crosstown Bus,bus,West,false
+R40,Harbor Connector,ferry,Waterfront,false
+R50,University Rapid,bus,East,true
+R60,Night Owl,bus,South,false

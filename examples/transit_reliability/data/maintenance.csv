@@ -1,0 +1,15 @@
+vehicle_id,maintenance_date,issue_type,severity,downtime_hours
+B101,2026-02-20,inspection,low,1.5
+B102,2026-02-26,door sensor,low,2.0
+B103,2026-02-28,brake adjustment,medium,6.0
+B103,2026-03-04,wheel vibration,medium,4.5
+B104,2026-02-27,cooling fault,high,9.0
+B104,2026-03-05,engine warning,high,7.5
+B105,2026-03-01,inspection,low,1.0
+B106,2026-03-02,brake adjustment,medium,5.0
+B107,2026-02-25,inspection,low,1.0
+T201,2026-03-01,signal equipment,high,8.0
+T202,2026-02-22,inspection,low,2.0
+F301,2026-02-24,dock equipment,medium,5.5
+F301,2026-03-03,propulsion fault,high,12.0
+F302,2026-02-27,inspection,low,1.5

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n_load_trips",
+      "position": {
+        "x": 80,
+        "y": -140
+      }
+    },
+    {
+      "id": "n_load_routes",
+      "position": {
+        "x": 900,
+        "y": -140
+      }
+    },
+    {
+      "id": "n_load_maintenance",
+      "position": {
+        "x": 1720,
+        "y": -140
+      }
+    },
+    {
+      "id": "n_prepare_trips",
+      "position": {
+        "x": 80,
+        "y": 220
+      }
+    },
+    {
+      "id": "n_prepare_routes",
+      "position": {
+        "x": 900,
+        "y": 220
+      }
+    },
+    {
+      "id": "n_prepare_maintenance",
+      "position": {
+        "x": 1720,
+        "y": 220
+      }
+    },
+    {
+      "id": "n_summarize_maintenance",
+      "position": {
+        "x": 1720,
+        "y": 560
+      }
+    },
+    {
+      "id": "n_build_trip_facts",
+      "position": {
+        "x": 900,
+        "y": 760
+      }
+    },
+    {
+      "id": "n_challenge_questions",
+      "position": {
+        "x": -520,
+        "y": 760
+      }
+    },
+    {
+      "id": "n_preview_joined_data",
+      "position": {
+        "x": 900,
+        "y": 1120
+      }
+    },
+    {
+      "id": "n_basic_reliability_starter",
+      "position": {
+        "x": -180,
+        "y": 1480
+      }
+    },
+    {
+      "id": "n_peak_route_starter",
+      "position": {
+        "x": 660,
+        "y": 1480
+      }
+    },
+    {
+      "id": "n_maintenance_risk_starter",
+      "position": {
+        "x": 1500,
+        "y": 1480
+      }
+    },
+    {
+      "id": "n_priority_routes_starter",
+      "position": {
+        "x": 2340,
+        "y": 1480
+      }
+    }
+  ]
+}
