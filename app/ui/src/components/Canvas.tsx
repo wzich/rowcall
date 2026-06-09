@@ -2,6 +2,7 @@ import {
   Background,
   Controls,
   type EdgeChange,
+  type NodeChange,
   type NodeMouseHandler,
   type NodeTypes,
   type OnConnect,
@@ -158,8 +159,22 @@ export function Canvas({
   const handleNodesChange = useCallback<OnNodesChange<PythonFlowNode>>((
     changes,
   ) => {
-    onNodesChange(changes);
-  }, [onNodesChange]);
+    const removedNodeIds = getRemovedNodeIds(changes);
+    if (removedNodeIds.length === 0 || !onDeleteNode) {
+      onNodesChange(changes);
+      return;
+    }
+
+    const nonRemoveChanges = changes.filter((change) =>
+      change.type !== "remove"
+    );
+    if (nonRemoveChanges.length > 0) {
+      onNodesChange(nonRemoveChanges);
+    }
+    for (const nodeId of removedNodeIds) {
+      onDeleteNode(nodeId);
+    }
+  }, [onDeleteNode, onNodesChange]);
   const handleNodeDragStop = useCallback<OnNodeDrag<PythonFlowNode>>((
     _event,
     node,
@@ -295,6 +310,17 @@ function isCanvasShortcutEvent(event: KeyboardEvent<HTMLDivElement>): boolean {
 function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
   return target instanceof Element &&
     Boolean(target.closest(interactiveShortcutTargetSelector));
+}
+
+function getRemovedNodeIds(changes: NodeChange<PythonFlowNode>[]): string[] {
+  const removedNodeIds = new Set<string>();
+  for (const change of changes) {
+    if (change.type === "remove") {
+      removedNodeIds.add(change.id);
+    }
+  }
+
+  return [...removedNodeIds];
 }
 
 function CanvasShortcutBridge({

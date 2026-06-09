@@ -38,6 +38,12 @@ import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult } from "../../../types.ts";
 
 const documentSourceValue = "document:active";
+const generatedFunctionNamePattern = /^new_node_(\d+)$/u;
+
+type GeneratedFunctionNameSession = {
+  reservedNames: Set<string>;
+  nextIndex: number;
+};
 
 export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -54,6 +60,10 @@ export default function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
   const editGenerationRef = useRef(0);
+  const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
+    reservedNames: new Set(),
+    nextIndex: 1,
+  });
   const documentQuery = useQuery({
     queryKey: ["nodebook-document", "active"],
     queryFn: loadDocument,
@@ -89,6 +99,8 @@ export default function App() {
     }
 
     const graph = documentQuery.data.document;
+    generatedFunctionNameSessionRef.current =
+      createGeneratedFunctionNameSession(graph);
     setDocumentPath(documentQuery.data.path);
     const flowGraph = toReactFlowGraph(graph);
     setEditableDocument({
@@ -322,9 +334,21 @@ export default function App() {
   }, []);
 
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
+    if (!editableDocument) return;
+    const node = createNewPythonNode(
+      createNextNodeId(editableDocument),
+      reserveNextFunctionName(
+        editableDocument,
+        generatedFunctionNameSessionRef.current,
+      ),
+      position,
+    );
+
     setEditableDocument((current) => {
       if (!current) return current;
-      const node = createNewPythonNode(current, position);
+      if (hasNodeIdOrFunctionName(current, node.id, node.functionName)) {
+        return current;
+      }
 
       markDocumentEdited();
       return {
@@ -332,19 +356,36 @@ export default function App() {
         nodes: [...current.nodes, node],
       };
     });
-  }, [markDocumentEdited]);
+  }, [editableDocument, markDocumentEdited]);
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
+    if (!editableDocument) return;
+    const parentNodeExists = editableDocument.nodes.some((node) =>
+      node.id === parentNodeId
+    );
+    if (!parentNodeExists) return;
+    const nodeId = createNextNodeId(editableDocument);
+    const functionName = reserveNextFunctionName(
+      editableDocument,
+      generatedFunctionNameSessionRef.current,
+    );
+
     setEditableDocument((current) => {
       if (!current) return current;
       const parentNode = current.nodes.find((node) => node.id === parentNodeId);
       if (!parentNode) return current;
+      if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
+        return current;
+      }
 
       const position = {
-        x: (parentNode.position?.x ?? 0) + 0,
-        y: (parentNode.position?.y ?? 0) + 280,
+        ...createChildNodePosition(current, parentNode),
       };
-      const node = createNewPythonNode(current, position);
+      const node = createNewPythonNode(
+        nodeId,
+        functionName,
+        position,
+      );
 
       markDocumentEdited();
       markNodesStale([node.id]);
@@ -357,7 +398,7 @@ export default function App() {
         ],
       };
     });
-  }, [markDocumentEdited, markNodesStale]);
+  }, [editableDocument, markDocumentEdited, markNodesStale]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
     setEditableDocument((current) => {
@@ -817,7 +858,6 @@ function PythonRuntimeBadge({
   );
 }
 
-
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -873,7 +913,9 @@ function getNodeCanvasPreview(
   return null;
 }
 
-function resultToCanvasPreview(result: NodeRunResult): NodeCanvasPreview | null {
+function resultToCanvasPreview(
+  result: NodeRunResult,
+): NodeCanvasPreview | null {
   const preview: NodeCanvasPreview = {
     ok: result.ok,
     outputs: result.ok
@@ -903,12 +945,13 @@ function resultToCanvasPreview(result: NodeRunResult): NodeCanvasPreview | null 
 }
 
 function createNewPythonNode(
-  graph: RuntimeGraph,
+  id: string,
+  functionName: string,
   position: { x: number; y: number },
 ): RuntimeNode {
   return {
-    id: createNextNodeId(graph),
-    functionName: createNextFunctionName(graph),
+    id,
+    functionName,
     parameters: [],
     code: "pass",
     outputs: [],
@@ -943,17 +986,144 @@ function createShortId(): string {
     .slice(0, 10);
 }
 
-function createNextFunctionName(graph: RuntimeGraph): string {
+function hasNodeIdOrFunctionName(
+  graph: RuntimeGraph,
+  nodeId: string,
+  functionName: string,
+): boolean {
+  return graph.nodes.some((node) =>
+    node.id === nodeId || node.functionName === functionName
+  );
+}
+
+function createGeneratedFunctionNameSession(
+  graph: RuntimeGraph,
+): GeneratedFunctionNameSession {
+  let maxGeneratedIndex = 0;
+  const reservedNames = new Set<string>();
+
+  for (const node of graph.nodes) {
+    if (!node.functionName) {
+      continue;
+    }
+
+    const generatedIndex = getGeneratedFunctionNameIndex(node.functionName);
+    if (generatedIndex === null) {
+      continue;
+    }
+
+    reservedNames.add(node.functionName);
+    maxGeneratedIndex = Math.max(maxGeneratedIndex, generatedIndex);
+  }
+
+  return {
+    reservedNames,
+    nextIndex: Math.max(maxGeneratedIndex, graph.nodes.length) + 1,
+  };
+}
+
+function reserveNextFunctionName(
+  graph: RuntimeGraph,
+  session: GeneratedFunctionNameSession,
+): string {
   const existingNames = new Set(
     graph.nodes.flatMap((node) => node.functionName ? [node.functionName] : []),
   );
-  let index = graph.nodes.length + 1;
+  let index = Math.max(
+    session.nextIndex,
+    getNextGeneratedFunctionNameIndex(graph),
+  );
 
-  while (existingNames.has(`new_node_${index}`)) {
+  while (
+    existingNames.has(`new_node_${index}`) ||
+    session.reservedNames.has(`new_node_${index}`)
+  ) {
     index += 1;
   }
 
-  return `new_node_${index}`;
+  const name = `new_node_${index}`;
+  session.reservedNames.add(name);
+  session.nextIndex = index + 1;
+
+  return name;
+}
+
+function getNextGeneratedFunctionNameIndex(graph: RuntimeGraph): number {
+  let maxGeneratedIndex = 0;
+
+  for (const node of graph.nodes) {
+    if (!node.functionName) {
+      continue;
+    }
+
+    const generatedIndex = getGeneratedFunctionNameIndex(node.functionName);
+    if (generatedIndex !== null) {
+      maxGeneratedIndex = Math.max(maxGeneratedIndex, generatedIndex);
+    }
+  }
+
+  return Math.max(maxGeneratedIndex, graph.nodes.length) + 1;
+}
+
+function getGeneratedFunctionNameIndex(functionName: string): number | null {
+  const match = generatedFunctionNamePattern.exec(functionName);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+function createChildNodePosition(
+  graph: RuntimeGraph,
+  parentNode: RuntimeNode,
+): { x: number; y: number } {
+  const basePosition = {
+    x: parentNode.position?.x ?? 0,
+    y: (parentNode.position?.y ?? 0) + 280,
+  };
+  const childNodeIds = new Set(
+    graph.edges
+      .filter((edge) => edge.fromNode === parentNode.id)
+      .map((edge) => edge.toNode),
+  );
+  const childPositions = graph.nodes
+    .filter((node) => childNodeIds.has(node.id) && node.position)
+    .map((node) => node.position!);
+  const offsetStep = 48;
+
+  for (
+    let offsetIndex = 0;
+    offsetIndex <= childPositions.length;
+    offsetIndex += 1
+  ) {
+    const candidate = {
+      x: basePosition.x + offsetIndex * offsetStep,
+      y: basePosition.y + offsetIndex * offsetStep,
+    };
+
+    if (
+      !childPositions.some((position) =>
+        arePositionsNear(position, candidate, offsetStep / 2)
+      )
+    ) {
+      return candidate;
+    }
+  }
+
+  return {
+    x: basePosition.x + (childPositions.length + 1) * offsetStep,
+    y: basePosition.y + (childPositions.length + 1) * offsetStep,
+  };
+}
+
+function arePositionsNear(
+  first: { x: number; y: number },
+  second: { x: number; y: number },
+  tolerance: number,
+): boolean {
+  return Math.abs(first.x - second.x) <= tolerance &&
+    Math.abs(first.y - second.y) <= tolerance;
 }
 
 function getEdgeId(edge: { fromNode: string; toNode: string }): string {
