@@ -427,15 +427,6 @@ export default function App() {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
       if (!node || node.code === code) return current;
-      const previousInferredOutputs = new Set(
-        inferAssignableOutputs(node.displayCode ?? node.code),
-      );
-      const newlyInferredOutputs = inferAssignableOutputs(code).filter((name) =>
-        !previousInferredOutputs.has(name) && !node.outputs.includes(name)
-      );
-      const outputs = newlyInferredOutputs.length === 0
-        ? node.outputs
-        : [...node.outputs, ...newlyInferredOutputs];
 
       markDocumentEdited();
       markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
@@ -443,7 +434,7 @@ export default function App() {
         ...current,
         nodes: current.nodes.map((item) =>
           item.id === nodeId
-            ? { ...item, code, outputs, runtimeCode: undefined }
+            ? { ...item, code, runtimeCode: undefined }
             : item
         ),
       };
