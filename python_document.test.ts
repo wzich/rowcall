@@ -112,7 +112,7 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
 });
 
-Deno.test("loadPythonDocument applies optional sidecar positions", async () => {
+Deno.test("loadPythonDocument applies optional sidecar node metadata", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/analysis.py`;
   const sidecarPath = sidecarPathForPythonDocument(documentPath);
@@ -136,6 +136,8 @@ Deno.test("loadPythonDocument applies optional sidecar positions", async () => {
       nodes: [{
         id: "n_test",
         position: { x: 100, y: 200 },
+        title: "Make X",
+        description: "Create the first value.",
       }],
     }),
   );
@@ -146,6 +148,8 @@ Deno.test("loadPythonDocument applies optional sidecar positions", async () => {
   }
 
   assertEquals(decoded.document.nodes[0].position, { x: 100, y: 200 });
+  assertEquals(decoded.document.nodes[0].title, "Make X");
+  assertEquals(decoded.document.nodes[0].description, "Create the first value.");
 });
 
 Deno.test("loadPythonDocument preserves custom return nodes", async () => {
@@ -211,7 +215,7 @@ Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {
   }
 });
 
-Deno.test("savePythonDocument rewrites standard node body and sidecar positions", async () => {
+Deno.test("savePythonDocument rewrites standard node body and sidecar metadata", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/editable.py`;
 
@@ -237,7 +241,13 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar positions"
     ...loaded.document,
     nodes: loaded.document.nodes.map((node) =>
       node.id === "n_test"
-        ? { ...node, code: "x = 2\nprint(x)", position: { x: 10, y: 20 } }
+        ? {
+          ...node,
+          code: "x = 2\nprint(x)",
+          position: { x: 10, y: 20 },
+          title: "Updated X",
+          description: "Print and return the updated value.",
+        }
         : node
     ),
   };
@@ -262,13 +272,23 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar positions"
   );
   assertEquals(saved.document.nodes[0].code, "x = 2\nprint(x)");
   assertEquals(saved.document.nodes[0].position, { x: 10, y: 20 });
+  assertEquals(saved.document.nodes[0].title, "Updated X");
+  assertEquals(
+    saved.document.nodes[0].description,
+    "Print and return the updated value.",
+  );
 
   const sidecar = JSON.parse(
     await Deno.readTextFile(sidecarPathForPythonDocument(documentPath)),
   );
   assertEquals(sidecar, {
     version: 1,
-    nodes: [{ id: "n_test", position: { x: 10, y: 20 } }],
+    nodes: [{
+      id: "n_test",
+      position: { x: 10, y: 20 },
+      title: "Updated X",
+      description: "Print and return the updated value.",
+    }],
   });
 });
 

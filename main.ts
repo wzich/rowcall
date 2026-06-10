@@ -165,6 +165,8 @@ function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
       code: node.code,
       outputs: node.outputs,
       ...(node.position ? { position: node.position } : {}),
+      ...(node.title ? { title: node.title } : {}),
+      ...(node.description ? { description: node.description } : {}),
       ...(node.runtimeCode ? { runtimeCode: node.runtimeCode } : {}),
       ...(node.functionName ? { functionName: node.functionName } : {}),
       ...(node.parameters ? { parameters: node.parameters } : {}),

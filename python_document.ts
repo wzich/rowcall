@@ -65,8 +65,8 @@ export async function loadPythonDocument(
     return { ok: false, issues: result.issues };
   }
 
-  const positionedDocument = await applySidecarPositions(path, result.document);
-  return { ok: true, document: positionedDocument, issues: [] };
+  const documentWithSidecar = await applySidecarMetadata(path, result.document);
+  return { ok: true, document: documentWithSidecar, issues: [] };
 }
 
 export function sidecarPathForPythonDocument(path: string): string {
@@ -106,28 +106,34 @@ export async function savePythonDocument(
   return await loadPythonDocument(path);
 }
 
-async function applySidecarPositions(
+type SidecarNodeMetadata = {
+  position?: GraphPosition;
+  title?: string;
+  description?: string;
+};
+
+async function applySidecarMetadata(
   path: string,
   document: NodebookDocumentV1,
 ): Promise<NodebookDocumentV1> {
   const sidecarPath = sidecarPathForPythonDocument(path);
-  const positions = await loadSidecarPositions(sidecarPath);
-  if (positions.size === 0) {
+  const metadataByNodeId = await loadSidecarNodeMetadata(sidecarPath);
+  if (metadataByNodeId.size === 0) {
     return document;
   }
 
   return {
     ...document,
     nodes: document.nodes.map((node) => {
-      const position = positions.get(node.id);
-      return position ? { ...node, position } : node;
+      const metadata = metadataByNodeId.get(node.id);
+      return metadata ? { ...node, ...metadata } : node;
     }),
   };
 }
 
-async function loadSidecarPositions(
+async function loadSidecarNodeMetadata(
   path: string,
-): Promise<Map<string, GraphPosition>> {
+): Promise<Map<string, SidecarNodeMetadata>> {
   let text: string;
   try {
     text = await Deno.readTextFile(path);
@@ -154,18 +160,37 @@ async function loadSidecarPositions(
   return new Map(
     nodes.flatMap((node) => {
       const nodeRecord = asRecord(node);
-      const positionRecord = asRecord(nodeRecord?.["position"]);
+      if (!nodeRecord) {
+        return [];
+      }
+
+      const nodeId = nodeRecord["id"];
+      if (typeof nodeId !== "string") {
+        return [];
+      }
+
+      const positionRecord = asRecord(nodeRecord["position"]);
+      const metadata: SidecarNodeMetadata = {};
       if (
-        typeof nodeRecord?.["id"] !== "string" ||
-        typeof positionRecord?.["x"] !== "number" ||
-        typeof positionRecord?.["y"] !== "number"
+        typeof positionRecord?.["x"] === "number" &&
+        typeof positionRecord?.["y"] === "number"
       ) {
+        metadata.position = { x: positionRecord["x"], y: positionRecord["y"] };
+      }
+      if (typeof nodeRecord["title"] === "string") {
+        metadata.title = nodeRecord["title"];
+      }
+      if (typeof nodeRecord["description"] === "string") {
+        metadata.description = nodeRecord["description"];
+      }
+
+      if (Object.keys(metadata).length === 0) {
         return [];
       }
 
       return [[
-        nodeRecord["id"],
-        { x: positionRecord["x"], y: positionRecord["y"] },
+        nodeId,
+        metadata,
       ]];
     }),
   );
@@ -815,9 +840,18 @@ async function writeSidecar(
 ): Promise<void> {
   const sidecar = {
     version: 1,
-    nodes: document.nodes.flatMap((node) =>
-      node.position ? [{ id: node.id, position: node.position }] : []
-    ),
+    nodes: document.nodes.flatMap((node) => {
+      const metadata = {
+        id: node.id,
+        ...(node.position ? { position: node.position } : {}),
+        ...(node.title?.trim() ? { title: node.title.trim() } : {}),
+        ...(node.description?.trim()
+          ? { description: node.description.trim() }
+          : {}),
+      };
+
+      return Object.keys(metadata).length > 1 ? [metadata] : [];
+    }),
   };
   await Deno.writeTextFile(
     sidecarPathForPythonDocument(path),

@@ -6,6 +6,8 @@ export type RuntimeNode = {
   displayCode?: string;
   runtimeCode?: string;
   functionName?: string;
+  title?: string;
+  description?: string;
   parameters?: string[];
   customReturn?: boolean;
   editable?: boolean;

@@ -5,8 +5,12 @@ import type { RuntimeGraph } from "./runtimeTypes.ts";
 
 export type PythonNodeData = {
   label: string;
-  code: string;
+  description?: string;
+  functionName?: string;
+  nodeId: string;
   outputs: string[];
+  inputs: NodePortPreview[];
+  outputPreviews: Record<string, string>;
   outputOptions: PythonNodeOutputOption[];
   editable: boolean;
   runStatus: NodeRunVisualStatus;
@@ -26,6 +30,10 @@ export type PythonFlowEdge = FlowEdge;
 export type PythonNodeOutputOption = {
   name: string;
   source: "input" | "assigned" | "manual";
+};
+export type NodePortPreview = {
+  name: string;
+  type?: string;
 };
 export type NodeCanvasPreview = {
   ok: boolean;
@@ -68,9 +76,13 @@ export function toReactFlowGraph(
       // generated layout and stores the resulting positions in the document.
       position: node.position ?? positions[node.id] ?? { x: 0, y: 0 },
       data: {
-        label: node.functionName ?? node.id,
-        code: node.displayCode ?? node.code,
+        label: getNodeLabel(node),
+        description: node.description,
+        functionName: node.functionName,
+        nodeId: node.id,
         outputs: node.outputs,
+        inputs: getNodeInputs(graph, node.id),
+        outputPreviews: {},
         outputOptions: [],
         editable: node.editable ?? true,
         runStatus: nodeRunStatuses[node.id] ?? "idle",
@@ -83,4 +95,30 @@ export function toReactFlowGraph(
       type: "smoothstep",
     })),
   };
+}
+
+function getNodeLabel(node: RuntimeGraph["nodes"][number]): string {
+  const title = node.title?.trim();
+  return title || node.functionName || node.id;
+}
+
+function getNodeInputs(graph: RuntimeGraph, nodeId: string): NodePortPreview[] {
+  const upstreamIds = graph.edges
+    .filter((edge) => edge.toNode === nodeId)
+    .map((edge) => edge.fromNode);
+  const upstreamNodes = upstreamIds.flatMap((upstreamId) => {
+    const node = graph.nodes.find((item) => item.id === upstreamId);
+    return node ? [node] : [];
+  });
+  const seen = new Set<string>();
+
+  return upstreamNodes.flatMap((node) =>
+    node.outputs.flatMap((output) => {
+      if (seen.has(output)) {
+        return [];
+      }
+      seen.add(output);
+      return [{ name: output }];
+    })
+  );
 }

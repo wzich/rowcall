@@ -56,6 +56,7 @@ type CanvasProps = {
   selectedNodeId: string | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
   nodePreviews: Record<string, NodeCanvasPreview>;
+  nodeInputPreviews: Record<string, Array<{ name: string; type?: string }>>;
   nodeOutputOptions: Record<string, PythonNodeOutputOption[]>;
   onAddNode?: (position: GraphPosition) => void;
   onAutoLayout?: () => void;
@@ -68,6 +69,7 @@ type CanvasProps = {
   onNodeSelect: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
+  onRunStep?: (nodeId: string) => void;
   onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
@@ -79,6 +81,7 @@ export function Canvas({
   selectedNodeId,
   nodeRunStatuses,
   nodePreviews,
+  nodeInputPreviews,
   nodeOutputOptions,
   onAddNode,
   onAutoLayout,
@@ -91,6 +94,7 @@ export function Canvas({
   onNodeSelect,
   onOutputsChange,
   onRunToNode,
+  onRunStep,
   onSaveDocument,
   outputsReadOnly = false,
   runToNodeDisabled = false,
@@ -118,6 +122,8 @@ export function Canvas({
           ...node.data,
           runStatus: nodeRunStatuses[node.id] ?? "idle",
           preview: nodePreviews[node.id],
+          inputs: nodeInputPreviews[node.id] ?? node.data.inputs,
+          outputPreviews: getOutputTypePreviews(nodePreviews[node.id]),
           outputOptions: nodeOutputOptions[node.id] ?? [],
           onAddChild: onAddChildNode,
           onCodeChange: node.data.editable ? onCodeChange : undefined,
@@ -134,6 +140,7 @@ export function Canvas({
       nodes,
       nodeRunStatuses,
       nodePreviews,
+      nodeInputPreviews,
       nodeOutputOptions,
       onAddChildNode,
       onCodeChange,
@@ -141,6 +148,7 @@ export function Canvas({
       selectedNodeId,
       onOutputsChange,
       onRunToNode,
+      onRunStep,
       onSaveDocument,
       outputsReadOnly,
       runToNodeDisabled,
@@ -218,10 +226,10 @@ export function Canvas({
 
     if (
       event.shiftKey && event.key === "Enter" && selectedNodeId &&
-      onRunToNode && !runToNodeDisabled
+      (onRunStep || onRunToNode) && !runToNodeDisabled
     ) {
       event.preventDefault();
-      void onRunToNode(selectedNodeId);
+      void (onRunStep ?? onRunToNode)?.(selectedNodeId);
       return;
     }
 
@@ -247,6 +255,7 @@ export function Canvas({
     onAddChildNode,
     onAddNode,
     onRunToNode,
+    onRunStep,
     onSaveDocument,
     selectedNodeId,
     runToNodeDisabled,
@@ -290,6 +299,18 @@ export function Canvas({
         )}
       </ReactFlow>
     </div>
+  );
+}
+
+function getOutputTypePreviews(
+  preview: NodeCanvasPreview | undefined,
+): Record<string, string> {
+  if (!preview?.ok) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    preview.outputs.map((output) => [output.name, output.type]),
   );
 }
 

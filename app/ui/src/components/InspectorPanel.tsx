@@ -7,7 +7,11 @@ import type {
   TablePreview,
   ValuePreview,
 } from "../../../../types.ts";
+import { python } from "@codemirror/lang-python";
+import { keymap } from "@codemirror/view";
+import CodeMirror from "@uiw/react-codemirror";
 import { Check, Play, Route, X } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
@@ -18,14 +22,25 @@ export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 
 export type NodeInspectorSelection = {
   id: string;
+  title: string;
+  description: string;
+  functionName: string | null;
   code: string;
   editable: boolean;
   outputs: string[];
   inferredOutputs: string[];
   inputNames: string[];
+  inputGroups: NodeInspectorInputGroup[];
+  outputPreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   badges: NodeInspectorBadge[];
+};
+
+export type NodeInspectorInputGroup = {
+  nodeId: string;
+  label: string;
+  values: Record<string, ValuePreview | null>;
 };
 
 export type GraphInspectorModel = {
@@ -71,6 +86,11 @@ type InspectorPanelProps = {
   traceEnabled: boolean;
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
+  onCodeChange: (nodeId: string, code: string) => void;
+  onNodeMetadataChange: (
+    nodeId: string,
+    metadata: { title?: string; description?: string },
+  ) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
@@ -177,7 +197,7 @@ function DependencyList({
 }
 
 function PreviewBlock(
-  { previews }: { previews: Record<string, ValuePreview> },
+  { previews }: { previews: Record<string, ValuePreview | null> },
 ) {
   const entries = Object.entries(previews);
 
@@ -188,8 +208,26 @@ function PreviewBlock(
   return (
     <div className="mt-2 space-y-2">
       {entries.map(([name, preview]) => (
-        <PreviewCard key={name} preview={preview} />
+        preview
+          ? <PreviewCard key={name} preview={preview} />
+          : <MissingPreviewCard key={name} name={name} />
       ))}
+    </div>
+  );
+}
+
+function MissingPreviewCard({ name }: { name: string }) {
+  return (
+    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-mono text-sm font-semibold text-zinc-900">
+          {name}
+        </span>
+        <span className="font-mono text-xs text-zinc-400">not run</span>
+      </div>
+      <p className="mt-2 text-xs text-zinc-500">
+        Run upstream to preview this input.
+      </p>
     </div>
   );
 }
@@ -986,22 +1024,55 @@ function NodeInspector({
   executionState,
   validationIssues,
   readOnly,
+  actionsDisabled,
+  isRunning,
+  onCodeChange,
+  onNodeMetadataChange,
   onOutputsChange,
   onNodeSelect,
+  onRunNode,
+  onRunToNode,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   validationIssues: InspectGraphValidationIssue[];
   readOnly: boolean;
+  actionsDisabled: boolean;
+  isRunning: boolean;
+  onCodeChange: (nodeId: string, code: string) => void;
+  onNodeMetadataChange: (
+    nodeId: string,
+    metadata: { title?: string; description?: string },
+  ) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onNodeSelect: (nodeId: string) => void;
+  onRunNode: (nodeId: string) => void;
+  onRunToNode: (nodeId: string) => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
+  const codeReadOnly = readOnly || !selectedNode.editable;
   const outputOptions = getOutputOptions(
     selectedNode.inputNames,
     selectedNode.inferredOutputs,
     selectedNode.outputs,
   );
+  const extensions = useMemo(() => [
+    python(),
+    keymap.of([
+      {
+        key: "Shift-Enter",
+        run: () => {
+          if (actionsDisabled) {
+            return true;
+          }
+
+          onRunNode(selectedNode.id);
+          return true;
+        },
+      },
+    ]),
+  ], [actionsDisabled, onRunNode, selectedNode.id]);
+  const inputStatus = getInputStatusLabel(selectedNode);
 
   const handleOutputToggle = (name: string) => {
     if (readOnly || !selectedNode.editable) return;
@@ -1020,8 +1091,111 @@ function NodeInspector({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ValidationIssues issues={validationIssues} />
+
+      <section>
+        <input
+          className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+          value={selectedNode.title}
+          placeholder={selectedNode.functionName ?? selectedNode.id}
+          readOnly={readOnly}
+          onChange={(event) =>
+            onNodeMetadataChange(selectedNode.id, {
+              title: event.currentTarget.value,
+            })}
+        />
+        <textarea
+          className="mt-1 min-h-16 w-full resize-y rounded border border-transparent bg-transparent px-0 py-1 text-sm leading-6 text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+          value={selectedNode.description}
+          placeholder="Describe this step."
+          readOnly={readOnly}
+          onChange={(event) =>
+            onNodeMetadataChange(selectedNode.id, {
+              description: event.currentTarget.value,
+            })}
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600">
+            Python
+          </span>
+          {selectedNode.badges.map((badge) => (
+            <span
+              key={badge}
+              className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600"
+            >
+              {badge}
+            </span>
+          ))}
+          <span
+            className="font-mono text-zinc-400"
+            title={`Node ID: ${selectedNode.id}`}
+          >
+            {selectedNode.functionName ?? selectedNode.id}
+          </span>
+        </div>
+      </section>
+
+      <section className="rounded border border-zinc-200 bg-zinc-50 p-3">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            disabled={actionsDisabled}
+            onClick={() => onRunNode(selectedNode.id)}
+          >
+            <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+            {isRunning ? "Running..." : "Run step"}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+            disabled={actionsDisabled}
+            onClick={() => onRunToNode(selectedNode.id)}
+          >
+            <Route
+              aria-hidden="true"
+              className="h-4 w-4"
+              strokeWidth={2.25}
+            />
+            Run upstream
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-zinc-500">{inputStatus}</p>
+      </section>
+
+      <FlowNavigation
+        upstreamDependencies={selectedNode.upstreamDependencies}
+        downstreamDependencies={selectedNode.downstreamDependencies}
+        onNodeSelect={onNodeSelect}
+      />
+
+      <InputPreviewSection inputGroups={selectedNode.inputGroups} />
+
+      <section className="border-t border-zinc-200 pt-4">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+          Code
+        </h3>
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+          <div data-shortcut-scope="editor">
+            <CodeMirror
+              value={selectedNode.code}
+              extensions={extensions}
+              readOnly={codeReadOnly}
+              onChange={(value) => onCodeChange(selectedNode.id, value)}
+              basicSetup={{
+                autocompletion: false,
+                closeBrackets: true,
+                foldGutter: true,
+                highlightActiveLine: true,
+                highlightActiveLineGutter: true,
+                lineNumbers: true,
+              }}
+              theme="light"
+            />
+          </div>
+        </div>
+      </section>
 
       <section>
         <div className="flex items-center justify-between gap-3">
@@ -1088,29 +1262,148 @@ function NodeInspector({
           )}
       </section>
 
-      <DependencyList
-        title="Upstream"
-        items={selectedNode.upstreamDependencies}
-        emptyLabel="No upstream dependencies"
-        onNodeSelect={onNodeSelect}
-      />
-
-      <DependencyList
-        title="Downstream"
-        items={selectedNode.downstreamDependencies}
-        emptyLabel="No downstream dependencies"
-        onNodeSelect={onNodeSelect}
-      />
-
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Code
-        </h3>
-        <pre className="mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900">{selectedNode.code}</pre>
-      </section>
+      <OutputPreviewSection previews={selectedNode.outputPreviews} />
 
       <RunResult selectedNode={selectedNode} executionState={executionState} />
     </div>
+  );
+}
+
+function getInputStatusLabel(selectedNode: NodeInspectorSelection): string {
+  const inputCount = selectedNode.inputGroups.reduce(
+    (sum, group) => sum + Object.keys(group.values).length,
+    0,
+  );
+  const previewCount = selectedNode.inputGroups.reduce(
+    (sum, group) =>
+      sum + Object.values(group.values).filter((value) => value !== null).length,
+    0,
+  );
+
+  if (inputCount === 0) {
+    return "This source step has no upstream inputs.";
+  }
+
+  if (previewCount === inputCount) {
+    return "Run step will use cached upstream inputs.";
+  }
+
+  return "Some upstream inputs have not been previewed yet. Run upstream if Run step reports a cache miss.";
+}
+
+function FlowNavigation({
+  upstreamDependencies,
+  downstreamDependencies,
+  onNodeSelect,
+}: {
+  upstreamDependencies: string[];
+  downstreamDependencies: string[];
+  onNodeSelect: (nodeId: string) => void;
+}) {
+  return (
+    <section className="rounded border border-zinc-200 bg-white p-3">
+      <h3 className="text-xs font-semibold uppercase text-zinc-500">Flow</h3>
+      <div className="mt-2 grid gap-3 md:grid-cols-2">
+        <NodeLinkList
+          title="Upstream"
+          items={upstreamDependencies}
+          emptyLabel="None"
+          onNodeSelect={onNodeSelect}
+        />
+        <NodeLinkList
+          title="Downstream"
+          items={downstreamDependencies}
+          emptyLabel="None"
+          onNodeSelect={onNodeSelect}
+        />
+      </div>
+    </section>
+  );
+}
+
+function NodeLinkList({
+  title,
+  items,
+  emptyLabel,
+  onNodeSelect,
+}: {
+  title: string;
+  items: string[];
+  emptyLabel: string;
+  onNodeSelect: (nodeId: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-[11px] font-medium uppercase text-zinc-500">
+        {title}
+      </p>
+      {items.length === 0
+        ? <p className="mt-1 text-sm text-zinc-400">{emptyLabel}</p>
+        : (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {items.map((item) => (
+              <NodeIdButton
+                key={item}
+                nodeId={item}
+                onNodeSelect={onNodeSelect}
+              />
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function InputPreviewSection({
+  inputGroups,
+}: {
+  inputGroups: NodeInspectorInputGroup[];
+}) {
+  return (
+    <section className="border-t border-zinc-200 pt-4">
+      <h3 className="text-xs font-semibold uppercase text-zinc-500">
+        Inputs
+      </h3>
+      {inputGroups.length === 0
+        ? <p className="mt-2 text-sm text-zinc-500">No upstream inputs.</p>
+        : (
+          <div className="mt-2 space-y-3">
+            {inputGroups.map((group) => (
+              <div key={group.nodeId}>
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-xs text-zinc-500">from</span>
+                  <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700">
+                    {group.label}
+                  </code>
+                </div>
+                <PreviewBlock previews={group.values} />
+              </div>
+            ))}
+          </div>
+        )}
+    </section>
+  );
+}
+
+function OutputPreviewSection({
+  previews,
+}: {
+  previews: Record<string, ValuePreview>;
+}) {
+  const entries = Object.entries(previews);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="border-t border-zinc-200 pt-4">
+      <h3 className="text-xs font-semibold uppercase text-zinc-500">
+        Output Previews
+      </h3>
+      <div className="mt-2">
+        <PreviewBlock previews={previews} />
+      </div>
+    </section>
   );
 }
 
@@ -1211,6 +1504,8 @@ export function InspectorPanel({
   traceEnabled,
   readOnly,
   onNodeSelect,
+  onCodeChange,
+  onNodeMetadataChange,
   onOutputsChange,
   onTraceEnabledChange,
   onRunNode,
@@ -1225,18 +1520,23 @@ export function InspectorPanel({
   const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
   const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
   const isGraphActionDisabled = isGraphRunning;
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0 });
+  }, [selectedNode?.id]);
 
   return (
-    <aside className="flex h-full w-[560px] shrink-0 flex-col border-l border-zinc-200 bg-white">
+    <aside className="flex h-full w-[min(640px,48vw)] min-w-[520px] shrink-0 flex-col border-l border-zinc-200 bg-white">
       <div className="border-b border-zinc-200 px-5 py-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-medium uppercase text-zinc-500">
-            Inspector
+            {selectedNode ? "Step editor" : "Graph overview"}
           </p>
           {selectedNode && (
             <button
               type="button"
-              aria-label="Show graph inspector"
+              aria-label="Show graph overview"
               className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100"
               onClick={onSelectionClear}
             >
@@ -1255,53 +1555,12 @@ export function InspectorPanel({
             </button>
           )}
         </div>
-        {selectedNode && (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-zinc-950">
-              {selectedNode.id}
-            </h2>
-            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
-              Python
-            </span>
-            {selectedNode.badges.map((badge) => (
-              <span
-                key={badge}
-                className="rounded border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600"
-              >
-                {badge}
-              </span>
-            ))}
-          </div>
-        )}
-        {selectedNode && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
-              disabled={areNodeActionsDisabled}
-              onClick={() => onRunToNode(selectedNode.id)}
-            >
-              <Route
-                aria-hidden="true"
-                className="h-4 w-4"
-                strokeWidth={2.25}
-              />
-              {isAnyRunBlockingNodeActions ? "Running..." : "Run to node"}
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
-              disabled={areNodeActionsDisabled}
-              onClick={() => onRunNode(selectedNode.id)}
-            >
-              <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-              Run with cache
-            </button>
-          </div>
-        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+      >
         <div className="space-y-4">
           {selectedNode
             ? (
@@ -1310,8 +1569,14 @@ export function InspectorPanel({
                 executionState={selectedNodeExecutionState}
                 validationIssues={validationIssues}
                 readOnly={readOnly}
+                actionsDisabled={areNodeActionsDisabled}
+                isRunning={isAnyRunBlockingNodeActions}
+                onCodeChange={onCodeChange}
+                onNodeMetadataChange={onNodeMetadataChange}
                 onOutputsChange={onOutputsChange}
                 onNodeSelect={onNodeSelect}
+                onRunNode={onRunNode}
+                onRunToNode={onRunToNode}
               />
             )
             : (

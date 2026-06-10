@@ -35,7 +35,7 @@ import {
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
-import type { NodeRunResult } from "../../../types.ts";
+import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
 const documentSourceValue = "document:active";
 const generatedFunctionNamePattern = /^new_node_(\d+)$/u;
@@ -92,6 +92,9 @@ export default function App() {
     storeGraphExecutionResponse,
   } = useExecutionSession(documentSourceValue);
   const isGraphRunning = graphExecutionState?.status === "running";
+  const isSelectedNodeRunning = selectedNodeId
+    ? executionStateByNodeId[selectedNodeId]?.status === "running"
+    : false;
 
   useEffect(() => {
     if (!documentQuery.isSuccess) {
@@ -247,6 +250,13 @@ export default function App() {
     () => getNodeCanvasPreviews(executionStateByNodeId),
     [executionStateByNodeId],
   );
+  const nodeInputPreviews = useMemo(
+    () =>
+      editableGraph
+        ? getNodeCanvasInputPreviewsById(editableGraph, executionStateByNodeId)
+        : {},
+    [editableGraph, executionStateByNodeId],
+  );
   const nodeOutputOptions = useMemo(
     () => getNodeOutputOptionsById(editableGraph),
     [editableGraph],
@@ -316,16 +326,28 @@ export default function App() {
 
     return {
       id: node.id,
+      title: node.title ?? "",
+      description: node.description ?? "",
+      functionName: node.functionName ?? null,
       code: node.displayCode ?? node.code,
       editable: node.editable ?? true,
       outputs: node.outputs,
       inferredOutputs: inferAssignableOutputs(node.displayCode ?? node.code),
       inputNames: node.parameters ?? [],
+      inputGroups: getNodeInputGroups(
+        editableGraph,
+        node.id,
+        executionStateByNodeId,
+      ),
+      outputPreviews: getOutputPreviewsForNode(
+        node.id,
+        executionStateByNodeId,
+      ),
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
       badges,
     };
-  }, [editableGraph, graphNodeDetails, selectedNodeId]);
+  }, [editableGraph, executionStateByNodeId, graphNodeDetails, selectedNodeId]);
 
   const markDocumentEdited = useCallback(() => {
     editGenerationRef.current += 1;
@@ -346,7 +368,7 @@ export default function App() {
 
     setEditableDocument((current) => {
       if (!current) return current;
-      if (hasNodeIdOrFunctionName(current, node.id, node.functionName)) {
+      if (hasNodeIdOrFunctionName(current, node.id, functionName)) {
         return current;
       }
 
@@ -449,6 +471,43 @@ export default function App() {
       };
     });
   }, [markDocumentEdited, markNodesStale]);
+
+  const handleNodeMetadataChange = useCallback((
+    nodeId: string,
+    metadata: { title?: string; description?: string },
+  ) => {
+    setEditableDocument((current) => {
+      if (!current) return current;
+      const node = current.nodes.find((item) => item.id === nodeId);
+      if (!node) return current;
+      const nextTitle = metadata.title ?? node.title;
+      const nextDescription = metadata.description ?? node.description;
+      if (
+        (node.title ?? "") === (nextTitle ?? "") &&
+        (node.description ?? "") === (nextDescription ?? "")
+      ) {
+        return current;
+      }
+
+      markDocumentEdited();
+      return {
+        ...current,
+        nodes: current.nodes.map((item) =>
+          item.id === nodeId
+            ? {
+              ...item,
+              ...(metadata.title !== undefined
+                ? { title: metadata.title }
+                : {}),
+              ...(metadata.description !== undefined
+                ? { description: metadata.description }
+                : {}),
+            }
+            : item
+        ),
+      };
+    });
+  }, [markDocumentEdited]);
 
   const handleConnectNodes = useCallback((fromNode: string, toNode: string) => {
     setEditableDocument((current) => {
@@ -746,6 +805,7 @@ export default function App() {
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}
                 nodePreviews={nodePreviews}
+                nodeInputPreviews={nodeInputPreviews}
                 nodeOutputOptions={nodeOutputOptions}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
                 onAutoLayout={isReadOnlyDocument ? undefined : handleAutoLayout}
@@ -760,9 +820,10 @@ export default function App() {
                 onNodeSelect={setSelectedNodeId}
                 onOutputsChange={handleOutputsChange}
                 onRunToNode={handleRunToNode}
+                onRunStep={handleRunNode}
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isGraphRunning}
+                runToNodeDisabled={isGraphRunning || isSelectedNodeRunning}
                 onSelectionClear={() => setSelectedNodeId(null)}
               />
             </div>
@@ -776,6 +837,8 @@ export default function App() {
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
+              onCodeChange={handleCodeChange}
+              onNodeMetadataChange={handleNodeMetadataChange}
               onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
               onRunNode={handleRunNode}
@@ -799,7 +862,7 @@ function ShortcutHintPanel() {
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         Shift+Enter
       </kbd>
-      <span className="mx-1">run to node</span>
+      <span className="mx-1">run step</span>
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         A
       </kbd>
@@ -944,6 +1007,87 @@ function resultToCanvasPreview(
   return preview;
 }
 
+function getNodeCanvasInputPreviewsById(
+  graph: RuntimeGraph,
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Record<string, Array<{ name: string; type?: string }>> {
+  return Object.fromEntries(
+    graph.nodes.map((node) => [
+      node.id,
+      getNodeInputGroups(graph, node.id, executionStateByNodeId)
+        .flatMap((group) =>
+          Object.entries(group.values).map(([name, preview]) => ({
+            name,
+            ...(preview ? { type: preview.type } : {}),
+          }))
+        ),
+    ]),
+  );
+}
+
+function getNodeInputGroups(
+  graph: RuntimeGraph,
+  nodeId: string,
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Array<{
+  nodeId: string;
+  label: string;
+  values: Record<string, ValuePreview | null>;
+}> {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  return graph.edges
+    .filter((edge) => edge.toNode === nodeId)
+    .flatMap((edge) => {
+      const upstream = nodesById.get(edge.fromNode);
+      if (!upstream) {
+        return [];
+      }
+
+      const upstreamOutputs = getOutputPreviewsForNode(
+        upstream.id,
+        executionStateByNodeId,
+      );
+      const values = Object.fromEntries(
+        upstream.outputs.map((name) => [
+          name,
+          upstreamOutputs[name] ?? null,
+        ]),
+      );
+
+      return [{
+        nodeId: upstream.id,
+        label: getNodeDisplayTitle(upstream),
+        values,
+      }];
+    });
+}
+
+function getOutputPreviewsForNode(
+  nodeId: string,
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Record<string, ValuePreview> {
+  const state = executionStateByNodeId[nodeId];
+  if (!state) {
+    return {};
+  }
+
+  if (state.status === "completed_node" || state.status === "failed_node") {
+    return state.result.outputs;
+  }
+
+  if (state.status === "completed") {
+    return state.response.resultsByNode[nodeId]?.outputs ?? {};
+  }
+
+  return {};
+}
+
+function getNodeDisplayTitle(node: RuntimeNode): string {
+  const title = node.title?.trim();
+  return title || node.functionName || node.id;
+}
+
 function createNewPythonNode(
   id: string,
   functionName: string,
@@ -952,6 +1096,7 @@ function createNewPythonNode(
   return {
     id,
     functionName,
+    title: "New step",
     parameters: [],
     code: "pass",
     outputs: [],

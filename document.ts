@@ -7,6 +7,8 @@ export type GraphPosition = {
 
 export type DocumentNode = Node & {
   position?: GraphPosition;
+  title?: string;
+  description?: string;
   runtimeCode?: string;
   functionName?: string;
   parameters?: string[];
@@ -292,6 +294,8 @@ function decodeDocumentNode(
   const code = record["code"];
   const outputs = record["outputs"];
   const position = record["position"];
+  const title = record["title"];
+  const description = record["description"];
   const runtimeCode = record["runtimeCode"];
   const functionName = record["functionName"];
   const parameters = record["parameters"];
@@ -339,6 +343,26 @@ function decodeDocumentNode(
 
   const decodedPosition = decodePosition(position, index, issues);
   if (position !== undefined && decodedPosition === null) {
+    ok = false;
+  }
+
+  if (title !== undefined && typeof title !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node title must be a string",
+      field: "title",
+      path: `nodes[${index}].title`,
+    });
+    ok = false;
+  }
+
+  if (description !== undefined && typeof description !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node description must be a string",
+      field: "description",
+      path: `nodes[${index}].description`,
+    });
     ok = false;
   }
 
@@ -406,6 +430,8 @@ function decodeDocumentNode(
     code: code as string,
     outputs: outputs as string[],
     ...(decodedPosition ? { position: decodedPosition } : {}),
+    ...(typeof title === "string" ? { title } : {}),
+    ...(typeof description === "string" ? { description } : {}),
     ...(typeof runtimeCode === "string" ? { runtimeCode } : {}),
     ...(typeof functionName === "string" ? { functionName } : {}),
     ...(Array.isArray(parameters)

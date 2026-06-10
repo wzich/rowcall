@@ -14,13 +14,13 @@ def _combine_service_datetime(df, date_col, time_col):
     )
 
 
-@node(id="n_load_trips", outputs=["trips_raw"])
+@node(id="n_load_trips", outputs=["trips_raw", "trips_ra", "trips_r", "trips_", "trips"])
 def load_trips():
-    trips_raw = pd.read_csv(
+    trips = pd.read_csv(
         DATA_DIR / "trips.csv",
         parse_dates=["service_date"],
     )
-    return {"trips_raw": trips_raw}
+    return {"trips_raw": trips_raw, "trips_ra": trips_ra, "trips_r": trips_r, "trips_": trips_, "trips": trips}
 
 
 @node(id="n_load_routes", outputs=["routes_raw"])
@@ -40,7 +40,6 @@ def load_maintenance():
 
 @node(id="n_prepare_trips", outputs=["trips"])
 def prepare_trips(trips_raw):
-    trips = trips_raw.copy()
     trips["scheduled_departure_at"] = _combine_service_datetime(
         trips,
         "service_date",
