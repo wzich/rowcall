@@ -112,6 +112,46 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
 });
 
+Deno.test("Python document runtime inputs follow direct upstream outputs", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/renamed_input.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["trips"])',
+      "def load_trips():",
+      "    trips = 1",
+      '    return {"trips": trips}',
+      "",
+      '@node(id="n_prepare", outputs=["prepared"])',
+      "def prepare_trips(trips_raw):",
+      "    prepared = trips + 1",
+      '    return {"prepared": prepared}',
+      "",
+      "# NodeBook graph",
+      "prepare_trips.depends_on(load_trips)",
+      "",
+    ].join("\n"),
+  );
+
+  const decoded = await loadPythonDocument(documentPath);
+  if (!decoded.ok) {
+    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  await clearRuntimeSessionCache();
+  try {
+    const response = await runGraph(toRuntimeGraph(decoded.document));
+    assertEquals(response.ok, true);
+    assertEquals(response.finalOutputsByNode.n_prepare.prepared.jsonValue, 2);
+  } finally {
+    await shutdownRuntimeSession();
+  }
+});
+
 Deno.test("loadPythonDocument applies optional sidecar node metadata", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/analysis.py`;
@@ -149,7 +189,10 @@ Deno.test("loadPythonDocument applies optional sidecar node metadata", async () 
 
   assertEquals(decoded.document.nodes[0].position, { x: 100, y: 200 });
   assertEquals(decoded.document.nodes[0].title, "Make X");
-  assertEquals(decoded.document.nodes[0].description, "Create the first value.");
+  assertEquals(
+    decoded.document.nodes[0].description,
+    "Create the first value.",
+  );
 });
 
 Deno.test("loadPythonDocument preserves custom return nodes", async () => {
@@ -385,6 +428,87 @@ Deno.test("savePythonDocument rewrites body and outputs together", async () => {
       "    x = 2",
       "    y = x + 1",
       '    return {"x": x, "y": y}',
+      "",
+    ].join("\n"),
+  );
+});
+
+Deno.test("savePythonDocument rewrites function parameters from direct upstream outputs", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/rewrite_parameters.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["trips_raw"])',
+      "def load_trips():",
+      "    trips_raw = 1",
+      '    return {"trips_raw": trips_raw}',
+      "",
+      '@node(id="n_prepare", outputs=["prepared"])',
+      "def prepare_trips(trips_raw):",
+      "    prepared = trips_raw + 1",
+      '    return {"prepared": prepared}',
+      "",
+      "# NodeBook graph",
+      "prepare_trips.depends_on(load_trips)",
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const nextDocument = {
+    ...loaded.document,
+    nodes: loaded.document.nodes.map((node) => {
+      if (node.id === "n_load") {
+        return {
+          ...node,
+          code: "trips = 1",
+          outputs: ["trips"],
+          runtimeCode: undefined,
+        };
+      }
+
+      if (node.id === "n_prepare") {
+        return {
+          ...node,
+          code: "prepared = trips + 1",
+          runtimeCode: undefined,
+        };
+      }
+
+      return node;
+    }),
+  };
+
+  const saved = await savePythonDocument(documentPath, nextDocument);
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["trips"])',
+      "def load_trips():",
+      "    trips = 1",
+      '    return {"trips": trips}',
+      "",
+      '@node(id="n_prepare", outputs=["prepared"])',
+      "def prepare_trips(trips):",
+      "    prepared = trips + 1",
+      '    return {"prepared": prepared}',
+      "",
+      "# NodeBook graph",
+      "prepare_trips.depends_on(load_trips)",
       "",
     ].join("\n"),
   );
@@ -635,7 +759,7 @@ Deno.test("savePythonDocument appends child edge for added node", async () => {
       '    return {"x": x}',
       "",
       '@node(id="n_child", outputs=[])',
-      "def new_node_2():",
+      "def new_node_2(x):",
       "    pass",
       "    return {}",
       "",

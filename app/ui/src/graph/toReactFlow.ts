@@ -52,6 +52,7 @@ export type NodeRunVisualStatus =
   | "stale"
   | "queued"
   | "running"
+  | "blocked"
   | "completed"
   | "failed";
 

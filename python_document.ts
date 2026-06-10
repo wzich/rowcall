@@ -246,17 +246,11 @@ function validateEditableSave(
       }
     }
 
-    if (
-      loadedNode.functionName !== nextNode.functionName ||
-      !areStringArraysEqual(
-        loadedNode.parameters ?? [],
-        nextNode.parameters ?? [],
-      )
-    ) {
+    if (loadedNode.functionName !== nextNode.functionName) {
       issues.push({
         kind: "unsupported_python",
         message:
-          `Editing function names or parameters is not supported yet for node ${nodeId}.`,
+          `Editing function names is not supported yet for node ${nodeId}.`,
         nodeId,
       });
     }
@@ -453,6 +447,7 @@ async function writePythonDocument(
   const newline = original.includes("\r\n") ? "\r\n" : "\n";
   const loadedNodesById = new Map(loaded.nodes.map((node) => [node.id, node]));
   const nextNodesById = new Map(next.nodes.map((node) => [node.id, node]));
+  const inputNamesByNodeId = getDirectInputNamesByNodeId(next);
   const addedNodes = next.nodes.filter((node) => !loadedNodesById.has(node.id));
   const deletedNodes = loaded.nodes.filter((node) =>
     !nextNodesById.has(node.id)
@@ -462,7 +457,9 @@ async function writePythonDocument(
   const withoutGraphBlock = stripGeneratedGraphBlock(sourceLines);
 
   const appendedBlocks = [
-    ...addedNodes.map((node) => renderNewNodeBlock(node)),
+    ...addedNodes.map((node) =>
+      renderNewNodeBlock(node, inputNamesByNodeId.get(node.id) ?? [])
+    ),
     renderGraphBlock(next, newline),
   ].filter((block) => block.length > 0);
 
@@ -536,15 +533,28 @@ function bodyReplacementEdits(
     sourceLines,
     loaded.nodes.filter((node) => nextNodeIds.has(node.id)),
   );
+  const inputNamesByNodeId = getDirectInputNamesByNodeId(next);
   const edits: SourceEdit[] = [];
 
   for (const range of ranges) {
     const node = nextNodesById.get(range.nodeId);
     if (!node) continue;
+    const inputNames = inputNamesByNodeId.get(node.id) ?? [];
     const indentedBody = [
       ...indentNodeBody(node.code, range.indent),
       renderReturnLine(node.outputs, range.indent),
     ];
+    edits.push({
+      startLine: range.functionLine,
+      endLine: range.functionLine,
+      replacementLines: [
+        renderFunctionDefinitionLine(
+          node,
+          inputNames,
+          range.functionIndent,
+        ),
+      ],
+    });
     edits.push({
       startLine: range.startLine,
       endLine: range.returnLine,
@@ -569,10 +579,12 @@ function applySourceEdit(lines: string[], edit: SourceEdit): void {
 type BodyRange = {
   nodeId: string;
   decoratorLine: number;
+  functionLine: number;
   startLine: number;
   endLine: number;
   returnLine: number;
   indent: string;
+  functionIndent: string;
 };
 
 function findEditableBodyRanges(
@@ -589,11 +601,14 @@ function findEditableBodyRanges(
         nodeId: node.id,
         decoratorLine: node.sourceRange.decoratorLine ??
           node.sourceRange.startLine,
+        functionLine: node.sourceRange.bodyStartLine - 1,
         startLine: node.sourceRange.bodyStartLine,
         endLine: node.sourceRange.bodyEndLine,
         returnLine: node.sourceRange.returnEndLine ??
           node.sourceRange.returnLine ?? node.sourceRange.bodyEndLine + 1,
         indent: node.sourceRange.indent ?? "    ",
+        functionIndent:
+          lines[node.sourceRange.bodyStartLine - 2]?.match(/^\s*/)?.[0] ?? "",
       });
       continue;
     }
@@ -628,10 +643,12 @@ function findEditableBodyRanges(
     ranges.push({
       nodeId: node.id,
       decoratorLine: decoratorLineIndex + 1,
+      functionLine: functionLineIndex + 1,
       startLine: bodyStartLine,
       endLine: bodyEndLine,
       returnLine: returnLineIndex + 1,
       indent,
+      functionIndent: lines[functionLineIndex].match(/^\s*/)?.[0] ?? "",
     });
   }
 
@@ -690,7 +707,7 @@ function stripGeneratedGraphBlock(lines: string[]): string[] {
   });
 }
 
-function renderNewNodeBlock(node: DocumentNode): string {
+function renderNewNodeBlock(node: DocumentNode, inputNames: string[]): string {
   const functionName = node.functionName;
   if (!functionName) {
     throw new Error(`New node ${node.id} is missing a functionName`);
@@ -699,10 +716,22 @@ function renderNewNodeBlock(node: DocumentNode): string {
   const bodyLines = indentNodeBody(node.code, "    ");
   return [
     renderDecoratorLine(node),
-    `def ${functionName}():`,
+    renderFunctionDefinitionLine(node, inputNames, ""),
     ...bodyLines,
     renderReturnLine(node.outputs, "    "),
   ].join("\n");
+}
+
+function renderFunctionDefinitionLine(
+  node: DocumentNode,
+  inputNames: string[],
+  indent: string,
+): string {
+  if (!node.functionName) {
+    throw new Error(`Node ${node.id} is missing a functionName`);
+  }
+
+  return `${indent}def ${node.functionName}(${inputNames.join(", ")}):`;
 }
 
 function renderDecoratorLine(node: DocumentNode): string {
@@ -746,6 +775,27 @@ function renderGraphBlock(
   }
 
   return ["# NodeBook graph", ...edgeLines].join(newline);
+}
+
+function getDirectInputNamesByNodeId(
+  document: NodebookDocumentV1,
+): Map<string, string[]> {
+  const nodesById = new Map(document.nodes.map((node) => [node.id, node]));
+  const inputsByNodeId = new Map<string, string[]>(
+    document.nodes.map((node) => [node.id, []]),
+  );
+
+  for (const edge of document.edges) {
+    const upstream = nodesById.get(edge.fromNode);
+    const inputs = inputsByNodeId.get(edge.toNode);
+    if (!upstream || !inputs) continue;
+
+    for (const output of upstream.outputs) {
+      inputs.push(output);
+    }
+  }
+
+  return inputsByNodeId;
 }
 
 function appendBlocks(text: string, blocks: string[], newline: string): string {

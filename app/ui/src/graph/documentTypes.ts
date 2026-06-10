@@ -10,6 +10,8 @@ export type NodebookDocumentV1 = {
 };
 
 export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
+  const inputsByNodeId = getDirectInputNamesByNodeId(document);
+
   return {
     nodes: document.nodes.map((
       {
@@ -19,36 +21,62 @@ export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
         functionName,
         title,
         description,
-        parameters,
         customReturn,
         editable,
         outputs,
         position,
       },
-    ) => ({
-      id,
-      code: runtimeCode ??
-        buildRuntimeCode({
-          globalsCode: document.globalsCode ?? "",
-          code,
-          functionName,
-          parameters,
-          outputs,
-          customReturn,
-        }),
-      runtimeCode,
-      functionName,
-      title,
-      description,
-      parameters,
-      customReturn,
-      editable,
-      outputs,
-      displayCode: code,
-      ...(position ? { position } : {}),
-    })),
+    ) => {
+      const parameters = inputsByNodeId.get(id) ?? [];
+      const shouldBuildRuntimeCode = Boolean(functionName) && !customReturn;
+
+      return {
+        id,
+        code: shouldBuildRuntimeCode
+          ? buildRuntimeCode({
+            globalsCode: document.globalsCode ?? "",
+            code,
+            functionName,
+            parameters,
+            outputs,
+            customReturn,
+          })
+          : runtimeCode ?? code,
+        runtimeCode,
+        functionName,
+        title,
+        description,
+        parameters,
+        customReturn,
+        editable,
+        outputs,
+        displayCode: code,
+        ...(position ? { position } : {}),
+      };
+    }),
     edges: document.edges,
   };
+}
+
+function getDirectInputNamesByNodeId(
+  document: NodebookDocumentV1,
+): Map<string, string[]> {
+  const nodesById = new Map(document.nodes.map((node) => [node.id, node]));
+  const inputsByNodeId = new Map<string, string[]>(
+    document.nodes.map((node) => [node.id, []]),
+  );
+
+  for (const edge of document.edges) {
+    const upstream = nodesById.get(edge.fromNode);
+    const inputs = inputsByNodeId.get(edge.toNode);
+    if (!upstream || !inputs) continue;
+
+    for (const output of upstream.outputs) {
+      inputs.push(output);
+    }
+  }
+
+  return inputsByNodeId;
 }
 
 function buildRuntimeCode(
@@ -82,7 +110,9 @@ function buildRuntimeCode(
     functionSource,
     `__nodebook_result = ${functionName}(**{`,
     ...parameters.map((parameter) =>
-      `    ${JSON.stringify(parameter)}: globals()[${JSON.stringify(parameter)}],`
+      `    ${JSON.stringify(parameter)}: globals()[${
+        JSON.stringify(parameter)
+      }],`
     ),
     "})",
     "if not isinstance(__nodebook_result, dict):",

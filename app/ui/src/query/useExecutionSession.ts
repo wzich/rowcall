@@ -133,10 +133,17 @@ export function useExecutionSession(selectedSourceValue: string) {
       const next = { ...current };
 
       for (const nodeId of completedNodeIds) {
-        next[nodeId] = {
-          status: "completed",
-          response,
-        };
+        const result = response.resultsByNode[nodeId];
+        next[nodeId] = result && !result.ok
+          ? {
+            status: "failed_node",
+            runType: response.runType,
+            result,
+          }
+          : {
+            status: "completed",
+            response,
+          };
       }
 
       return next;
@@ -145,11 +152,27 @@ export function useExecutionSession(selectedSourceValue: string) {
       const next = { ...current };
 
       for (const nodeId of completedNodeIds) {
-        next[nodeId] = "completed";
+        next[nodeId] = getNodeRunVisualStatusFromResponse(response, nodeId);
+      }
+
+      if (response.error?.nodeId) {
+        next[response.error.nodeId] = "failed";
       }
 
       return next;
     });
+  }
+
+  function getNodeRunVisualStatusFromResponse(
+    response: ExecutionResponse,
+    nodeId: string,
+  ): NodeRunVisualStatus {
+    const result = response.resultsByNode[nodeId];
+    if (result) {
+      return result.ok ? "completed" : "failed";
+    }
+
+    return response.ok ? "completed" : "blocked";
   }
 
   function storeExecutionRequestErrorForNode(

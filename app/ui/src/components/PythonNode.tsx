@@ -31,6 +31,11 @@ const statusStyles: Record<
     dot: "bg-blue-500",
     label: "Running",
   },
+  blocked: {
+    border: "border-red-300",
+    dot: "bg-red-300",
+    label: "Blocked",
+  },
   completed: {
     border: "border-emerald-500",
     dot: "bg-emerald-500",
