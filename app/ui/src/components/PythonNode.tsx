@@ -49,6 +49,9 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
     ? "Run unavailable"
     : "Run upstream to this step";
   const description = data.description?.trim();
+  const outputOptionsByName = new Map(
+    data.outputOptions.map((option) => [option.name, option]),
+  );
 
   return (
     <article
@@ -119,6 +122,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
           ports={data.outputs.map((name) => ({
             name,
             type: data.outputPreviews[name],
+            missing: outputOptionsByName.get(name)?.source === "missing",
           }))}
           emptyLabel="none"
           variant="output"
@@ -175,7 +179,7 @@ function PortList({
   variant = "input",
 }: {
   title: string;
-  ports: Array<{ name: string; type?: string }>;
+  ports: Array<{ name: string; type?: string; missing?: boolean }>;
   emptyLabel: string;
   variant?: "input" | "output";
 }) {
@@ -197,9 +201,15 @@ function PortList({
                 key={port.name}
                 className={[
                   "max-w-full truncate rounded border px-2 py-1 font-mono text-[11px] leading-none",
-                  chipClassName,
+                  port.missing
+                    ? "border-amber-300 bg-amber-50 text-amber-900"
+                    : chipClassName,
                 ].join(" ")}
-                title={port.type ? `${port.name} · ${port.type}` : port.name}
+                title={port.missing
+                  ? `${port.name} · declared output not found in code`
+                  : port.type
+                  ? `${port.name} · ${port.type}`
+                  : port.name}
               >
                 {port.name}
                 {port.type && (

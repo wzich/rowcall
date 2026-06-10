@@ -29,7 +29,7 @@ export type PythonFlowNode = FlowNode<PythonNodeData, "pythonNode">;
 export type PythonFlowEdge = FlowEdge;
 export type PythonNodeOutputOption = {
   name: string;
-  source: "input" | "assigned" | "manual";
+  source: "input" | "assigned" | "missing";
 };
 export type NodePortPreview = {
   name: string;

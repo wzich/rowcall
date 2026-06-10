@@ -433,9 +433,7 @@ export default function App() {
       return {
         ...current,
         nodes: current.nodes.map((item) =>
-          item.id === nodeId
-            ? { ...item, code, runtimeCode: undefined }
-            : item
+          item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
         ),
       };
     });
@@ -1329,7 +1327,7 @@ function getNodeOutputOptionsById(
   graph: RuntimeGraph | null,
 ): Record<
   string,
-  Array<{ name: string; source: "input" | "assigned" | "manual" }>
+  Array<{ name: string; source: "input" | "assigned" | "missing" }>
 > {
   if (!graph) return {};
 
@@ -1349,9 +1347,9 @@ function getNodeOutputOptions(
   inputNames: string[],
   inferredOutputs: string[],
   declaredOutputs: string[],
-): Array<{ name: string; source: "input" | "assigned" | "manual" }> {
+): Array<{ name: string; source: "input" | "assigned" | "missing" }> {
   const options: Array<
-    { name: string; source: "input" | "assigned" | "manual" }
+    { name: string; source: "input" | "assigned" | "missing" }
   > = [];
   const seen = new Set<string>();
 
@@ -1370,7 +1368,7 @@ function getNodeOutputOptions(
   for (const name of declaredOutputs) {
     if (seen.has(name)) continue;
     seen.add(name);
-    options.push({ name, source: "manual" });
+    options.push({ name, source: "missing" });
   }
 
   return options;
@@ -1445,6 +1443,14 @@ function collectBindingNames(
 ) {
   if (node.name === "VariableName") {
     addOutput(code.slice(node.from, node.to));
+    return;
+  }
+
+  if (node.name === "MemberExpression") {
+    const target = node.firstChild;
+    if (target?.name === "VariableName") {
+      addOutput(code.slice(target.from, target.to));
+    }
     return;
   }
 

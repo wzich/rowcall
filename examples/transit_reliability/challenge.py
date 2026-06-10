@@ -14,13 +14,13 @@ def _combine_service_datetime(df, date_col, time_col):
     )
 
 
-@node(id="n_load_trips", outputs=["trips_raw", "trips_ra", "trips_r", "trips_", "trips"])
+@node(id="n_load_trips", outputs=["trips"])
 def load_trips():
     trips = pd.read_csv(
         DATA_DIR / "trips.csv",
         parse_dates=["service_date"],
     )
-    return {"trips_raw": trips_raw, "trips_ra": trips_ra, "trips_r": trips_r, "trips_": trips_, "trips": trips}
+    return {"trips": trips}
 
 
 @node(id="n_load_routes", outputs=["routes_raw"])

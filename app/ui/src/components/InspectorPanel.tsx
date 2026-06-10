@@ -1056,6 +1056,11 @@ function NodeInspector({
     selectedNode.inferredOutputs,
     selectedNode.outputs,
   );
+  const missingSelectedOutputs = outputOptions
+    .filter((option) =>
+      option.source === "missing" && selectedNode.outputs.includes(option.name)
+    )
+    .map((option) => option.name);
   const extensions = useMemo(() => [
     python(),
     keymap.of([
@@ -1162,6 +1167,11 @@ function NodeInspector({
           </button>
         </div>
         <p className="mt-2 text-xs text-zinc-500">{inputStatus}</p>
+        {missingSelectedOutputs.length > 0 && (
+          <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+            {formatMissingOutputsWarning(missingSelectedOutputs)}
+          </p>
+        )}
       </section>
 
       <FlowNavigation
@@ -1216,11 +1226,14 @@ function NodeInspector({
             <ul className="mt-2 space-y-1.5">
               {outputOptions.map((option) => {
                 const checked = selectedNode.outputs.includes(option.name);
+                const isMissing = option.source === "missing" && checked;
                 return (
                   <li key={option.name}>
                     <label
                       className={`flex items-center gap-2 rounded border px-3 py-2 text-sm ${
-                        checked
+                        isMissing
+                          ? "border-amber-300 bg-amber-50 text-amber-950"
+                          : checked
                           ? "border-zinc-300 bg-white text-zinc-900"
                           : "border-zinc-200 bg-zinc-50 text-zinc-500"
                       } ${
@@ -1238,7 +1251,9 @@ function NodeInspector({
                       />
                       <span
                         className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                          checked
+                          isMissing
+                            ? "border-amber-700 bg-amber-700 text-white"
+                            : checked
                             ? "border-zinc-900 bg-zinc-900 text-white"
                             : "border-zinc-300 bg-white"
                         }`}
@@ -1251,8 +1266,17 @@ function NodeInspector({
                       <code className="min-w-0 flex-1 truncate font-mono text-xs">
                         {option.name}
                       </code>
-                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">
-                        {option.source}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs ${
+                          isMissing
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-zinc-100 text-zinc-500"
+                        }`}
+                        title={isMissing
+                          ? "Declared as an output, but not found as an input or assignment in this step."
+                          : undefined}
+                      >
+                        {isMissing ? "missing" : option.source}
                       </span>
                     </label>
                   </li>
@@ -1276,7 +1300,8 @@ function getInputStatusLabel(selectedNode: NodeInspectorSelection): string {
   );
   const previewCount = selectedNode.inputGroups.reduce(
     (sum, group) =>
-      sum + Object.values(group.values).filter((value) => value !== null).length,
+      sum +
+      Object.values(group.values).filter((value) => value !== null).length,
     0,
   );
 
@@ -1289,6 +1314,12 @@ function getInputStatusLabel(selectedNode: NodeInspectorSelection): string {
   }
 
   return "Some upstream inputs have not been previewed yet. Run upstream if Run step reports a cache miss.";
+}
+
+function formatMissingOutputsWarning(outputs: string[]): string {
+  const formattedOutputs = outputs.map((output) => `"${output}"`).join(", ");
+  const verb = outputs.length === 1 ? "is" : "are";
+  return `${formattedOutputs} ${verb} declared as an output but not assigned in this step.`;
 }
 
 function FlowNavigation({
@@ -1411,9 +1442,9 @@ function getOutputOptions(
   inputNames: string[],
   inferredOutputs: string[],
   declaredOutputs: string[],
-): Array<{ name: string; source: "input" | "assigned" | "manual" }> {
+): Array<{ name: string; source: "input" | "assigned" | "missing" }> {
   const options: Array<
-    { name: string; source: "input" | "assigned" | "manual" }
+    { name: string; source: "input" | "assigned" | "missing" }
   > = [];
   const seen = new Set<string>();
 
@@ -1432,7 +1463,7 @@ function getOutputOptions(
   for (const name of declaredOutputs) {
     if (seen.has(name)) continue;
     seen.add(name);
-    options.push({ name, source: "manual" });
+    options.push({ name, source: "missing" });
   }
 
   return options;
