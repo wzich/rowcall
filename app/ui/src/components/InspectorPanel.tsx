@@ -10,11 +10,12 @@ import type {
 import { python } from "@codemirror/lang-python";
 import { keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { Check, Play, Route, X } from "lucide-react";
+import { AlertTriangle, Check, Play, Route, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
+import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -82,6 +83,7 @@ type InspectorPanelProps = {
   selectedNode: NodeInspectorSelection | null;
   graph: GraphInspectorModel;
   selectedNodeExecutionState: ExecutionDisplayState | null;
+  selectedNodeRunStatus: NodeRunVisualStatus;
   graphExecutionState: GraphExecutionDisplayState | null;
   traceEnabled: boolean;
   readOnly: boolean;
@@ -223,10 +225,10 @@ function MissingPreviewCard({ name }: { name: string }) {
         <span className="font-mono text-sm font-semibold text-zinc-900">
           {name}
         </span>
-        <span className="font-mono text-xs text-zinc-400">not run</span>
+        <span className="font-mono text-xs text-zinc-400">not previewed</span>
       </div>
       <p className="mt-2 text-xs text-zinc-500">
-        Run upstream to preview this input.
+        Run upstream to prepare and preview this input.
       </p>
     </div>
   );
@@ -1022,6 +1024,7 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
 function NodeInspector({
   selectedNode,
   executionState,
+  runStatus,
   validationIssues,
   readOnly,
   actionsDisabled,
@@ -1035,6 +1038,7 @@ function NodeInspector({
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
+  runStatus: NodeRunVisualStatus;
   validationIssues: InspectGraphValidationIssue[];
   readOnly: boolean;
   actionsDisabled: boolean;
@@ -1061,6 +1065,19 @@ function NodeInspector({
       option.source === "missing" && selectedNode.outputs.includes(option.name)
     )
     .map((option) => option.name);
+  const outputReplacement = getSimpleOutputReplacement(
+    selectedNode.outputs,
+    outputOptions,
+  );
+  const preflightIssues = getNodePreflightIssues(
+    selectedNode,
+    missingSelectedOutputs,
+  );
+  const runSummary = getNodeRunSummary(
+    selectedNode,
+    executionState,
+    runStatus,
+  );
   const extensions = useMemo(() => [
     python(),
     keymap.of([
@@ -1077,7 +1094,17 @@ function NodeInspector({
       },
     ]),
   ], [actionsDisabled, onRunNode, selectedNode.id]);
-  const inputStatus = getInputStatusLabel(selectedNode);
+  const inputStatus = getInputStatusLabel(selectedNode, runStatus);
+
+  const handleOutputReplacement = () => {
+    if (!outputReplacement || readOnly || !selectedNode.editable) return;
+    onOutputsChange(
+      selectedNode.id,
+      selectedNode.outputs.map((output) =>
+        output === outputReplacement.from ? outputReplacement.to : output
+      ),
+    );
+  };
 
   const handleOutputToggle = (name: string) => {
     if (readOnly || !selectedNode.editable) return;
@@ -1099,19 +1126,70 @@ function NodeInspector({
     <div className="space-y-5">
       <ValidationIssues issues={validationIssues} />
 
-      <section>
-        <input
-          className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
-          value={selectedNode.title}
-          placeholder={selectedNode.functionName ?? selectedNode.id}
-          readOnly={readOnly}
-          onChange={(event) =>
-            onNodeMetadataChange(selectedNode.id, {
-              title: event.currentTarget.value,
-            })}
-        />
+      <section className="rounded border border-zinc-200 bg-zinc-50 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <input
+              className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+              value={selectedNode.title}
+              placeholder={selectedNode.functionName ?? selectedNode.id}
+              readOnly={readOnly}
+              onChange={(event) =>
+                onNodeMetadataChange(selectedNode.id, {
+                  title: event.currentTarget.value,
+                })}
+            />
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+              <span className="rounded bg-white px-2 py-0.5 text-zinc-600">
+                Python
+              </span>
+              {selectedNode.badges.map((badge) => (
+                <span
+                  key={badge}
+                  className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600"
+                >
+                  {badge}
+                </span>
+              ))}
+              <span
+                className="font-mono text-zinc-400"
+                title={`Node ID: ${selectedNode.id}`}
+              >
+                {selectedNode.functionName ?? selectedNode.id}
+              </span>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              disabled={actionsDisabled}
+              onClick={() => onRunNode(selectedNode.id)}
+            >
+              <Play
+                aria-hidden="true"
+                className="h-4 w-4"
+                strokeWidth={2.25}
+              />
+              {isRunning ? "Running..." : "Run step"}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+              disabled={actionsDisabled}
+              onClick={() => onRunToNode(selectedNode.id)}
+            >
+              <Route
+                aria-hidden="true"
+                className="h-4 w-4"
+                strokeWidth={2.25}
+              />
+              Run upstream
+            </button>
+          </div>
+        </div>
         <textarea
-          className="mt-1 min-h-16 w-full resize-y rounded border border-transparent bg-transparent px-0 py-1 text-sm leading-6 text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+          className="mt-2 min-h-12 w-full resize-y rounded border border-transparent bg-transparent px-0 py-1 text-sm leading-6 text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
           value={selectedNode.description}
           placeholder="Describe this step."
           readOnly={readOnly}
@@ -1120,58 +1198,14 @@ function NodeInspector({
               description: event.currentTarget.value,
             })}
         />
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-          <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600">
-            Python
-          </span>
-          {selectedNode.badges.map((badge) => (
-            <span
-              key={badge}
-              className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600"
-            >
-              {badge}
-            </span>
-          ))}
-          <span
-            className="font-mono text-zinc-400"
-            title={`Node ID: ${selectedNode.id}`}
-          >
-            {selectedNode.functionName ?? selectedNode.id}
-          </span>
-        </div>
-      </section>
-
-      <section className="rounded border border-zinc-200 bg-zinc-50 p-3">
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
-            disabled={actionsDisabled}
-            onClick={() => onRunNode(selectedNode.id)}
-          >
-            <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-            {isRunning ? "Running..." : "Run step"}
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
-            disabled={actionsDisabled}
-            onClick={() => onRunToNode(selectedNode.id)}
-          >
-            <Route
-              aria-hidden="true"
-              className="h-4 w-4"
-              strokeWidth={2.25}
-            />
-            Run upstream
-          </button>
-        </div>
-        <p className="mt-2 text-xs text-zinc-500">{inputStatus}</p>
-        {missingSelectedOutputs.length > 0 && (
-          <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
-            {formatMissingOutputsWarning(missingSelectedOutputs)}
-          </p>
-        )}
+        <NodeRunBanner
+          summary={runSummary}
+          inputStatus={inputStatus}
+          preflightIssues={preflightIssues}
+          outputReplacement={outputReplacement}
+          outputReplacementDisabled={readOnly || !selectedNode.editable}
+          onOutputReplacement={handleOutputReplacement}
+        />
       </section>
 
       <FlowNavigation
@@ -1293,7 +1327,10 @@ function NodeInspector({
   );
 }
 
-function getInputStatusLabel(selectedNode: NodeInspectorSelection): string {
+function getInputStatusLabel(
+  selectedNode: NodeInspectorSelection,
+  runStatus: NodeRunVisualStatus,
+): string {
   const inputCount = selectedNode.inputGroups.reduce(
     (sum, group) => sum + Object.keys(group.values).length,
     0,
@@ -1309,17 +1346,272 @@ function getInputStatusLabel(selectedNode: NodeInspectorSelection): string {
     return "This source step has no upstream inputs.";
   }
 
+  if (runStatus === "stale") {
+    return "Cached inputs may be stale. Run upstream to rebuild this step's inputs.";
+  }
+
   if (previewCount === inputCount) {
     return "Run step will use cached upstream inputs.";
   }
 
-  return "Some upstream inputs have not been previewed yet. Run upstream if Run step reports a cache miss.";
+  return "Run upstream to prepare this step's inputs, or run step if cached inputs are already available.";
 }
 
 function formatMissingOutputsWarning(outputs: string[]): string {
   const formattedOutputs = outputs.map((output) => `"${output}"`).join(", ");
   const verb = outputs.length === 1 ? "is" : "are";
   return `${formattedOutputs} ${verb} declared as an output but not assigned in this step.`;
+}
+
+type OutputOption = { name: string; source: "input" | "assigned" | "missing" };
+
+type NodeRunSummary = {
+  variant: "neutral" | "success" | "warning" | "danger" | "info";
+  title: string;
+  detail: string;
+};
+
+type PreflightIssue = {
+  kind: "missing_output" | "missing_input_preview";
+  severity: "info" | "warning";
+  message: string;
+};
+
+function NodeRunBanner({
+  summary,
+  inputStatus,
+  preflightIssues,
+  outputReplacement,
+  outputReplacementDisabled,
+  onOutputReplacement,
+}: {
+  summary: NodeRunSummary;
+  inputStatus: string;
+  preflightIssues: PreflightIssue[];
+  outputReplacement: { from: string; to: string } | null;
+  outputReplacementDisabled: boolean;
+  onOutputReplacement: () => void;
+}) {
+  const hasWarningIssue = preflightIssues.some((issue) =>
+    issue.severity === "warning"
+  );
+  const variant = summary.variant === "neutral" && hasWarningIssue
+    ? "warning"
+    : summary.variant;
+  const styles = {
+    neutral: "border-zinc-200 bg-white text-zinc-700",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    warning: "border-amber-200 bg-amber-50 text-amber-900",
+    danger: "border-red-200 bg-red-50 text-red-900",
+    info: "border-blue-200 bg-blue-50 text-blue-900",
+  }[variant];
+
+  return (
+    <div className={`mt-3 rounded border px-3 py-2 text-sm ${styles}`}>
+      <div className="flex items-start gap-2">
+        {(variant === "warning" || variant === "danger") && (
+          <AlertTriangle
+            aria-hidden="true"
+            className="mt-0.5 h-4 w-4 shrink-0"
+            strokeWidth={2.25}
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">{summary.title}</p>
+          <p className="mt-0.5 text-xs opacity-80">{summary.detail}</p>
+          <p className="mt-1 text-xs opacity-70">{inputStatus}</p>
+          {preflightIssues.length > 0 && (
+            <ul className="mt-2 space-y-1 text-xs">
+              {preflightIssues.map((issue) => (
+                <li key={`${issue.kind}-${issue.message}`}>
+                  {issue.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {outputReplacement && (
+            <button
+              type="button"
+              className="mt-2 rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={outputReplacementDisabled}
+              onClick={onOutputReplacement}
+            >
+              Use {outputReplacement.to} instead of {outputReplacement.from}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getNodeRunSummary(
+  selectedNode: NodeInspectorSelection,
+  executionState: ExecutionDisplayState | null,
+  runStatus: NodeRunVisualStatus,
+): NodeRunSummary {
+  if (executionState?.status === "running" || runStatus === "running") {
+    return {
+      variant: "info",
+      title: "Running",
+      detail: "This step is executing.",
+    };
+  }
+
+  if (runStatus === "queued") {
+    return {
+      variant: "neutral",
+      title: "Queued",
+      detail: "This step is waiting for upstream work to finish.",
+    };
+  }
+
+  if (runStatus === "stale") {
+    return {
+      variant: "warning",
+      title: "Stale result",
+      detail: "Code, outputs, or upstream inputs changed since the last run.",
+    };
+  }
+
+  if (executionState?.status === "request_error") {
+    return {
+      variant: "danger",
+      title: "Could not start run",
+      detail: executionState.message,
+    };
+  }
+
+  if (
+    executionState?.status === "completed_node" ||
+    executionState?.status === "failed_node"
+  ) {
+    return executionState.result.ok
+      ? {
+        variant: "success",
+        title: "Step completed",
+        detail: "This step ran successfully.",
+      }
+      : {
+        variant: "danger",
+        title: "Step failed",
+        detail: executionState.result.error ?? "Python execution failed.",
+      };
+  }
+
+  if (executionState?.status === "completed") {
+    const nodeResult = executionState.response.resultsByNode[selectedNode.id];
+    if (nodeResult) {
+      return nodeResult.ok
+        ? {
+          variant: "success",
+          title: "Step completed",
+          detail: "This step ran successfully.",
+        }
+        : {
+          variant: "danger",
+          title: "Step failed",
+          detail: nodeResult.error ?? "Python execution failed.",
+        };
+    }
+
+    if (!executionState.response.ok) {
+      const failedNodeId = executionState.response.error?.nodeId;
+      return {
+        variant: "danger",
+        title: runStatus === "blocked" ? "Step did not run" : "Run failed",
+        detail: failedNodeId
+          ? `Upstream step ${failedNodeId} failed before this step could run.`
+          : "An upstream step failed before this step could run.",
+      };
+    }
+  }
+
+  if (runStatus === "failed") {
+    return {
+      variant: "danger",
+      title: "Step failed",
+      detail: "The last run for this step failed.",
+    };
+  }
+
+  if (runStatus === "blocked") {
+    return {
+      variant: "danger",
+      title: "Step did not run",
+      detail: "An upstream step failed before this step could run.",
+    };
+  }
+
+  if (runStatus === "completed") {
+    return {
+      variant: "success",
+      title: "Step completed",
+      detail: "This step ran successfully.",
+    };
+  }
+
+  return {
+    variant: "neutral",
+    title: "No fresh run result",
+    detail: "Run this step to preview its current outputs.",
+  };
+}
+
+function getNodePreflightIssues(
+  selectedNode: NodeInspectorSelection,
+  missingSelectedOutputs: string[],
+): PreflightIssue[] {
+  const issues: PreflightIssue[] = [];
+
+  if (missingSelectedOutputs.length > 0) {
+    issues.push({
+      kind: "missing_output",
+      severity: "warning",
+      message: formatMissingOutputsWarning(missingSelectedOutputs),
+    });
+  }
+
+  const missingInputPreviews = selectedNode.inputGroups.reduce(
+    (count, group) =>
+      count +
+      Object.values(group.values).filter((preview) => preview === null).length,
+    0,
+  );
+
+  if (missingInputPreviews > 0) {
+    issues.push({
+      kind: "missing_input_preview",
+      severity: "info",
+      message: `${missingInputPreviews} upstream ${
+        missingInputPreviews === 1 ? "input has" : "inputs have"
+      } not been previewed yet.`,
+    });
+  }
+
+  return issues;
+}
+
+function getSimpleOutputReplacement(
+  declaredOutputs: string[],
+  outputOptions: OutputOption[],
+): { from: string; to: string } | null {
+  const declared = new Set(declaredOutputs);
+  const selectedMissing = outputOptions.filter((option) =>
+    option.source === "missing" && declared.has(option.name)
+  );
+  const unselectedAssigned = outputOptions.filter((option) =>
+    option.source === "assigned" && !declared.has(option.name)
+  );
+
+  if (selectedMissing.length !== 1 || unselectedAssigned.length !== 1) {
+    return null;
+  }
+
+  return {
+    from: selectedMissing[0].name,
+    to: unselectedAssigned[0].name,
+  };
 }
 
 function FlowNavigation({
@@ -1442,10 +1734,8 @@ function getOutputOptions(
   inputNames: string[],
   inferredOutputs: string[],
   declaredOutputs: string[],
-): Array<{ name: string; source: "input" | "assigned" | "missing" }> {
-  const options: Array<
-    { name: string; source: "input" | "assigned" | "missing" }
-  > = [];
+): OutputOption[] {
+  const options: OutputOption[] = [];
   const seen = new Set<string>();
 
   for (const name of inputNames) {
@@ -1531,6 +1821,7 @@ export function InspectorPanel({
   selectedNode,
   graph,
   selectedNodeExecutionState,
+  selectedNodeRunStatus,
   graphExecutionState,
   traceEnabled,
   readOnly,
@@ -1598,6 +1889,7 @@ export function InspectorPanel({
               <NodeInspector
                 selectedNode={selectedNode}
                 executionState={selectedNodeExecutionState}
+                runStatus={selectedNodeRunStatus}
                 validationIssues={validationIssues}
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}

@@ -29,17 +29,17 @@ def load_routes():
     return {"routes_raw": routes_raw}
 
 
-@node(id="n_load_maintenance", outputs=["maintenance_raw"])
+@node(id="n_load_maintenance", outputs=["maintenance"])
 def load_maintenance():
-    maintenance_raw = pd.read_csv(
+    maintenance = pd.read_csv(
         DATA_DIR / "maintenance.csv",
         parse_dates=["maintenance_date"],
     )
-    return {"maintenance_raw": maintenance_raw}
+    return {"maintenance": maintenance}
 
 
 @node(id="n_prepare_trips", outputs=["trips"])
-def prepare_trips(trips_raw):
+def prepare_trips(trips):
     trips["scheduled_departure_at"] = _combine_service_datetime(
         trips,
         "service_date",
@@ -84,8 +84,7 @@ def prepare_routes(routes_raw):
 
 
 @node(id="n_prepare_maintenance", outputs=["maintenance"])
-def prepare_maintenance(maintenance_raw):
-    maintenance = maintenance_raw.copy()
+def prepare_maintenance(maintenance):
     maintenance["severity"] = maintenance["severity"].str.lower()
     maintenance["is_high_severity"] = maintenance["severity"].eq("high")
     return {"maintenance": maintenance}
@@ -188,7 +187,7 @@ def preview_joined_data(trip_facts):
 @node(id="n_basic_reliability_starter", outputs=["basic_reliability"])
 def basic_reliability_starter(trips):
     # TODO: fill in the values for scheduled_trips, completed_trips,
-    # cancelled_trips, and late_trip_rate.
+    def basic_reliability_starter(trips):
     basic_reliability = pd.DataFrame(
         [
             {"metric": "scheduled_trips", "value": None},
@@ -203,7 +202,7 @@ def basic_reliability_starter(trips):
 
 @node(id="n_peak_route_starter", outputs=["peak_route_reliability"])
 def peak_route_starter(trip_facts):
-    # TODO: filter to completed peak trips, then group by route_name and region.
+    def peak_route_starter(trip_facts):
     peak_route_reliability = pd.DataFrame(
         columns=[
             "route_name",
@@ -220,7 +219,7 @@ def peak_route_starter(trip_facts):
 @node(id="n_maintenance_risk_starter", outputs=["maintenance_risk"])
 def maintenance_risk_starter(trip_facts):
     # TODO: summarize trip performance by vehicle_id, then compare it to
-    # downtime_hours and high_severity_events.
+    def maintenance_risk_starter(trip_facts):
     maintenance_risk = pd.DataFrame(
         columns=[
             "vehicle_id",
@@ -239,7 +238,7 @@ def maintenance_risk_starter(trip_facts):
 @node(id="n_priority_routes_starter", outputs=["priority_routes"])
 def priority_routes_starter(trip_facts):
     # TODO: build a route-region score using late rate, cancellation rate,
-    # passenger_count, or another metric you think is defensible.
+    def priority_routes_starter(trip_facts):
     priority_routes = pd.DataFrame(
         columns=[
             "route_name",

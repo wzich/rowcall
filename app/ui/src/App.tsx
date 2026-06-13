@@ -822,6 +822,9 @@ export default function App() {
               selectedNodeExecutionState={selectedNodeId
                 ? executionStateByNodeId[selectedNodeId] ?? null
                 : null}
+              selectedNodeRunStatus={selectedNodeId
+                ? nodeRunStatuses[selectedNodeId] ?? "idle"
+                : "idle"}
               graphExecutionState={graphExecutionState}
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}

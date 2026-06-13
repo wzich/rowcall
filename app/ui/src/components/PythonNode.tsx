@@ -14,17 +14,17 @@ const statusStyles: Record<
   idle: {
     border: "border-zinc-300",
     dot: "bg-zinc-300",
-    label: "Idle",
+    label: "Not run",
   },
   stale: {
     border: "border-amber-400",
     dot: "bg-amber-400",
-    label: "Stale",
+    label: "Code, outputs, or inputs changed since the last run",
   },
   queued: {
     border: "border-zinc-400",
     dot: "bg-zinc-400",
-    label: "Queued",
+    label: "Queued to run",
   },
   running: {
     border: "border-blue-400",
@@ -34,17 +34,17 @@ const statusStyles: Record<
   blocked: {
     border: "border-red-300",
     dot: "bg-red-300",
-    label: "Blocked",
+    label: "Did not run because an upstream step failed",
   },
   completed: {
     border: "border-emerald-500",
     dot: "bg-emerald-500",
-    label: "Completed",
+    label: "Ran successfully",
   },
   failed: {
     border: "border-red-500",
     dot: "bg-red-500",
-    label: "Failed",
+    label: "Run failed",
   },
 };
 
