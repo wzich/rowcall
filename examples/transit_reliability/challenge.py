@@ -23,10 +23,10 @@ def load_trips():
     return {"trips": trips}
 
 
-@node(id="n_load_routes", outputs=["routes_raw"])
+@node(id="n_load_routes", outputs=["routes"])
 def load_routes():
-    routes_raw = pd.read_csv(DATA_DIR / "routes.csv")
-    return {"routes_raw": routes_raw}
+    routes = pd.read_csv(DATA_DIR / "routes.csv")
+    return {"routes": routes}
 
 
 @node(id="n_load_maintenance", outputs=["maintenance"])
@@ -76,8 +76,7 @@ def prepare_trips(trips):
 
 
 @node(id="n_prepare_routes", outputs=["routes"])
-def prepare_routes(routes_raw):
-    routes = routes_raw.copy()
+def prepare_routes(routes):
     routes["mode"] = routes["mode"].str.title()
     routes["region"] = routes["region"].str.title()
     return {"routes": routes}
@@ -187,7 +186,6 @@ def preview_joined_data(trip_facts):
 @node(id="n_basic_reliability_starter", outputs=["basic_reliability"])
 def basic_reliability_starter(trips):
     # TODO: fill in the values for scheduled_trips, completed_trips,
-    def basic_reliability_starter(trips):
     basic_reliability = pd.DataFrame(
         [
             {"metric": "scheduled_trips", "value": None},
@@ -202,7 +200,6 @@ def basic_reliability_starter(trips):
 
 @node(id="n_peak_route_starter", outputs=["peak_route_reliability"])
 def peak_route_starter(trip_facts):
-    def peak_route_starter(trip_facts):
     peak_route_reliability = pd.DataFrame(
         columns=[
             "route_name",
@@ -219,7 +216,6 @@ def peak_route_starter(trip_facts):
 @node(id="n_maintenance_risk_starter", outputs=["maintenance_risk"])
 def maintenance_risk_starter(trip_facts):
     # TODO: summarize trip performance by vehicle_id, then compare it to
-    def maintenance_risk_starter(trip_facts):
     maintenance_risk = pd.DataFrame(
         columns=[
             "vehicle_id",
@@ -238,7 +234,6 @@ def maintenance_risk_starter(trip_facts):
 @node(id="n_priority_routes_starter", outputs=["priority_routes"])
 def priority_routes_starter(trip_facts):
     # TODO: build a route-region score using late rate, cancellation rate,
-    def priority_routes_starter(trip_facts):
     priority_routes = pd.DataFrame(
         columns=[
             "route_name",

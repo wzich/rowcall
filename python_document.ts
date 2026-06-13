@@ -100,7 +100,19 @@ export async function savePythonDocument(
     return { ok: false, issues };
   }
 
-  await writePythonDocument(path, loaded.document, document);
+  const candidateSource = await renderPythonDocumentText(
+    path,
+    loaded.document,
+    document,
+  );
+  const candidateValidation = await validateRenderedPythonDocument(
+    candidateSource,
+  );
+  if (!candidateValidation.ok) {
+    return candidateValidation;
+  }
+
+  await Deno.writeTextFile(path, candidateSource);
   await writeSidecar(path, document);
 
   return await loadPythonDocument(path);
@@ -431,15 +443,14 @@ function validateEdgeChanges(
   }
 }
 
-async function writePythonDocument(
+async function renderPythonDocumentText(
   path: string,
   loaded: NodebookDocumentV1,
   next: NodebookDocumentV1,
-): Promise<void> {
+): Promise<string> {
   const structureChanged = hasStructureChanged(loaded, next);
   if (!structureChanged) {
-    await writePythonNodeBodies(path, loaded, next);
-    return;
+    return await renderPythonNodeBodies(path, loaded, next);
   }
 
   const original = await Deno.readTextFile(path);
@@ -468,20 +479,40 @@ async function writePythonDocument(
     appendedBlocks,
     newline,
   );
-  await Deno.writeTextFile(path, text);
+  return text;
 }
 
-async function writePythonNodeBodies(
+async function renderPythonNodeBodies(
   path: string,
   loaded: NodebookDocumentV1,
   next: NodebookDocumentV1,
-): Promise<void> {
+): Promise<string> {
   const original = await Deno.readTextFile(path);
   const sourceLines = original.split(/\r?\n/);
   const newline = original.includes("\r\n") ? "\r\n" : "\n";
 
   applyBodyReplacements(sourceLines, loaded, next);
-  await Deno.writeTextFile(path, sourceLines.join(newline));
+  return sourceLines.join(newline);
+}
+
+async function validateRenderedPythonDocument(
+  source: string,
+): Promise<LoadPythonDocumentResult> {
+  const tempPath = await Deno.makeTempFile({ suffix: ".py" });
+  try {
+    await Deno.writeTextFile(tempPath, source);
+    const loaded = await loadPythonDocument(tempPath);
+    if (!loaded.ok) {
+      return loaded;
+    }
+    return { ok: true, document: loaded.document, issues: [] };
+  } finally {
+    try {
+      await Deno.remove(tempPath);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
 }
 
 function applyBodyReplacements(
@@ -597,18 +628,18 @@ function findEditableBodyRanges(
     if (node.customReturn || !node.functionName) continue;
 
     if (hasEditableSourceRange(node.sourceRange)) {
+      const functionLine = findFunctionLineForRange(lines, node);
       ranges.push({
         nodeId: node.id,
         decoratorLine: node.sourceRange.decoratorLine ??
           node.sourceRange.startLine,
-        functionLine: node.sourceRange.bodyStartLine - 1,
+        functionLine,
         startLine: node.sourceRange.bodyStartLine,
         endLine: node.sourceRange.bodyEndLine,
         returnLine: node.sourceRange.returnEndLine ??
           node.sourceRange.returnLine ?? node.sourceRange.bodyEndLine + 1,
         indent: node.sourceRange.indent ?? "    ",
-        functionIndent:
-          lines[node.sourceRange.bodyStartLine - 2]?.match(/^\s*/)?.[0] ?? "",
+        functionIndent: lines[functionLine - 1]?.match(/^\s*/)?.[0] ?? "",
       });
       continue;
     }
@@ -653,6 +684,33 @@ function findEditableBodyRanges(
   }
 
   return ranges;
+}
+
+function findFunctionLineForRange(
+  lines: string[],
+  node: DocumentNode,
+): number {
+  if (
+    !node.functionName || !node.sourceRange ||
+    typeof node.sourceRange.bodyStartLine !== "number"
+  ) {
+    throw new Error(`Could not find function line for node ${node.id}`);
+  }
+
+  const decoratorLine = node.sourceRange.decoratorLine ??
+    node.sourceRange.startLine;
+  const searchStart = Math.max(0, decoratorLine - 1);
+  const searchEnd = Math.max(searchStart, node.sourceRange.bodyStartLine - 1);
+
+  for (let index = searchStart; index < searchEnd; index += 1) {
+    if (
+      lines[index]?.trimStart().startsWith(`def ${node.functionName}(`)
+    ) {
+      return index + 1;
+    }
+  }
+
+  throw new Error(`Could not find function for node ${node.id}`);
 }
 
 function sourceRangeForNode(

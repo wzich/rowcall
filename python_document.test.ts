@@ -433,6 +433,98 @@ Deno.test("savePythonDocument rewrites body and outputs together", async () => {
   );
 });
 
+Deno.test("savePythonDocument rejects invalid rendered Python without overwriting source", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/invalid_body.py`;
+  const originalSource = [
+    "from nodebook import node",
+    "",
+    '@node(id="n_test", outputs=["x"])',
+    "def make_x():",
+    "    x = 1",
+    '    return {"x": x}',
+    "",
+  ].join("\n");
+
+  await Deno.writeTextFile(documentPath, originalSource);
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, {
+    ...loaded.document,
+    nodes: loaded.document.nodes.map((node) =>
+      node.id === "n_test"
+        ? {
+          ...node,
+          code: "def broken():\nx = 2",
+          title: "Should not be written",
+        }
+        : node
+    ),
+  });
+
+  assertEquals(saved.ok, false);
+  if (!saved.ok) {
+    assertEquals(saved.issues[0].kind, "invalid_python");
+  }
+  assertEquals(await Deno.readTextFile(documentPath), originalSource);
+
+  try {
+    await Deno.stat(sidecarPathForPythonDocument(documentPath));
+    throw new Error("Sidecar should not be written after invalid source");
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      throw error;
+    }
+  }
+});
+
+Deno.test("savePythonDocument preserves leading body comments when rewriting", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/leading_comment.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    # Keep this note with the body.",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, loaded.document);
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    # Keep this note with the body.",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+});
+
 Deno.test("savePythonDocument rewrites function parameters from direct upstream outputs", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/rewrite_parameters.py`;

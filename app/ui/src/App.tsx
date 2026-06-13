@@ -45,6 +45,11 @@ type GeneratedFunctionNameSession = {
   nextIndex: number;
 };
 
+type SaveErrorMessage = {
+  title: string;
+  detail: string;
+};
+
 export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
@@ -57,7 +62,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
   const editGenerationRef = useRef(0);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
@@ -136,7 +141,7 @@ export default function App() {
     },
     onError: (error) => {
       setSaveStatus("error");
-      setSaveError(error instanceof Error ? error.message : String(error));
+      setSaveError(formatSaveError(error));
     },
   });
 
@@ -633,6 +638,18 @@ export default function App() {
     saveDocumentMutation.mutate(editableDocument);
   }
 
+  async function handleReloadDocumentFromDisk() {
+    const result = await documentQuery.refetch();
+    if (result.isSuccess) {
+      setSaveStatus("idle");
+      setSaveError(null);
+      return;
+    }
+
+    setSaveStatus("error");
+    setSaveError(formatSaveError(result.error));
+  }
+
   async function handleRunNode(nodeId: string) {
     if (!editableGraph || !(await validateGraphForExecution())) {
       return;
@@ -714,8 +731,11 @@ export default function App() {
             <span className="text-xs font-medium text-emerald-700">Saved</span>
           )}
           {saveStatus === "error" && saveError && (
-            <span className="max-w-72 truncate text-xs font-medium text-red-700">
-              {saveError}
+            <span
+              className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
+              title={saveError.detail}
+            >
+              {saveError.title}
             </span>
           )}
           <button
@@ -736,6 +756,22 @@ export default function App() {
           </button>
         </div>
       </header>
+      {saveStatus === "error" && saveError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-900">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">{saveError.title}</span>
+            <span className="ml-2">{saveError.detail}</span>
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={documentQuery.isFetching}
+            onClick={() => void handleReloadDocumentFromDisk()}
+          >
+            {documentQuery.isFetching ? "Reloading..." : "Reload from disk"}
+          </button>
+        </div>
+      )}
       <main className="min-h-0 flex-1 overflow-hidden">
         {documentQuery.isLoading && (
           <div className="flex h-full items-center justify-center text-sm text-zinc-500">
@@ -915,6 +951,44 @@ function PythonRuntimeBadge({
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function formatSaveError(error: unknown): SaveErrorMessage {
+  if (error instanceof DocumentApiRequestError && error.issues.length > 0) {
+    const issue = error.issues[0];
+    const location = formatIssueLocation(issue.path);
+
+    if (issue.kind === "invalid_python") {
+      return {
+        title: "Save failed: unsaved Python has a syntax error",
+        detail:
+          `${issue.message}${location}. The saved file was not changed. Fix the editor contents or reload from disk to discard unsaved edits.`,
+      };
+    }
+
+    return {
+      title: "Save failed",
+      detail: `${issue.kind}: ${issue.message}${location}`,
+    };
+  }
+
+  return {
+    title: "Save failed",
+    detail: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function formatIssueLocation(path: string | undefined): string {
+  if (!path) {
+    return "";
+  }
+
+  const [line, column] = path.split(":");
+  if (line && column) {
+    return ` at line ${line}, column ${column}`;
+  }
+
+  return ` at ${path}`;
 }
 
 function getNodeCanvasPreviews(
