@@ -12,11 +12,18 @@ Start the Deno API:
 deno task dev
 ```
 
-By default this edits `examples/hello_world.py`. To edit another local
-document during development, pass a `.py` path through the task:
+By default this edits `examples/hello_world.py`. To edit another local document
+during development, pass a `.py` path through the task:
 
 ```sh
 deno task dev -- --document path/to/analysis.py
+```
+
+To create a new document and start the API against it, pass `--create` with the
+new `.py` path:
+
+```sh
+deno task dev -- --create --document path/to/analysis.py
 ```
 
 Nodebook Python documents import a tiny local `nodebook` package:

@@ -25,8 +25,19 @@ import {
 const app = new Hono();
 const defaultDocumentPath = "examples/hello_world.py";
 const uiDistPath = "app/ui/dist";
+const defaultNewDocumentSource = `from nodebook import node
+
+
+@node(id="n_start", outputs=["message"])
+def start():
+    message = "hello"
+    return {"message": message}
+`;
 const activeDocumentPath = getActiveDocumentPath(Deno.args);
-await ensureActiveDocumentExists(activeDocumentPath);
+const createActiveDocumentIfMissing = Deno.args.includes("--create");
+await ensureActiveDocumentExists(activeDocumentPath, {
+  createIfMissing: createActiveDocumentIfMissing,
+});
 
 app.use("*", async (c, next) => {
   await next();
@@ -128,7 +139,10 @@ function getActiveDocumentPath(args: string[]): string {
   return documentPath;
 }
 
-async function ensureActiveDocumentExists(path: string): Promise<void> {
+async function ensureActiveDocumentExists(
+  path: string,
+  options: { createIfMissing: boolean },
+): Promise<void> {
   try {
     const stat = await Deno.stat(path);
     if (!stat.isFile) {
@@ -142,9 +156,37 @@ async function ensureActiveDocumentExists(path: string): Promise<void> {
       Deno.exit(1);
     }
 
+    if (options.createIfMissing) {
+      await createNodebookDocument(path);
+      console.info(`Created Nodebook Python document: ${path}`);
+      return;
+    }
+
     console.error(`Nodebook Python document does not exist: ${path}`);
+    console.error(`Pass --create to initialize it.`);
     Deno.exit(1);
   }
+}
+
+async function createNodebookDocument(path: string): Promise<void> {
+  const directory = getParentDirectory(path);
+  if (directory) {
+    await Deno.mkdir(directory, { recursive: true });
+  }
+
+  await Deno.writeTextFile(path, defaultNewDocumentSource);
+}
+
+function getParentDirectory(path: string): string | undefined {
+  const normalizedPath = path.replaceAll("\\", "/");
+  const separatorIndex = normalizedPath.lastIndexOf("/");
+  if (separatorIndex < 0) {
+    return undefined;
+  }
+  if (separatorIndex === 0) {
+    return "/";
+  }
+  return path.slice(0, separatorIndex);
 }
 
 function wantsExecutionStream(
