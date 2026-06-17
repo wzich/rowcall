@@ -335,6 +335,105 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar metadata",
   });
 });
 
+Deno.test("savePythonDocument rewrites document globals", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/globals_save.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "GLOBAL_OFFSET = 1",
+      "",
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = GLOBAL_OFFSET",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, {
+    ...loaded.document,
+    globalsCode: 'GLOBAL_OFFSET = 2\nGLOBAL_LABEL = "updated"',
+  });
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "GLOBAL_OFFSET = 2",
+      'GLOBAL_LABEL = "updated"',
+      "",
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = GLOBAL_OFFSET",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+  assertEquals(
+    saved.document.globalsCode,
+    'GLOBAL_OFFSET = 2\nGLOBAL_LABEL = "updated"',
+  );
+});
+
+Deno.test("savePythonDocument inserts new document globals before first node", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/globals_insert.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = GLOBAL_OFFSET",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, {
+    ...loaded.document,
+    globalsCode: "GLOBAL_OFFSET = 3",
+  });
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "GLOBAL_OFFSET = 3",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = GLOBAL_OFFSET",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+  assertEquals(saved.document.globalsCode, "GLOBAL_OFFSET = 3");
+});
+
 Deno.test("savePythonDocument rewrites standard node declared outputs", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/outputs.py`;

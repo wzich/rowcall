@@ -491,7 +491,7 @@ async function renderPythonNodeBodies(
   const sourceLines = original.split(/\r?\n/);
   const newline = original.includes("\r\n") ? "\r\n" : "\n";
 
-  applyBodyReplacements(sourceLines, loaded, next);
+  applyBodyAndGlobalsReplacements(sourceLines, loaded, next);
   return sourceLines.join(newline);
 }
 
@@ -515,12 +515,17 @@ async function validateRenderedPythonDocument(
   }
 }
 
-function applyBodyReplacements(
+function applyBodyAndGlobalsReplacements(
   sourceLines: string[],
   loaded: NodebookDocumentV1,
   next: NodebookDocumentV1,
 ): void {
-  for (const edit of bodyReplacementEdits(sourceLines, loaded, next)) {
+  const edits = [
+    ...bodyReplacementEdits(sourceLines, loaded, next),
+    ...globalsReplacementEdits(sourceLines, loaded, next),
+  ].sort(compareSourceEditsDescending);
+
+  for (const edit of edits) {
     applySourceEdit(sourceLines, edit);
   }
 }
@@ -537,8 +542,9 @@ function applyStructureSourceEdits(
   }));
   const edits = [
     ...bodyReplacementEdits(sourceLines, loaded, next),
+    ...globalsReplacementEdits(sourceLines, loaded, next),
     ...deletionEdits,
-  ].sort((a, b) => b.startLine - a.startLine);
+  ].sort(compareSourceEditsDescending);
 
   for (const edit of edits) {
     applySourceEdit(sourceLines, edit);
@@ -599,12 +605,200 @@ function bodyReplacementEdits(
     });
   }
 
-  return edits.sort((a, b) => b.startLine - a.startLine);
+  return edits.sort(compareSourceEditsDescending);
+}
+
+function globalsReplacementEdits(
+  sourceLines: string[],
+  loaded: NodebookDocumentV1,
+  next: NodebookDocumentV1,
+): SourceEdit[] {
+  if ((loaded.globalsCode ?? "") === (next.globalsCode ?? "")) {
+    return [];
+  }
+
+  const protectedLines = protectedSourceLines(sourceLines, loaded);
+  const unprotectedSegments = sourceLineSegments(
+    sourceLines,
+    (lineNumber) => !protectedLines.has(lineNumber),
+  );
+  const globalsSegments = unprotectedSegments.filter((segment) =>
+    sourceLines
+      .slice(segment.startLine - 1, segment.endLine)
+      .some((line) => line.trim().length > 0)
+  );
+  const normalizedGlobalsCode = (next.globalsCode ?? "").trim();
+  const replacementLines = normalizedGlobalsCode.length > 0
+    ? [...normalizedGlobalsCode.replace(/\r\n/g, "\n").split("\n"), ""]
+    : [];
+
+  if (globalsSegments.length > 0) {
+    return globalsSegments.map((segment, index) => ({
+      startLine: segment.startLine,
+      endLine: segment.endLine,
+      replacementLines: index === 0 ? replacementLines : [],
+    }));
+  }
+
+  if (replacementLines.length === 0) {
+    return [];
+  }
+
+  const firstNodeLine = firstNodeStartLine(loaded);
+  const insertionSegment = firstNodeLine
+    ? unprotectedSegments.find((segment) =>
+      segment.endLine === firstNodeLine - 1 &&
+      sourceLines
+        .slice(segment.startLine - 1, segment.endLine)
+        .every((line) => line.trim().length === 0)
+    )
+    : undefined;
+  if (insertionSegment) {
+    return [{
+      startLine: insertionSegment.startLine,
+      endLine: insertionSegment.endLine,
+      replacementLines,
+    }];
+  }
+
+  const insertionLine = firstNodeLine ??
+    firstProtectedLine(protectedLines) ?? 1;
+
+  return [{
+    startLine: insertionLine,
+    endLine: insertionLine - 1,
+    replacementLines,
+  }];
+}
+
+function protectedSourceLines(
+  sourceLines: string[],
+  document: NodebookDocumentV1,
+): Set<number> {
+  const protectedLines = new Set<number>();
+
+  for (const node of document.nodes) {
+    const range = sourceRangeForNode(sourceLines, node);
+    for (
+      let lineNumber = range.startLine;
+      lineNumber <= range.endLine;
+      lineNumber += 1
+    ) {
+      protectedLines.add(lineNumber);
+    }
+  }
+
+  for (const range of nodebookImportRanges(sourceLines)) {
+    for (
+      let lineNumber = range.startLine;
+      lineNumber <= range.endLine;
+      lineNumber += 1
+    ) {
+      protectedLines.add(lineNumber);
+    }
+  }
+
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const trimmed = sourceLines[index].trim();
+    if (
+      trimmed === "# NodeBook graph" ||
+      /^[A-Za-z_][A-Za-z0-9_]*\.depends_on\(/.test(trimmed)
+    ) {
+      protectedLines.add(index + 1);
+    }
+  }
+
+  if (sourceLines.at(-1) === "") {
+    protectedLines.add(sourceLines.length);
+  }
+
+  return protectedLines;
+}
+
+function nodebookImportRanges(sourceLines: string[]): SourceEdit[] {
+  const ranges: SourceEdit[] = [];
+
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const trimmed = sourceLines[index].trim();
+    if (
+      !trimmed.startsWith("from nodebook import") &&
+      !/^import\s+nodebook(?:\s|$|,)/.test(trimmed)
+    ) {
+      continue;
+    }
+
+    let endIndex = index;
+    let parenBalance = countCharacter(trimmed, "(") -
+      countCharacter(trimmed, ")");
+    while (
+      endIndex + 1 < sourceLines.length &&
+      (sourceLines[endIndex].trimEnd().endsWith("\\") || parenBalance > 0)
+    ) {
+      endIndex += 1;
+      parenBalance += countCharacter(sourceLines[endIndex], "(") -
+        countCharacter(sourceLines[endIndex], ")");
+    }
+
+    ranges.push({
+      startLine: index + 1,
+      endLine: endIndex + 1,
+      replacementLines: [],
+    });
+    index = endIndex;
+  }
+
+  return ranges;
+}
+
+function sourceLineSegments(
+  sourceLines: string[],
+  predicate: (lineNumber: number) => boolean,
+): Array<{ startLine: number; endLine: number }> {
+  const segments: Array<{ startLine: number; endLine: number }> = [];
+  let startLine: number | null = null;
+
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const lineNumber = index + 1;
+    if (predicate(lineNumber)) {
+      startLine ??= lineNumber;
+      continue;
+    }
+
+    if (startLine !== null) {
+      segments.push({ startLine, endLine: lineNumber - 1 });
+      startLine = null;
+    }
+  }
+
+  if (startLine !== null) {
+    segments.push({ startLine, endLine: sourceLines.length });
+  }
+
+  return segments;
+}
+
+function firstNodeStartLine(document: NodebookDocumentV1): number | null {
+  const startLines = document.nodes.flatMap((node) =>
+    node.sourceRange ? [node.sourceRange.startLine] : []
+  );
+  return startLines.length > 0 ? Math.min(...startLines) : null;
+}
+
+function firstProtectedLine(protectedLines: Set<number>): number | null {
+  return protectedLines.size > 0 ? Math.min(...protectedLines) : null;
+}
+
+function countCharacter(value: string, character: string): number {
+  return [...value].filter((item) => item === character).length;
 }
 
 function applySourceEdit(lines: string[], edit: SourceEdit): void {
   const deleteCount = Math.max(0, edit.endLine - edit.startLine + 1);
   lines.splice(edit.startLine - 1, deleteCount, ...edit.replacementLines);
+}
+
+function compareSourceEditsDescending(first: SourceEdit, second: SourceEdit) {
+  return second.startLine - first.startLine || second.endLine - first.endLine;
 }
 
 type BodyRange = {

@@ -93,6 +93,7 @@ type InspectorPanelProps = {
     nodeId: string,
     metadata: { title?: string; description?: string },
   ) => void;
+  onGlobalsCodeChange: (code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onRunNode: (nodeId: string) => void;
@@ -680,27 +681,43 @@ function GraphInspector({
   graph,
   graphExecutionState,
   validationIssues,
+  readOnly,
   onNodeSelect,
+  onGlobalsCodeChange,
 }: {
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
   validationIssues: InspectGraphValidationIssue[];
+  readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
+  onGlobalsCodeChange: (code: string) => void;
 }) {
   return (
     <div className="space-y-4">
       <ValidationIssues issues={validationIssues} />
 
-      {graph.globalsCode.trim().length > 0 && (
-        <section className="border-t border-zinc-200 pt-4">
-          <h3 className="text-xs font-semibold uppercase text-zinc-500">
-            Document Globals
-          </h3>
-          <pre className="mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900">
-            {graph.globalsCode}
-          </pre>
-        </section>
-      )}
+      <section className="border-t border-zinc-200 pt-4">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+          Document Globals
+        </h3>
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+          <CodeMirror
+            value={graph.globalsCode}
+            extensions={[python()]}
+            readOnly={readOnly}
+            onChange={onGlobalsCodeChange}
+            basicSetup={{
+              autocompletion: false,
+              closeBrackets: true,
+              foldGutter: true,
+              highlightActiveLine: true,
+              highlightActiveLineGutter: true,
+              lineNumbers: true,
+            }}
+            theme="light"
+          />
+        </div>
+      </section>
 
       <dl className="grid grid-cols-2 gap-3">
         <MetricTile label="Nodes" value={graph.nodeCount} />
@@ -1828,6 +1845,7 @@ export function InspectorPanel({
   onNodeSelect,
   onCodeChange,
   onNodeMetadataChange,
+  onGlobalsCodeChange,
   onOutputsChange,
   onTraceEnabledChange,
   onRunNode,
@@ -1907,7 +1925,9 @@ export function InspectorPanel({
                 graph={graph}
                 graphExecutionState={graphExecutionState}
                 validationIssues={validationIssues}
+                readOnly={readOnly}
                 onNodeSelect={onNodeSelect}
+                onGlobalsCodeChange={onGlobalsCodeChange}
               />
             )}
           <TraceToggle

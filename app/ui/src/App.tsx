@@ -444,6 +444,21 @@ export default function App() {
     });
   }, [markDocumentEdited, markNodesStale]);
 
+  const handleGlobalsCodeChange = useCallback((globalsCode: string) => {
+    setEditableDocument((current) => {
+      if (!current || (current.globalsCode ?? "") === globalsCode) {
+        return current;
+      }
+
+      markDocumentEdited();
+      markNodesStale(current.nodes.map((node) => node.id));
+      return {
+        ...current,
+        globalsCode,
+      };
+    });
+  }, [markDocumentEdited, markNodesStale]);
+
   const handleOutputsChange = useCallback((
     nodeId: string,
     outputs: string[],
@@ -867,6 +882,7 @@ export default function App() {
               onNodeSelect={setSelectedNodeId}
               onCodeChange={handleCodeChange}
               onNodeMetadataChange={handleNodeMetadataChange}
+              onGlobalsCodeChange={handleGlobalsCodeChange}
               onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
               onRunNode={handleRunNode}
