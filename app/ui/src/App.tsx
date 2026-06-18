@@ -362,18 +362,20 @@ export default function App() {
 
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
     if (!editableDocument) return;
+    const nodeId = createNextNodeId(editableDocument);
+    const functionName = reserveNextFunctionName(
+      editableDocument,
+      generatedFunctionNameSessionRef.current,
+    );
     const node = createNewPythonNode(
-      createNextNodeId(editableDocument),
-      reserveNextFunctionName(
-        editableDocument,
-        generatedFunctionNameSessionRef.current,
-      ),
+      nodeId,
+      functionName,
       position,
     );
 
     setEditableDocument((current) => {
       if (!current) return current;
-      if (hasNodeIdOrFunctionName(current, node.id, functionName)) {
+      if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
         return current;
       }
 
@@ -853,8 +855,12 @@ export default function App() {
                   ? handleAddChildNode
                   : undefined}
                 onCodeChange={isReadOnlyDocument ? undefined : handleCodeChange}
-                onConnectNodes={undefined}
-                onDeleteEdges={undefined}
+                onConnectNodes={canEditStructure
+                  ? handleConnectNodes
+                  : undefined}
+                onDeleteEdges={canEditStructure
+                  ? handleDeleteEdges
+                  : undefined}
                 onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
                 onNodePositionChange={handleNodePositionChange}
                 onNodeSelect={setSelectedNodeId}
