@@ -239,7 +239,7 @@ function validateEditableSave(
   }
 
   validateUniqueNodeFields(next, issues);
-  validateEdgeChanges(loaded, next, addedNodeIds, deletedNodeIds, issues);
+  validateEdgeChanges(loaded, next, issues);
 
   for (const [nodeId, loadedNode] of loadedNodesById) {
     const nextNode = nextNodesById.get(nodeId);
@@ -388,13 +388,12 @@ function validateOutputNames(
 function validateEdgeChanges(
   loaded: NodebookDocumentV1,
   next: NodebookDocumentV1,
-  addedNodeIds: Set<string>,
-  deletedNodeIds: Set<string>,
   issues: ValidationIssue[],
 ): void {
   const nextNodeIds = new Set(next.nodes.map((node) => node.id));
-  const loadedEdgeIds = new Set(loaded.edges.map(edgeKey));
-  const nextEdgeIds = new Set(next.edges.map(edgeKey));
+  const loadedNodesById = new Map(loaded.nodes.map((node) => [node.id, node]));
+  const loadedInputNamesByNodeId = getDirectInputNamesByNodeId(loaded);
+  const nextInputNamesByNodeId = getDirectInputNamesByNodeId(next);
 
   for (const edge of next.edges) {
     if (!nextNodeIds.has(edge.fromNode) || !nextNodeIds.has(edge.toNode)) {
@@ -418,27 +417,19 @@ function validateEdgeChanges(
     }
   }
 
-  for (const edge of loaded.edges) {
-    if (nextEdgeIds.has(edgeKey(edge))) continue;
-    if (deletedNodeIds.has(edge.fromNode) || deletedNodeIds.has(edge.toNode)) {
-      continue;
-    }
+  for (const node of next.nodes) {
+    const loadedNode = loadedNodesById.get(node.id);
+    if (!loadedNode?.customReturn) continue;
+
+    const loadedInputs = loadedInputNamesByNodeId.get(node.id) ?? [];
+    const nextInputs = nextInputNamesByNodeId.get(node.id) ?? [];
+    if (areStringArraysEqual(loadedInputs, nextInputs)) continue;
 
     issues.push({
       kind: "unsupported_python",
       message:
-        `Removing edge ${edge.fromNode}->${edge.toNode} is not supported in this pass.`,
-    });
-  }
-
-  for (const edge of next.edges) {
-    if (loadedEdgeIds.has(edgeKey(edge))) continue;
-    if (addedNodeIds.has(edge.toNode)) continue;
-
-    issues.push({
-      kind: "unsupported_python",
-      message:
-        `Adding edge ${edge.fromNode}->${edge.toNode} is only supported for newly added child nodes.`,
+        `Custom-return node ${node.id} cannot edit upstream edges in the canvas yet.`,
+      nodeId: node.id,
     });
   }
 }

@@ -1027,9 +1027,9 @@ Deno.test("savePythonDocument removes deleted nodes and incident edges", async (
   assertEquals(saved.document.edges, []);
 });
 
-Deno.test("savePythonDocument rejects standalone edge edits", async () => {
+Deno.test("savePythonDocument adds edge between existing nodes", async () => {
   const directory = await Deno.makeTempDir();
-  const documentPath = `${directory}/edge_edit.py`;
+  const documentPath = `${directory}/add_existing_edge.py`;
 
   await Deno.writeTextFile(
     documentPath,
@@ -1057,6 +1057,127 @@ Deno.test("savePythonDocument rejects standalone edge edits", async () => {
   const saved = await savePythonDocument(documentPath, {
     ...loaded.document,
     edges: [{ fromNode: "n_a", toNode: "n_b" }],
+  });
+
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_a", outputs=["x"])',
+      "def make_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_b", outputs=[])',
+      "def use_x(x):",
+      "    pass",
+      "    return {}",
+      "",
+      "# NodeBook graph",
+      "use_x.depends_on(make_x)",
+      "",
+    ].join("\n"),
+  );
+  assertEquals(saved.document.edges, [{ fromNode: "n_a", toNode: "n_b" }]);
+});
+
+Deno.test("savePythonDocument removes edge between existing nodes", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/remove_existing_edge.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_a", outputs=["x"])',
+      "def make_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_b", outputs=[])',
+      "def use_x(x):",
+      "    pass",
+      "    return {}",
+      "",
+      "# NodeBook graph",
+      "use_x.depends_on(make_x)",
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, {
+    ...loaded.document,
+    edges: [],
+  });
+
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_a", outputs=["x"])',
+      "def make_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_b", outputs=[])',
+      "def use_x():",
+      "    pass",
+      "    return {}",
+      "",
+      "# NodeBook graph",
+      "",
+    ].join("\n"),
+  );
+  assertEquals(saved.document.edges, []);
+});
+
+Deno.test("savePythonDocument rejects edge edits into custom-return nodes", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/custom_edge_edit.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_a", outputs=["x"])',
+      "def make_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_custom", outputs=["y"])',
+      "def use_x():",
+      "    if True:",
+      '        return {"y": 2}',
+      '    return {"y": 3}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const saved = await savePythonDocument(documentPath, {
+    ...loaded.document,
+    edges: [{ fromNode: "n_a", toNode: "n_custom" }],
   });
 
   assertEquals(saved.ok, false);
