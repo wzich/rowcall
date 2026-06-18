@@ -2,6 +2,7 @@ import {
   Background,
   Controls,
   type EdgeChange,
+  type EdgeMouseHandler,
   type NodeChange,
   type NodeMouseHandler,
   type NodeTypes,
@@ -206,6 +207,10 @@ export function Canvas({
 
     onConnectNodes?.(connection.source, connection.target);
   }, [onConnectNodes]);
+  const handleEdgeDoubleClick = useCallback<EdgeMouseHandler>((event, edge) => {
+    event.preventDefault();
+    onDeleteEdges?.([edge.id]);
+  }, [onDeleteEdges]);
   useEffect(() => {
     addNodeAtCanvasCenterRef.current = () => {
       onAddNode?.({ x: 0, y: 0 });
@@ -276,6 +281,7 @@ export function Canvas({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        onEdgeDoubleClick={onDeleteEdges ? handleEdgeDoubleClick : undefined}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}

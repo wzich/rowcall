@@ -94,6 +94,8 @@ export function toReactFlowGraph(
       source: edge.fromNode,
       target: edge.toNode,
       type: "smoothstep",
+      interactionWidth: 18,
+      style: { strokeWidth: 1.75 },
     })),
   };
 }

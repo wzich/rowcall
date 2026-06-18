@@ -417,7 +417,7 @@ export default function App() {
       );
 
       markDocumentEdited();
-      markNodesStale([node.id]);
+      setSelectedNodeId(node.id);
       return {
         ...current,
         nodes: [...current.nodes, node],
@@ -427,7 +427,7 @@ export default function App() {
         ],
       };
     });
-  }, [editableDocument, markDocumentEdited, markNodesStale]);
+  }, [editableDocument, markDocumentEdited]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
     setEditableDocument((current) => {
