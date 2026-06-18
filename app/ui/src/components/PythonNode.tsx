@@ -64,7 +64,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         type="target"
         position={Position.Top}
         className="border-2 border-white bg-zinc-500"
-        style={{ width: 16, height: 16 }}
+        style={{ width: 14, height: 14 }}
       />
       <div className="cursor-grab border-b border-zinc-200 px-3 py-2 active:cursor-grabbing">
         <div className="flex items-start justify-between gap-3">
@@ -166,7 +166,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         type="source"
         position={Position.Bottom}
         className="border-2 border-white bg-zinc-500"
-        style={{ width: 16, height: 16 }}
+        style={{ width: 14, height: 14 }}
       />
     </article>
   );
