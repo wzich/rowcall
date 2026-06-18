@@ -9,40 +9,33 @@ import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 
 const statusStyles: Record<
   NodeRunVisualStatus,
-  { border: string; dot: string; label: string }
+  { dot: string; label: string }
 > = {
   idle: {
-    border: "border-zinc-300",
     dot: "bg-zinc-300",
     label: "Not run",
   },
   stale: {
-    border: "border-amber-400",
     dot: "bg-amber-400",
     label: "Code, outputs, or inputs changed since the last run",
   },
   queued: {
-    border: "border-zinc-400",
     dot: "bg-zinc-400",
     label: "Queued to run",
   },
   running: {
-    border: "border-blue-400",
     dot: "bg-blue-500",
     label: "Running",
   },
   blocked: {
-    border: "border-red-300",
     dot: "bg-red-300",
     label: "Did not run because an upstream step failed",
   },
   completed: {
-    border: "border-emerald-500",
     dot: "bg-emerald-500",
     label: "Ran successfully",
   },
   failed: {
-    border: "border-red-500",
     dot: "bg-red-500",
     label: "Run failed",
   },
@@ -64,7 +57,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       className={[
         "relative",
         "w-[360px] rounded-md border bg-white shadow-sm",
-        selected ? "border-zinc-900 shadow-md" : status.border,
+        selected ? "border-zinc-900 shadow-md" : "border-zinc-200",
       ].join(" ")}
     >
       <Handle
