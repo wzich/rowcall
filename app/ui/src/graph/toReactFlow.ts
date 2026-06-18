@@ -17,7 +17,6 @@ export type PythonNodeData = {
   preview?: NodeCanvasPreview;
   onAddChild?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
-  onDelete?: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
   onSaveDocument?: () => void;

@@ -1,5 +1,5 @@
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
-import { Play, Plus, Trash2 } from "lucide-react";
+import { Play, Plus } from "lucide-react";
 import type { MouseEvent } from "react";
 import type {
   NodeRunVisualStatus,
@@ -143,21 +143,6 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
               onClick={() => data.onAddChild?.(id)}
             >
               <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-            </button>
-          )}
-          {data.onDelete && (
-            <button
-              type="button"
-              aria-label={`Delete node ${data.label}`}
-              title="Delete node"
-              className="flex h-7 w-7 items-center justify-center rounded border border-red-200 text-red-600 hover:bg-red-50"
-              onClick={() => data.onDelete?.(id)}
-            >
-              <Trash2
-                aria-hidden="true"
-                className="h-3.5 w-3.5"
-                strokeWidth={2.25}
-              />
             </button>
           )}
         </div>

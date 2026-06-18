@@ -888,6 +888,7 @@ export default function App() {
               onGlobalsCodeChange={handleGlobalsCodeChange}
               onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
+              onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
               onRunNode={handleRunNode}
               onRunToNode={handleRunToNode}
               onRunGraph={handleRunGraph}

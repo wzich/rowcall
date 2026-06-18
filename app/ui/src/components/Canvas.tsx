@@ -128,7 +128,6 @@ export function Canvas({
           outputOptions: nodeOutputOptions[node.id] ?? [],
           onAddChild: onAddChildNode,
           onCodeChange: node.data.editable ? onCodeChange : undefined,
-          onDelete: onDeleteNode,
           onOutputsChange,
           onRunToNode,
           onSaveDocument,
@@ -285,6 +284,7 @@ export function Canvas({
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
+        deleteKeyCode={null}
         autoPanOnNodeDrag={false}
         minZoom={minCanvasZoom}
         maxZoom={maxCanvasZoom}

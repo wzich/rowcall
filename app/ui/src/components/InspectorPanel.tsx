@@ -10,7 +10,7 @@ import type {
 import { python } from "@codemirror/lang-python";
 import { keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { AlertTriangle, Check, Play, Route, X } from "lucide-react";
+import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
@@ -96,6 +96,7 @@ type InspectorPanelProps = {
   onGlobalsCodeChange: (code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
+  onDeleteNode?: (nodeId: string) => void;
   onRunNode: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
   onRunGraph: () => void;
@@ -1783,6 +1784,30 @@ function ValidationIssues(
   );
 }
 
+function DeleteNodeAction({
+  selectedNode,
+  disabled,
+  onDeleteNode,
+}: {
+  selectedNode: NodeInspectorSelection;
+  disabled: boolean;
+  onDeleteNode: (nodeId: string) => void;
+}) {
+  return (
+    <section className="border-t border-zinc-200 pt-4">
+      <button
+        type="button"
+        className="inline-flex w-full items-center justify-center gap-2 rounded border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+        disabled={disabled}
+        onClick={() => onDeleteNode(selectedNode.id)}
+      >
+        <Trash2 aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+        Delete node
+      </button>
+    </section>
+  );
+}
+
 export function InspectorPanel({
   selectedNode,
   graph,
@@ -1797,6 +1822,7 @@ export function InspectorPanel({
   onGlobalsCodeChange,
   onOutputsChange,
   onTraceEnabledChange,
+  onDeleteNode,
   onRunNode,
   onRunToNode,
   onRunGraph,
@@ -1950,6 +1976,13 @@ export function InspectorPanel({
             traceEnabled={traceEnabled}
             onTraceEnabledChange={onTraceEnabledChange}
           />
+          {selectedNode && onDeleteNode && (
+            <DeleteNodeAction
+              selectedNode={selectedNode}
+              disabled={areNodeActionsDisabled}
+              onDeleteNode={onDeleteNode}
+            />
+          )}
         </div>
       </div>
     </aside>
