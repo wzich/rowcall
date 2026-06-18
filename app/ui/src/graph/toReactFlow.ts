@@ -93,7 +93,7 @@ export function toReactFlowGraph(
       id: `${edge.fromNode}->${edge.toNode}`,
       source: edge.fromNode,
       target: edge.toNode,
-      type: "smoothstep",
+      type: "default",
       animated: true,
       className: "python-flow-edge",
       interactionWidth: 18,
