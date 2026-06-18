@@ -731,7 +731,7 @@
         "csstype"
       ]
     },
-    "@uiw/codemirror-extensions-basic-setup@4.25.9_@codemirror+commands@6.10.3_@codemirror+state@6.6.0_@codemirror+view@6.38.8": {
+    "@uiw/codemirror-extensions-basic-setup@4.25.9_@codemirror+autocomplete@6.20.1_@codemirror+commands@6.10.3_@codemirror+state@6.6.0_@codemirror+view@6.38.8": {
       "integrity": "sha512-QFAqr+pu6lDmNpAlecODcF49TlsrZ0bj15zPzfhiqSDl+Um3EsDLFLppixC7kFLn+rdDM2LTvVjn5CPvefpRgw==",
       "dependencies": [
         "@codemirror/autocomplete",

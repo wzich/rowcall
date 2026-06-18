@@ -727,9 +727,6 @@ export default function App() {
     <div className="flex h-screen min-h-0 flex-col bg-zinc-100 text-zinc-950">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {isReadOnlyDocument ? "Read-only canvas" : "Editable canvas"}
-          </p>
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold">Nodebook</h1>
             <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
@@ -959,14 +956,11 @@ function PythonRuntimeBadge({
 
   return (
     <div
-      className="hidden min-w-0 max-w-sm rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 md:block"
+      className="hidden rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 md:block"
       title={`${label}\n${python.executable}`}
     >
       <span className="font-medium text-zinc-700">Python</span>{" "}
       <span>{python.version}</span>
-      <span className="ml-2 inline-block max-w-[18rem] truncate align-bottom text-zinc-400">
-        {python.executable}
-      </span>
     </div>
   );
 }
