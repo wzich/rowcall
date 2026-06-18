@@ -94,8 +94,10 @@ export function toReactFlowGraph(
       source: edge.fromNode,
       target: edge.toNode,
       type: "smoothstep",
+      animated: true,
+      className: "python-flow-edge",
       interactionWidth: 18,
-      style: { strokeWidth: 1.75 },
+      style: { strokeDasharray: "6 8", strokeWidth: 1.75 },
     })),
   };
 }

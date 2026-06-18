@@ -11,3 +11,18 @@ body {
   margin: 0;
   overflow: hidden;
 }
+
+.react-flow__edge.python-flow-edge .react-flow__edge-path {
+  animation: python-flow-edge-feed 2.6s linear infinite;
+  stroke-linecap: round;
+}
+
+@keyframes python-flow-edge-feed {
+  from {
+    stroke-dashoffset: 28;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
