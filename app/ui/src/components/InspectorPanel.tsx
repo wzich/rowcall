@@ -700,7 +700,7 @@ function GraphInspector({
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Document Globals
         </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
           <CodeMirror
             value={graph.globalsCode}
             extensions={[python()]}
@@ -1045,13 +1045,10 @@ function NodeInspector({
   validationIssues,
   readOnly,
   actionsDisabled,
-  isRunning,
   onCodeChange,
-  onNodeMetadataChange,
   onOutputsChange,
   onNodeSelect,
   onRunNode,
-  onRunToNode,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
@@ -1059,16 +1056,10 @@ function NodeInspector({
   validationIssues: InspectGraphValidationIssue[];
   readOnly: boolean;
   actionsDisabled: boolean;
-  isRunning: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
-  onNodeMetadataChange: (
-    nodeId: string,
-    metadata: { title?: string; description?: string },
-  ) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onNodeSelect: (nodeId: string) => void;
   onRunNode: (nodeId: string) => void;
-  onRunToNode: (nodeId: string) => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
@@ -1112,6 +1103,10 @@ function NodeInspector({
     ]),
   ], [actionsDisabled, onRunNode, selectedNode.id]);
   const inputStatus = getInputStatusLabel(selectedNode, runStatus);
+  const shouldShowCachedOutputPreviews = !hasCurrentRunOutputs(
+    selectedNode.id,
+    executionState,
+  );
 
   const handleOutputReplacement = () => {
     if (!outputReplacement || readOnly || !selectedNode.editable) return;
@@ -1141,80 +1136,7 @@ function NodeInspector({
 
   return (
     <div className="space-y-5">
-      <ValidationIssues issues={validationIssues} />
-
-      <section className="rounded border border-zinc-200 bg-zinc-50 p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <input
-              className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
-              value={selectedNode.title}
-              placeholder={selectedNode.functionName ?? selectedNode.id}
-              readOnly={readOnly}
-              onChange={(event) =>
-                onNodeMetadataChange(selectedNode.id, {
-                  title: event.currentTarget.value,
-                })}
-            />
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-              <span className="rounded bg-white px-2 py-0.5 text-zinc-600">
-                Python
-              </span>
-              {selectedNode.badges.map((badge) => (
-                <span
-                  key={badge}
-                  className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600"
-                >
-                  {badge}
-                </span>
-              ))}
-              <span
-                className="font-mono text-zinc-400"
-                title={`Node ID: ${selectedNode.id}`}
-              >
-                {selectedNode.functionName ?? selectedNode.id}
-              </span>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
-              disabled={actionsDisabled}
-              onClick={() => onRunNode(selectedNode.id)}
-            >
-              <Play
-                aria-hidden="true"
-                className="h-4 w-4"
-                strokeWidth={2.25}
-              />
-              {isRunning ? "Running..." : "Run step"}
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
-              disabled={actionsDisabled}
-              onClick={() => onRunToNode(selectedNode.id)}
-            >
-              <Route
-                aria-hidden="true"
-                className="h-4 w-4"
-                strokeWidth={2.25}
-              />
-              Run upstream
-            </button>
-          </div>
-        </div>
-        <textarea
-          className="mt-2 min-h-12 w-full resize-y rounded border border-transparent bg-transparent px-0 py-1 text-sm leading-6 text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
-          value={selectedNode.description}
-          placeholder="Describe this step."
-          readOnly={readOnly}
-          onChange={(event) =>
-            onNodeMetadataChange(selectedNode.id, {
-              description: event.currentTarget.value,
-            })}
-        />
+      <section>
         <NodeRunBanner
           summary={runSummary}
           inputStatus={inputStatus}
@@ -1224,6 +1146,8 @@ function NodeInspector({
           onOutputReplacement={handleOutputReplacement}
         />
       </section>
+
+      <ValidationIssues issues={validationIssues} />
 
       <FlowNavigation
         upstreamDependencies={selectedNode.upstreamDependencies}
@@ -1237,7 +1161,7 @@ function NodeInspector({
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Code
         </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
           <div data-shortcut-scope="editor">
             <CodeMirror
               value={selectedNode.code}
@@ -1337,7 +1261,9 @@ function NodeInspector({
           )}
       </section>
 
-      <OutputPreviewSection previews={selectedNode.outputPreviews} />
+      {shouldShowCachedOutputPreviews && (
+        <OutputPreviewSection previews={selectedNode.outputPreviews} />
+      )}
 
       <RunResult selectedNode={selectedNode} executionState={executionState} />
     </div>
@@ -1372,6 +1298,29 @@ function getInputStatusLabel(
   }
 
   return "Run upstream to prepare this step's inputs, or run step if cached inputs are already available.";
+}
+
+function hasCurrentRunOutputs(
+  nodeId: string,
+  executionState: ExecutionDisplayState | null,
+): boolean {
+  if (!executionState) {
+    return false;
+  }
+
+  if (
+    executionState.status === "completed_node" ||
+    executionState.status === "failed_node"
+  ) {
+    return Object.keys(executionState.result.outputs).length > 0;
+  }
+
+  if (executionState.status === "completed") {
+    const nodeResult = executionState.response.resultsByNode[nodeId];
+    return Object.keys(nodeResult?.outputs ?? {}).length > 0;
+  }
+
+  return false;
 }
 
 function formatMissingOutputsWarning(outputs: string[]): string {
@@ -1424,7 +1373,7 @@ function NodeRunBanner({
   }[variant];
 
   return (
-    <div className={`mt-3 rounded border px-3 py-2 text-sm ${styles}`}>
+    <div className={`rounded border px-3 py-2 text-sm ${styles}`}>
       <div className="flex items-start gap-2">
         {(variant === "warning" || variant === "danger") && (
           <AlertTriangle
@@ -1869,32 +1818,102 @@ export function InspectorPanel({
   return (
     <aside className="flex h-full w-[min(640px,48vw)] min-w-[520px] shrink-0 flex-col border-l border-zinc-200 bg-white">
       <div className="border-b border-zinc-200 px-5 py-4">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-medium uppercase text-zinc-500">
-            {selectedNode ? "Step editor" : "Graph overview"}
-          </p>
-          {selectedNode && (
-            <button
-              type="button"
-              aria-label="Show graph overview"
-              className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100"
-              onClick={onSelectionClear}
-            >
-              <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-            </button>
+        {selectedNode
+          ? (
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <input
+                  className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+                  value={selectedNode.title}
+                  placeholder={selectedNode.functionName ?? selectedNode.id}
+                  readOnly={readOnly}
+                  onChange={(event) =>
+                    onNodeMetadataChange(selectedNode.id, {
+                      title: event.currentTarget.value,
+                    })}
+                />
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600">
+                    Python
+                  </span>
+                  {selectedNode.badges.map((badge) => (
+                    <span
+                      key={badge}
+                      className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                  <span
+                    className="font-mono text-zinc-400"
+                    title={`Node ID: ${selectedNode.id}`}
+                  >
+                    {selectedNode.functionName ?? selectedNode.id}
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                  disabled={areNodeActionsDisabled}
+                  onClick={() => onRunNode(selectedNode.id)}
+                >
+                  <Play
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    strokeWidth={2.25}
+                  />
+                  {isAnyRunBlockingNodeActions ? "Running..." : "Run step"}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+                  disabled={areNodeActionsDisabled}
+                  onClick={() => onRunToNode(selectedNode.id)}
+                >
+                  <Route
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    strokeWidth={2.25}
+                  />
+                  Run upstream
+                </button>
+                <button
+                  type="button"
+                  aria-label="Show graph overview"
+                  className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100"
+                  onClick={onSelectionClear}
+                >
+                  <X
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    strokeWidth={2.25}
+                  />
+                </button>
+              </div>
+            </div>
+          )
+          : (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase text-zinc-500">
+                Graph overview
+              </p>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                disabled={isGraphActionDisabled}
+                onClick={onRunGraph}
+              >
+                <Play
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                  strokeWidth={2.25}
+                />
+                {isGraphRunning ? "Running..." : "Run graph"}
+              </button>
+            </div>
           )}
-          {!selectedNode && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
-              disabled={isGraphActionDisabled}
-              onClick={onRunGraph}
-            >
-              <Play aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-              {isGraphRunning ? "Running..." : "Run graph"}
-            </button>
-          )}
-        </div>
       </div>
 
       <div
@@ -1911,13 +1930,10 @@ export function InspectorPanel({
                 validationIssues={validationIssues}
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}
-                isRunning={isAnyRunBlockingNodeActions}
                 onCodeChange={onCodeChange}
-                onNodeMetadataChange={onNodeMetadataChange}
                 onOutputsChange={onOutputsChange}
                 onNodeSelect={onNodeSelect}
                 onRunNode={onRunNode}
-                onRunToNode={onRunToNode}
               />
             )
             : (
