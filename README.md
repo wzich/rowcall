@@ -4,7 +4,37 @@ Nodebook is a canvas-based computational notebook prototype. The current repo
 has a Deno/Hono API for editing and running graph-shaped Python notebooks, plus
 a Vite/React UI for editing graphs on a canvas.
 
-## Run Locally
+## Alpha Tester Start
+
+Start Nodebook with the built UI and the ecommerce example:
+
+```sh
+deno task start
+```
+
+Open another Python document:
+
+```sh
+deno task start path/to/analysis.py
+```
+
+Create a new Python document:
+
+```sh
+deno task start --create path/to/analysis.py
+```
+
+Nodebook uses the first `python3` or `python` on `PATH`, so activate your conda
+or virtual environment before starting it. To choose an interpreter explicitly:
+
+```sh
+deno task start --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
+```
+
+The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
+only.
+
+## Run Locally For Development
 
 Start the Deno API:
 
@@ -12,18 +42,18 @@ Start the Deno API:
 deno task dev
 ```
 
-By default this edits `examples/hello_world.py`. To edit another local document
-during development, pass a `.py` path through the task:
+By default this edits `examples/ecommerce/analysis.py`. To edit another local
+document during development, pass a `.py` path through the task:
 
 ```sh
-deno task dev -- --document path/to/analysis.py
+deno task dev path/to/analysis.py
 ```
 
 To create a new document and start the API against it, pass `--create` with the
 new `.py` path:
 
 ```sh
-deno task dev -- --create --document path/to/analysis.py
+deno task dev --create path/to/analysis.py
 ```
 
 Nodebook Python documents import a tiny local `nodebook` package:
@@ -50,7 +80,7 @@ There is also a Polars-based data workflow example:
 
 ```sh
 python -m pip install polars
-deno task dev -- --document examples/polars_orders.py
+deno task dev examples/polars_orders.py
 ```
 
 Start the React canvas UI in another terminal:

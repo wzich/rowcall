@@ -5,6 +5,13 @@ export type PythonRuntimeInfo = {
   executable: string;
   version: string;
   implementation: string;
+  condaPrefix?: string;
+  virtualEnv?: string;
+  nodebookImport: {
+    ok: boolean;
+    path?: string;
+    error?: string;
+  };
 };
 
 export type LoadPythonRuntimeSuccess = {

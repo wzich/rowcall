@@ -21,9 +21,10 @@ import {
   streamRunSingleNode,
   streamRunToNode,
 } from "./executor.ts";
+import { configurePythonCommand } from "./runtime_config.ts";
+import { parseStartupOptions } from "./startup_args.ts";
 
 const app = new Hono();
-const defaultDocumentPath = "examples/hello_world.py";
 const uiDistPath = "app/ui/dist";
 const defaultNewDocumentSource = `from nodebook import node
 
@@ -33,11 +34,17 @@ def start():
     message = "hello"
     return {"message": message}
 `;
-const activeDocumentPath = getActiveDocumentPath(Deno.args);
-const createActiveDocumentIfMissing = Deno.args.includes("--create");
+const startupOptions = getStartupOptions(Deno.args);
+configurePythonCommand(startupOptions.pythonCommand);
+const activeDocumentPath = startupOptions.documentPath;
+const createActiveDocumentIfMissing = startupOptions.create;
 await ensureActiveDocumentExists(activeDocumentPath, {
   createIfMissing: createActiveDocumentIfMissing,
 });
+console.info(`Nodebook document: ${activeDocumentPath}`);
+console.info(
+  `Nodebook URL: http://${startupOptions.hostname}:${startupOptions.port}/`,
+);
 
 app.use("*", async (c, next) => {
   await next();
@@ -119,24 +126,13 @@ function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
   });
 }
 
-function getActiveDocumentPath(args: string[]): string {
-  const documentFlagIndex = args.findIndex((arg) => arg === "--document");
-  if (documentFlagIndex >= 0 && args[documentFlagIndex + 1] === undefined) {
-    console.error("Missing path after --document");
+function getStartupOptions(args: string[]) {
+  try {
+    return parseStartupOptions(args);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     Deno.exit(1);
   }
-
-  const path = documentFlagIndex >= 0
-    ? args[documentFlagIndex + 1]
-    : args.find((arg) => !arg.startsWith("-"));
-
-  const documentPath = path ?? defaultDocumentPath;
-  if (!documentPath.endsWith(".py")) {
-    console.error("Nodebook document path must end with .py");
-    Deno.exit(1);
-  }
-
-  return documentPath;
 }
 
 async function ensureActiveDocumentExists(
@@ -585,4 +581,7 @@ app.get("/assets/*", (c) => {
 
 app.get("*", () => serveBuiltUiIndex());
 
-Deno.serve(app.fetch);
+Deno.serve(
+  { hostname: startupOptions.hostname, port: startupOptions.port },
+  app.fetch,
+);

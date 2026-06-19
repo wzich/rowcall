@@ -5,6 +5,7 @@ import {
   type PythonSourceRange,
 } from "./document.ts";
 import type { ValidationIssue } from "./types.ts";
+import { resolvePythonCommand } from "./runtime_config.ts";
 
 type PythonLoaderSuccess = {
   ok: true;
@@ -1166,20 +1167,4 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   }
 
   return value as Record<string, unknown>;
-}
-
-async function resolvePythonCommand(): Promise<string> {
-  for (const command of ["python3", "python"]) {
-    const probe = new Deno.Command(command, {
-      args: ["--version"],
-      stdout: "null",
-      stderr: "null",
-    });
-    const output = await probe.output().catch(() => null);
-    if (output?.success) {
-      return command;
-    }
-  }
-
-  return "python3";
 }
