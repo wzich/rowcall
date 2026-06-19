@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
-import { Save } from "lucide-react";
+import { Moon, Save, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   inspectGraph,
@@ -39,6 +39,9 @@ import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
 const documentSourceValue = "document:active";
 const generatedFunctionNamePattern = /^new_node_(\d+)$/u;
+const themeStorageKey = "nodebook:theme";
+
+export type ThemeMode = "light" | "dark";
 
 type GeneratedFunctionNameSession = {
   reservedNames: Set<string>;
@@ -50,7 +53,23 @@ type SaveErrorMessage = {
   detail: string;
 };
 
+function getInitialThemeMode(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const storedTheme = window.localStorage.getItem(themeStorageKey);
+  if (storedTheme === "light" || storedTheme === "dark") {
+    return storedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 export default function App() {
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
   const [editableDocument, setEditableDocument] = useState<
@@ -78,6 +97,9 @@ export default function App() {
     queryKey: ["runtime", "python"],
     queryFn: loadPythonRuntime,
   });
+  useEffect(() => {
+    window.localStorage.setItem(themeStorageKey, themeMode);
+  }, [themeMode]);
   const {
     executionStateByNodeId,
     graphExecutionState,
@@ -724,18 +746,25 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-zinc-100 text-zinc-950">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3">
+    <div
+      className={[
+        themeMode === "dark" ? "dark" : "",
+        "flex h-screen min-h-0 flex-col bg-zinc-100 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100",
+      ].join(" ")}
+    >
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold">Nodebook</h1>
-            <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+            <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
               Alpha
             </span>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-600">{documentPath}</span>
+          <span className="text-sm text-zinc-600 dark:text-zinc-400">
+            {documentPath}
+          </span>
           <PythonRuntimeBadge
             isLoading={pythonRuntimeQuery.isLoading}
             error={pythonRuntimeQuery.error}
@@ -754,8 +783,34 @@ export default function App() {
           )}
           <button
             type="button"
+            aria-label={themeMode === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"}
+            title={themeMode === "dark" ? "Light mode" : "Dark mode"}
+            className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            onClick={() =>
+              setThemeMode((current) => current === "dark" ? "light" : "dark")}
+          >
+            {themeMode === "dark"
+              ? (
+                <Sun
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                  strokeWidth={2.25}
+                />
+              )
+              : (
+                <Moon
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                  strokeWidth={2.25}
+                />
+              )}
+          </button>
+          <button
+            type="button"
             title={isReadOnlyDocument ? "Read-only" : "Save (Ctrl+S)"}
-            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400"
+            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
             disabled={!editableDocument || saveDocumentMutation.isPending}
             onClick={handleSaveDocument}
           >
@@ -855,9 +910,7 @@ export default function App() {
                 onConnectNodes={canEditStructure
                   ? handleConnectNodes
                   : undefined}
-                onDeleteEdges={canEditStructure
-                  ? handleDeleteEdges
-                  : undefined}
+                onDeleteEdges={canEditStructure ? handleDeleteEdges : undefined}
                 onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
                 onNodePositionChange={handleNodePositionChange}
                 onNodeSelect={setSelectedNodeId}
@@ -868,9 +921,11 @@ export default function App() {
                 outputsReadOnly={!canEditOutputs}
                 runToNodeDisabled={isGraphRunning || isSelectedNodeRunning}
                 onSelectionClear={() => setSelectedNodeId(null)}
+                themeMode={themeMode}
               />
             </div>
             <InspectorPanel
+              themeMode={themeMode}
               selectedNode={selectedNodeDetails}
               graph={graphInspectorDetails}
               selectedNodeExecutionState={selectedNodeId

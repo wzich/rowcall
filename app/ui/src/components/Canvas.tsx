@@ -26,6 +26,7 @@ import {
 } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
+import type { ThemeMode } from "../App.tsx";
 import {
   type NodeCanvasPreview,
   type NodeRunVisualStatus,
@@ -53,6 +54,7 @@ const interactiveShortcutTargetSelector = [
 ].join(",");
 
 type CanvasProps = {
+  themeMode: ThemeMode;
   graph: RuntimeGraph;
   selectedNodeId: string | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
@@ -78,6 +80,7 @@ type CanvasProps = {
 };
 
 export function Canvas({
+  themeMode,
   graph,
   selectedNodeId,
   nodeRunStatuses,
@@ -295,7 +298,10 @@ export function Canvas({
           onAddNode={onAddNode}
         />
         <InitialFitView nodeCount={renderedNodes.length} />
-        <Background color="#d4d4d8" gap={18} />
+        <Background
+          color={themeMode === "dark" ? "#3f3f46" : "#d4d4d8"}
+          gap={18}
+        />
         <Controls />
         {(onAddNode || onAutoLayout) && (
           <CanvasToolsPanel
@@ -419,7 +425,7 @@ function CanvasToolsPanel({
             type="button"
             aria-label="Add node"
             title="Add node"
-            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
+            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             onClick={() => {
               const canvasBounds = document
                 .querySelector(".react-flow")
@@ -447,7 +453,7 @@ function CanvasToolsPanel({
             type="button"
             aria-label="Auto-layout graph"
             title="Auto-layout graph"
-            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100"
+            className="flex h-9 w-9 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             onClick={() => {
               onAutoLayout();
               requestAnimationFrame(() => fitView({ padding: 0.25 }));

@@ -56,23 +56,25 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       title={`${data.functionName ?? data.label}\n${data.nodeId}`}
       className={[
         "relative",
-        "w-[360px] rounded-md border bg-white shadow-sm",
-        selected ? "border-zinc-900 shadow-md" : "border-zinc-200",
+        "w-[360px] rounded-md border bg-white shadow-sm dark:bg-zinc-900",
+        selected
+          ? "border-zinc-900 shadow-md dark:border-zinc-100"
+          : "border-zinc-200 dark:border-zinc-700",
       ].join(" ")}
     >
       <Handle
         type="target"
         position={Position.Top}
-        className="border-2 border-white bg-zinc-500"
+        className="border-2 border-white bg-zinc-500 dark:border-zinc-900 dark:bg-zinc-400"
         style={{ width: 14, height: 14 }}
       />
-      <div className="cursor-grab border-b border-zinc-200 px-3 py-2 active:cursor-grabbing">
+      <div className="cursor-grab border-b border-zinc-200 px-3 py-2 active:cursor-grabbing dark:border-zinc-800">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold text-zinc-950">
+            <h2 className="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-100">
               {data.label}
             </h2>
-            <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">
+            <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
               {data.functionName ?? data.nodeId}
             </p>
           </div>
@@ -83,7 +85,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
                 aria-label={`Run upstream to ${data.label}`}
                 title={runToNodeTitle}
                 disabled={data.runToNodeDisabled}
-                className="nodrag nopan flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+                className="nodrag nopan flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:border-zinc-800 dark:disabled:text-zinc-600"
                 onClick={(event: MouseEvent<HTMLButtonElement>) => {
                   event.stopPropagation();
                   data.onRunToNode?.(id);
@@ -111,7 +113,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
 
       <div className="space-y-3 px-3 py-3">
         {description && (
-          <p className="line-clamp-2 min-h-9 text-xs leading-[18px] text-zinc-600">
+          <p className="line-clamp-2 min-h-9 text-xs leading-[18px] text-zinc-600 dark:text-zinc-400">
             {description}
           </p>
         )}
@@ -133,13 +135,13 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         position={Position.Bottom}
         offset={12}
       >
-        <div className="flex items-center gap-2 rounded border border-zinc-200 bg-white p-1 shadow-sm">
+        <div className="flex items-center gap-2 rounded border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
           {data.onAddChild && (
             <button
               type="button"
               aria-label={`Add child node after ${data.label}`}
               title="Add child node (A)"
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               onClick={() => data.onAddChild?.(id)}
             >
               <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
@@ -150,7 +152,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       <Handle
         type="source"
         position={Position.Bottom}
-        className="border-2 border-white bg-zinc-500"
+        className="border-2 border-white bg-zinc-500 dark:border-zinc-900 dark:bg-zinc-400"
         style={{ width: 14, height: 14 }}
       />
     </article>
@@ -169,16 +171,20 @@ function PortList({
   variant?: "input" | "output";
 }) {
   const chipClassName = variant === "output"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-    : "border-sky-200 bg-sky-50 text-sky-800";
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+    : "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300";
 
   return (
     <section>
-      <p className="text-[10px] font-medium uppercase leading-none text-zinc-500">
+      <p className="text-[10px] font-medium uppercase leading-none text-zinc-500 dark:text-zinc-400">
         {title}
       </p>
       {ports.length === 0
-        ? <p className="mt-1.5 text-xs text-zinc-400">{emptyLabel}</p>
+        ? (
+          <p className="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">
+            {emptyLabel}
+          </p>
+        )
         : (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {ports.map((port) => (
@@ -187,7 +193,7 @@ function PortList({
                 className={[
                   "max-w-full truncate rounded border px-2 py-1 font-mono text-[11px] leading-none",
                   port.missing
-                    ? "border-amber-300 bg-amber-50 text-amber-900"
+                    ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
                     : chipClassName,
                 ].join(" ")}
                 title={port.missing

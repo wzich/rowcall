@@ -14,6 +14,7 @@ import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
+import type { ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 
@@ -80,6 +81,7 @@ export type GraphExecutionDisplayState = Extract<
 >;
 
 type InspectorPanelProps = {
+  themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection | null;
   graph: GraphInspectorModel;
   selectedNodeExecutionState: ExecutionDisplayState | null;
@@ -108,14 +110,16 @@ function CodeList(
   { items, emptyLabel }: { items: string[]; emptyLabel: string },
 ) {
   if (items.length === 0) {
-    return <p className="text-sm text-zinc-500">{emptyLabel}</p>;
+    return (
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">{emptyLabel}</p>
+    );
   }
 
   return (
     <ul className="mt-2 space-y-1">
       {items.map((item) => (
         <li key={item}>
-          <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900">
+          <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
             {item}
           </code>
         </li>
@@ -134,7 +138,7 @@ function NodeIdButton({
   return (
     <button
       type="button"
-      className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900 hover:bg-zinc-200"
+      className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
       onClick={() => onNodeSelect(nodeId)}
     >
       {nodeId}
@@ -152,7 +156,11 @@ function NodeIdList({
   onNodeSelect: (nodeId: string) => void;
 }) {
   if (items.length === 0) {
-    return <p className="mt-2 text-sm text-zinc-500">{emptyLabel}</p>;
+    return (
+      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+        {emptyLabel}
+      </p>
+    );
   }
 
   return (
@@ -178,15 +186,21 @@ function DependencyList({
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
-    <section className="border-t border-zinc-200 pt-4">
+    <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
           {title}
         </h3>
-        <span className="text-xs text-zinc-500">{items.length}</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {items.length}
+        </span>
       </div>
       {items.length === 0
-        ? <p className="mt-2 text-sm text-zinc-500">{emptyLabel}</p>
+        ? (
+          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+            {emptyLabel}
+          </p>
+        )
         : (
           <ul className="mt-2 space-y-1">
             {items.map((item) => (
@@ -206,7 +220,11 @@ function PreviewBlock(
   const entries = Object.entries(previews);
 
   if (entries.length === 0) {
-    return <p className="mt-2 text-sm text-zinc-500">No values.</p>;
+    return (
+      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+        No values.
+      </p>
+    );
   }
 
   return (
@@ -222,14 +240,16 @@ function PreviewBlock(
 
 function MissingPreviewCard({ name }: { name: string }) {
   return (
-    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
+    <div className="rounded border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-mono text-sm font-semibold text-zinc-900">
+        <span className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {name}
         </span>
-        <span className="font-mono text-xs text-zinc-400">not previewed</span>
+        <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+          not previewed
+        </span>
       </div>
-      <p className="mt-2 text-xs text-zinc-500">
+      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
         Run upstream to prepare and preview this input.
       </p>
     </div>
@@ -238,26 +258,26 @@ function MissingPreviewCard({ name }: { name: string }) {
 
 function TablePreviewBlock({ table }: { table: TablePreview }) {
   return (
-    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white">
+    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
       <div className="max-h-80 overflow-auto">
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs">
-          <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600">
+          <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             <tr>
               {table.index && (
-                <th className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium">
+                <th className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-700">
                   index
                 </th>
               )}
               {table.columns.map((column) => (
                 <th
                   key={column.name}
-                  className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium last:border-r-0"
+                  className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium last:border-r-0 dark:border-zinc-700"
                 >
-                  <div className="max-w-44 truncate text-zinc-800">
+                  <div className="max-w-44 truncate text-zinc-800 dark:text-zinc-100">
                     {column.name}
                   </div>
                   {column.dtype && (
-                    <div className="max-w-44 truncate font-mono text-[10px] font-normal text-zinc-500">
+                    <div className="max-w-44 truncate font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
                       {column.dtype}
                     </div>
                   )}
@@ -267,16 +287,19 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
           </thead>
           <tbody>
             {table.rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="odd:bg-white even:bg-zinc-50">
+              <tr
+                key={rowIndex}
+                className="odd:bg-white even:bg-zinc-50 dark:odd:bg-zinc-900 dark:even:bg-zinc-800/70"
+              >
                 {table.index && (
-                  <td className="border-b border-r border-zinc-100 px-2 py-1.5 font-mono text-zinc-500">
+                  <td className="border-b border-r border-zinc-100 px-2 py-1.5 font-mono text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
                     <CellValue value={table.index[rowIndex] ?? null} />
                   </td>
                 )}
                 {row.map((cell, columnIndex) => (
                   <td
                     key={columnIndex}
-                    className="border-b border-r border-zinc-100 px-2 py-1.5 last:border-r-0"
+                    className="border-b border-r border-zinc-100 px-2 py-1.5 last:border-r-0 dark:border-zinc-800"
                   >
                     <CellValue value={cell} />
                   </td>
@@ -287,7 +310,7 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
         </table>
       </div>
       {table.truncated && (
-        <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500">
+        <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
           Showing {table.rows.length} of {table.rowCount} rows and{" "}
           {table.columns.length} of {table.columnCount} columns.
         </p>
@@ -298,23 +321,35 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
 
 function CellValue({ value }: { value: TableCellPreview }) {
   if (value === null) {
-    return <span className="font-mono text-zinc-400">null</span>;
+    return (
+      <span className="font-mono text-zinc-400 dark:text-zinc-500">null</span>
+    );
   }
   if (typeof value === "boolean") {
-    return <span className="font-mono text-sky-700">{String(value)}</span>;
+    return (
+      <span className="font-mono text-sky-700 dark:text-sky-300">
+        {String(value)}
+      </span>
+    );
   }
   if (typeof value === "number") {
-    return <span className="font-mono text-zinc-800">{value}</span>;
+    return (
+      <span className="font-mono text-zinc-800 dark:text-zinc-100">
+        {value}
+      </span>
+    );
   }
   if (typeof value === "string") {
     return <span className="block max-w-56 truncate">{value}</span>;
   }
   if (value.kind === "nan") {
-    return <span className="font-mono text-zinc-400">NaN</span>;
+    return (
+      <span className="font-mono text-zinc-400 dark:text-zinc-500">NaN</span>
+    );
   }
   if (value.kind === "datetime") {
     return (
-      <span className="block max-w-56 truncate font-mono text-zinc-700">
+      <span className="block max-w-56 truncate font-mono text-zinc-700 dark:text-zinc-200">
         {value.value}
       </span>
     );
@@ -327,7 +362,7 @@ function DisplayBlock({ displays }: { displays: DisplayPreview[] }) {
 
   return (
     <section>
-      <h4 className="text-xs font-semibold uppercase text-zinc-500">
+      <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
         Displays
       </h4>
       <div className="mt-2 space-y-2">
@@ -365,7 +400,7 @@ function InlineOutputBlock({
               return (
                 <pre
                   key={index}
-                  className="max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900"
+                  className="max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 >
                   {event.text}
                 </pre>
@@ -397,24 +432,27 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
   const typeLabel = formatPythonType(preview.type);
 
   return (
-    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
+    <div className="rounded border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-mono text-sm font-semibold text-zinc-900">
+        <span className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {preview.name}
         </span>
-        <span className="font-mono text-xs text-zinc-500" title={preview.type}>
+        <span
+          className="font-mono text-xs text-zinc-500 dark:text-zinc-400"
+          title={preview.type}
+        >
           {typeLabel}
         </span>
       </div>
       {preview.table
         ? <TablePreviewBlock table={preview.table} />
         : (
-          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800">
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
             {preview.repr}
           </pre>
         )}
       {preview.warning && (
-        <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
           {preview.warning}
         </p>
       )}
@@ -427,10 +465,10 @@ function WarningList({ warnings }: { warnings: string[] }) {
 
   return (
     <section>
-      <h4 className="text-xs font-semibold uppercase text-amber-700">
+      <h4 className="text-xs font-semibold uppercase text-amber-700 dark:text-amber-300">
         Warnings
       </h4>
-      <ul className="mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      <ul className="mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
         {warnings.map((warning) => <li key={warning}>{warning}</li>)}
       </ul>
     </section>
@@ -451,12 +489,12 @@ function TextOutputBlock({
   }
 
   const blockClassName = variant === "danger"
-    ? "mt-2 max-h-48 overflow-auto rounded border border-red-200 bg-red-50 p-3 font-mono text-xs leading-5 text-red-950"
-    : "mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900";
+    ? "mt-2 max-h-48 overflow-auto rounded border border-red-200 bg-red-50 p-3 font-mono text-xs leading-5 text-red-950 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+    : "mt-2 max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
 
   return (
     <section>
-      <h4 className="text-xs font-semibold uppercase text-zinc-500">
+      <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
         {title}
       </h4>
       <pre className={blockClassName}>{value}</pre>
@@ -679,6 +717,7 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 }
 
 function GraphInspector({
+  themeMode,
   graph,
   graphExecutionState,
   validationIssues,
@@ -686,6 +725,7 @@ function GraphInspector({
   onNodeSelect,
   onGlobalsCodeChange,
 }: {
+  themeMode: ThemeMode;
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
   validationIssues: InspectGraphValidationIssue[];
@@ -701,7 +741,7 @@ function GraphInspector({
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Document Globals
         </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
           <CodeMirror
             value={graph.globalsCode}
             extensions={[python()]}
@@ -715,7 +755,7 @@ function GraphInspector({
               highlightActiveLineGutter: true,
               lineNumbers: true,
             }}
-            theme="light"
+            theme={themeMode}
           />
         </div>
       </section>
@@ -1040,6 +1080,7 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
 }
 
 function NodeInspector({
+  themeMode,
   selectedNode,
   executionState,
   runStatus,
@@ -1051,6 +1092,7 @@ function NodeInspector({
   onNodeSelect,
   onRunNode,
 }: {
+  themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
@@ -1162,7 +1204,7 @@ function NodeInspector({
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Code
         </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+        <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
           <div data-shortcut-scope="editor">
             <CodeMirror
               value={selectedNode.code}
@@ -1177,7 +1219,7 @@ function NodeInspector({
                 highlightActiveLineGutter: true,
                 lineNumbers: true,
               }}
-              theme="light"
+              theme={themeMode}
             />
           </div>
         </div>
@@ -1809,6 +1851,7 @@ function DeleteNodeAction({
 }
 
 export function InspectorPanel({
+  themeMode,
   selectedNode,
   graph,
   selectedNodeExecutionState,
@@ -1842,14 +1885,14 @@ export function InspectorPanel({
   }, [selectedNode?.id]);
 
   return (
-    <aside className="flex h-full w-[min(640px,48vw)] min-w-[520px] shrink-0 flex-col border-l border-zinc-200 bg-white">
-      <div className="border-b border-zinc-200 px-5 py-4">
+    <aside className="flex h-full w-[min(640px,48vw)] min-w-[520px] shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
         {selectedNode
           ? (
             <div className="flex flex-wrap items-start gap-3">
               <div className="min-w-0 flex-1">
                 <input
-                  className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2"
+                  className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:border-zinc-700 dark:focus:bg-zinc-800"
                   value={selectedNode.title}
                   placeholder={selectedNode.functionName ?? selectedNode.id}
                   readOnly={readOnly}
@@ -1858,20 +1901,20 @@ export function InspectorPanel({
                       title: event.currentTarget.value,
                     })}
                 />
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                  <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                     Python
                   </span>
                   {selectedNode.badges.map((badge) => (
                     <span
                       key={badge}
-                      className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600"
+                      className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
                     >
                       {badge}
                     </span>
                   ))}
                   <span
-                    className="font-mono text-zinc-400"
+                    className="font-mono text-zinc-400 dark:text-zinc-500"
                     title={`Node ID: ${selectedNode.id}`}
                   >
                     {selectedNode.functionName ?? selectedNode.id}
@@ -1881,7 +1924,7 @@ export function InspectorPanel({
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                  className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
                   disabled={areNodeActionsDisabled}
                   onClick={() => onRunNode(selectedNode.id)}
                 >
@@ -1894,7 +1937,7 @@ export function InspectorPanel({
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+                  className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:border-zinc-800 dark:disabled:text-zinc-600"
                   disabled={areNodeActionsDisabled}
                   onClick={() => onRunToNode(selectedNode.id)}
                 >
@@ -1908,7 +1951,7 @@ export function InspectorPanel({
                 <button
                   type="button"
                   aria-label="Show graph overview"
-                  className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100"
+                  className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   onClick={onSelectionClear}
                 >
                   <X
@@ -1922,12 +1965,12 @@ export function InspectorPanel({
           )
           : (
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-medium uppercase text-zinc-500">
+              <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">
                 Graph overview
               </p>
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
                 disabled={isGraphActionDisabled}
                 onClick={onRunGraph}
               >
@@ -1950,6 +1993,7 @@ export function InspectorPanel({
           {selectedNode
             ? (
               <NodeInspector
+                themeMode={themeMode}
                 selectedNode={selectedNode}
                 executionState={selectedNodeExecutionState}
                 runStatus={selectedNodeRunStatus}
@@ -1964,6 +2008,7 @@ export function InspectorPanel({
             )
             : (
               <GraphInspector
+                themeMode={themeMode}
                 graph={graph}
                 graphExecutionState={graphExecutionState}
                 validationIssues={validationIssues}

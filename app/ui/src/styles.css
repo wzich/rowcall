@@ -1,6 +1,8 @@
 @import "@xyflow/react/dist/style.css";
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 html,
 body,
 #root {
@@ -10,6 +12,89 @@ body,
 body {
   margin: 0;
   overflow: hidden;
+}
+
+.dark .bg-white {
+  background-color: #18181b;
+}
+
+.dark .bg-white\/90 {
+  background-color: rgb(24 24 27 / 0.9);
+}
+
+.dark .bg-zinc-50,
+.dark .bg-zinc-100 {
+  background-color: #27272a;
+}
+
+.dark .border-zinc-100,
+.dark .border-zinc-200,
+.dark .border-zinc-300 {
+  border-color: #3f3f46;
+}
+
+.dark .text-zinc-950,
+.dark .text-zinc-900,
+.dark .text-zinc-800,
+.dark .text-zinc-700 {
+  color: #f4f4f5;
+}
+
+.dark .text-zinc-600,
+.dark .text-zinc-500 {
+  color: #a1a1aa;
+}
+
+.dark .text-zinc-400,
+.dark .text-zinc-300 {
+  color: #71717a;
+}
+
+.dark .hover\:bg-zinc-100:hover,
+.dark .hover\:bg-zinc-200:hover {
+  background-color: #3f3f46;
+}
+
+.dark .disabled\:bg-zinc-300:disabled,
+.dark .disabled\:bg-zinc-400:disabled {
+  background-color: #52525b;
+}
+
+.dark .disabled\:text-zinc-300:disabled {
+  color: #71717a;
+}
+
+.dark .cm-editor .cm-gutters {
+  background-color: #18181b;
+  border-right-color: #3f3f46;
+  color: #71717a;
+}
+
+.dark .cm-editor .cm-activeLineGutter {
+  background-color: #27272a;
+  color: #d4d4d8;
+}
+
+.dark .cm-editor .cm-foldGutter span {
+  color: #71717a;
+}
+
+.dark .react-flow__controls {
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.28);
+}
+
+.dark .react-flow__controls-button {
+  background: #18181b;
+  border-color: #3f3f46;
+  color: #d4d4d8;
+}
+
+.dark .react-flow__controls-button:hover {
+  background: #27272a;
+}
+
+.dark .react-flow__controls-button svg {
+  fill: currentColor;
 }
 
 .react-flow__edge.python-flow-edge .react-flow__edge-path {
