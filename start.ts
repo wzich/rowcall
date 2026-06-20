@@ -16,11 +16,14 @@ async function main(): Promise<void> {
 
   console.info("Building Nodebook UI...");
   await runChecked([Deno.execPath(), "task", "ui:build"]);
+  console.info("Preparing Nodebook server...");
+  await runChecked([Deno.execPath(), "cache", "main.ts"]);
 
   console.info(`Starting Nodebook for ${options.documentPath}`);
   if (options.pythonCommand) {
     console.info(`Using Python: ${options.pythonCommand}`);
   }
+  ensureServerPortAvailable(options);
 
   const serverArgs = [
     "run",
@@ -46,7 +49,16 @@ async function main(): Promise<void> {
   const serverStatus = server.status;
 
   const url = serverUrl(options);
-  await waitForServer(url, serverStatus);
+  try {
+    await waitForServer(url, serverStatus);
+  } catch (error) {
+    try {
+      server.kill("SIGTERM");
+    } catch {
+      // The server may have exited while the readiness wait was failing.
+    }
+    throw error;
+  }
   console.info(`Nodebook is running at ${url}`);
 
   if (options.openBrowser) {
@@ -90,11 +102,31 @@ async function runChecked(command: string[]): Promise<void> {
   }
 }
 
+function ensureServerPortAvailable(options: LauncherOptions): void {
+  let listener: Deno.Listener | undefined;
+  try {
+    listener = Deno.listen({
+      hostname: options.hostname,
+      port: options.port,
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.AddrInUse) {
+      throw new Error(
+        `Port ${options.port} is already in use on ${options.hostname}. ` +
+          `Stop the process using it, or start Nodebook with --port ${options.port + 1}.`,
+      );
+    }
+    throw error;
+  } finally {
+    listener?.close();
+  }
+}
+
 async function waitForServer(
   url: string,
   status: Promise<Deno.CommandStatus>,
 ): Promise<void> {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 60_000;
 
   while (Date.now() < deadline) {
     const result = await Promise.race([
