@@ -11,7 +11,7 @@ import { python } from "@codemirror/lang-python";
 import { keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 import type { ThemeMode } from "../App.tsx";
@@ -19,6 +19,34 @@ import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
+
+const inspectorMinWidth = 520;
+const inspectorMaxWidth = 900;
+const minCanvasWidth = 360;
+
+function clampInspectorWidth(width: number) {
+  if (typeof window === "undefined") {
+    return Math.min(inspectorMaxWidth, Math.max(inspectorMinWidth, width));
+  }
+
+  const viewportMaxWidth = Math.max(
+    inspectorMinWidth,
+    window.innerWidth - minCanvasWidth,
+  );
+  return Math.min(
+    inspectorMaxWidth,
+    viewportMaxWidth,
+    Math.max(inspectorMinWidth, width),
+  );
+}
+
+function getDefaultInspectorWidth() {
+  if (typeof window === "undefined") {
+    return 640;
+  }
+
+  return clampInspectorWidth(Math.min(640, window.innerWidth * 0.48));
+}
 
 export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 
@@ -1879,13 +1907,69 @@ export function InspectorPanel({
   const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
   const isGraphActionDisabled = isGraphRunning;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(0);
+  const [inspectorWidth, setInspectorWidth] = useState(getDefaultInspectorWidth);
+  const [isResizing, setIsResizing] = useState(false);
 
   useEffect(() => {
     scrollContainerRef.current?.scrollTo({ top: 0 });
   }, [selectedNode?.id]);
 
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setInspectorWidth((currentWidth) => clampInspectorWidth(currentWidth));
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragDelta = dragStartXRef.current - event.clientX;
+      setInspectorWidth(
+        clampInspectorWidth(dragStartWidthRef.current + dragDelta),
+      );
+    };
+    const stopResizing = () => setIsResizing(false);
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [isResizing]);
+
   return (
-    <aside className="flex h-full w-[min(640px,48vw)] min-w-[520px] shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <aside
+      className="relative flex h-full shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+      style={{ width: inspectorWidth }}
+    >
+      <button
+        type="button"
+        aria-label="Resize inspector"
+        aria-orientation="vertical"
+        className="absolute inset-y-0 left-0 z-10 w-2 -translate-x-1 cursor-col-resize touch-none border-l border-transparent transition-colors hover:border-zinc-400 focus:border-zinc-500 focus:outline-none dark:hover:border-zinc-500 dark:focus:border-zinc-400"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          dragStartXRef.current = event.clientX;
+          dragStartWidthRef.current = inspectorWidth;
+          setIsResizing(true);
+        }}
+      />
       <div className="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
         {selectedNode
           ? (
