@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "n_start",
+      "position": {
+        "x": 79.5,
+        "y": 16
+      },
+      "title": "Example Node 1"
+    },
+    {
+      "id": "n_0d110q1m3e",
+      "position": {
+        "x": 79.5,
+        "y": 296
+      },
+      "title": "Example Node 2"
+    }
+  ]
+}

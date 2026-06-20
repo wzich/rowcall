@@ -1,0 +1,36 @@
+posted_date,settled_date,description,spend_category,amount_usd
+2026-01-03,2026-01-04,Trader Joes,Groceries,84.32
+2026-01-04,2026-01-05,Blue Bottle Coffee,Restaurants,6.75
+2026-01-06,2026-01-07,Shell,Gas,52.18
+2026-01-08,2026-01-09,Netflix,Subscriptions,22.99
+2026-01-11,2026-01-12,Target,Shopping,63.41
+2026-01-14,2026-01-15,Sweetgreen,Restaurants,17.84
+2026-01-18,2026-01-19,Delta Air Lines,Travel,286.40
+2026-01-22,2026-01-23,Whole Foods,Groceries,112.07
+2026-01-27,2026-01-28,Uber,Transit,24.36
+2026-02-01,2026-02-02,REI,Shopping,138.55
+2026-02-03,2026-02-04,Spotify,Subscriptions,11.99
+2026-02-06,2026-02-07,Costco,Groceries,146.72
+2026-02-09,2026-02-10,CVS Pharmacy,Health,28.44
+2026-02-13,2026-02-14,AMC Theatres,Entertainment,36.00
+2026-02-16,2026-02-17,United Airlines,Travel,412.18
+2026-02-20,2026-02-21,Chevron,Gas,48.63
+2026-02-25,2026-02-26,DoorDash,Restaurants,41.29
+2026-03-02,2026-03-03,Apple iCloud,Subscriptions,2.99
+2026-03-04,2026-03-05,Trader Joes,Groceries,91.64
+2026-03-08,2026-03-09,Lyft,Transit,18.72
+2026-03-12,2026-03-13,The Home Depot,Home,97.26
+2026-03-16,2026-03-17,Southwest Airlines,Travel,233.10
+2026-03-19,2026-03-20,Target,Shopping,-24.99
+2026-03-23,2026-03-24,Local Taqueria,Restaurants,23.58
+2026-04-02,2026-04-03,Whole Foods,Groceries,105.11
+2026-04-06,2026-04-07,Shell,Gas,55.82
+2026-04-10,2026-04-11,Hulu,Subscriptions,17.99
+2026-04-15,2026-04-16,Marriott,Travel,319.84
+2026-04-21,2026-04-22,Walgreens,Health,19.35
+2026-05-03,2026-05-04,Costco,Groceries,154.09
+2026-05-09,2026-05-10,Uber Eats,Restaurants,38.77
+2026-05-16,2026-05-17,StubHub,Entertainment,122.50
+2026-05-24,2026-05-25,Chevron,Gas,51.06
+2026-06-02,2026-06-03,Trader Joes,Groceries,88.13
+2026-06-11,2026-06-12,Airbnb,Travel,468.22

@@ -1,0 +1,36 @@
+transaction_date,clearing_date,merchant_name,category_name,amount_usd
+2026-01-02,2026-01-03,Kroger,Food and Grocery,76.18
+2026-01-05,2026-01-06,Starbucks,Dining,8.20
+2026-01-07,2026-01-08,Amazon Marketplace,Shopping,44.93
+2026-01-10,2026-01-11,Exxon,Auto and Fuel,49.81
+2026-01-13,2026-01-14,Adobe Creative Cloud,Bills and Subscriptions,59.99
+2026-01-17,2026-01-18,Shake Shack,Dining,18.67
+2026-01-21,2026-01-22,Best Buy,Electronics,219.44
+2026-01-26,2026-01-27,Walgreens,Medical and Pharmacy,31.22
+2026-02-02,2026-02-03,New York MTA,Transportation,34.00
+2026-02-05,2026-02-06,Instacart,Food and Grocery,119.76
+2026-02-08,2026-02-09,Audible,Bills and Subscriptions,14.95
+2026-02-12,2026-02-13,REI,Shopping,89.38
+2026-02-15,2026-02-16,Texaco,Auto and Fuel,53.47
+2026-02-18,2026-02-19,Chipotle,Dining,15.42
+2026-02-23,2026-02-24,Alaska Airlines,Travel,274.65
+2026-02-27,2026-02-28,Amazon Marketplace,Shopping,-18.50
+2026-03-03,2026-03-04,Kroger,Food and Grocery,82.05
+2026-03-06,2026-03-07,Local Bookstore,Entertainment,27.84
+2026-03-11,2026-03-12,Planet Fitness,Health and Fitness,25.00
+2026-03-15,2026-03-16,OpenTable Restaurant,Dining,64.72
+2026-03-18,2026-03-19,New York MTA,Transportation,34.00
+2026-03-24,2026-03-25,Amazon Marketplace,Shopping,58.16
+2026-03-29,2026-03-30,Exxon,Auto and Fuel,46.90
+2026-04-01,2026-04-02,Instacart,Food and Grocery,132.41
+2026-04-05,2026-04-06,Disney Plus,Bills and Subscriptions,13.99
+2026-04-12,2026-04-13,Sephora,Shopping,73.28
+2026-04-18,2026-04-19,Amtrak,Travel,96.00
+2026-04-25,2026-04-26,Chipotle,Dining,16.35
+2026-05-02,2026-05-03,Kroger,Food and Grocery,79.11
+2026-05-07,2026-05-08,BP,Auto and Fuel,50.66
+2026-05-15,2026-05-16,Fandango,Entertainment,42.25
+2026-05-23,2026-05-24,Amazon Marketplace,Shopping,65.08
+2026-06-04,2026-06-05,Planet Fitness,Health and Fitness,25.00
+2026-06-08,2026-06-09,Alaska Airlines,Travel,318.40
+2026-06-14,2026-06-15,OpenTable Restaurant,Dining,71.36
