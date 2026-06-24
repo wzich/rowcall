@@ -39,12 +39,12 @@ without interference.
 
 A node is a small code editor containing a self-contained script. It declares
 explicit **outputs** — named values it produces. It receives derived **inputs**
-— named values made available from upstream nodes it is connected to, plus any
-explicit user-provided inputs when it is a root node in the current run. A node
-executes in its own namespace, so normal variables do not persist outside
-declared inputs and outputs. This makes execution order unambiguous and re-runs
-safe while still allowing rich Python objects to move through the graph in
-memory during a run.
+— named values made available from upstream nodes it is connected to. Root nodes
+usually introduce data by reading files, defining constants, or calling ordinary
+Python library APIs inside the document. A node executes in its own namespace,
+so normal variables do not persist outside declared inputs and outputs. This
+makes execution order unambiguous and re-runs safe while still allowing rich
+Python objects to move through the graph in memory during a run.
 
 Nodes nudge users toward writing smaller, meaningful steps. The act of naming
 outputs forces intentionality: what does this node _do_? The canvas becomes
@@ -77,9 +77,11 @@ to the browser. The contract between nodes remains explicit and inspectable.
 ### Manual Execution
 
 Nodes run when you ask them to. The initial version supports running a single
-node, running upstream to a target node, and running a whole graph. Root nodes
-can also receive explicit user-provided inputs at execution time. There is no
-automatic reactive re-execution in the initial version.
+node, running upstream to a target node, and running a whole graph. The public
+headless CLI validates and runs Python documents directly, with full-graph runs
+as the default and targeted upstream runs available through an exact node ID or
+Python function name. There is no automatic reactive re-execution in the initial
+version.
 
 ---
 

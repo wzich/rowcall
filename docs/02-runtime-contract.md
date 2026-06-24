@@ -21,7 +21,8 @@ they are declared outputs and flow through Edges. A Node can access:
 
 - variables it defines in its own code
 - variables made available from directly connected upstream Nodes
-- explicit user-provided inputs when the Node is a root in the current run
+- explicit user-provided inputs when the Node is a root in the current run, for
+  lower-level runtime callers that provide them
 
 Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
@@ -92,6 +93,12 @@ cache entry so downstream Nodes can use the latest successful iteration.
 The session cache is process-local and in memory only. It is lost when the
 server restarts, and it can be cleared explicitly with
 `POST /runtime-session/clear-cache`.
+
+The beta headless CLI does not expose explicit root inputs. Public CLI runs are
+intended to be reproducible from the Python document itself, so root data
+sources should be modeled as normal Python code inside root Nodes. The
+lower-level runtime API keeps explicit inputs available for internal callers and
+future experiments.
 
 Future runtime configurations may expose explicit isolation modes:
 

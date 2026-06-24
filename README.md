@@ -39,6 +39,32 @@ deno task start --create path/to/analysis.py
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
 
+### Headless CLI
+
+Validate and run a Nodebook Python document without opening the canvas:
+
+```sh
+deno task cli validate path/to/analysis.py
+deno task cli run path/to/analysis.py
+deno task cli run path/to/analysis.py --to node_id_or_function_name
+```
+
+Running without `--to` executes the full graph. Targets must be exact node IDs
+or exact Python function names.
+
+Pass `--json` for structured output, `--trace` to include per-step input
+previews, and `--python /path/to/python` to choose a Python interpreter:
+
+```sh
+deno task cli run path/to/analysis.py --json --trace --python "$CONDA_PREFIX/bin/python"
+```
+
+The beta CLI intentionally does not accept external input values. Data and
+configuration should enter through Python code in the document so runs remain
+reproducible from the file itself.
+
+See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
+
 ### Python Environment
 
 By default, Nodebook prefers `.venv/bin/python` or `.venv/Scripts/python.exe`
