@@ -87,14 +87,19 @@ async function findBasePythonCommand(): Promise<string> {
 }
 
 async function ensureCompatiblePython(command: string): Promise<void> {
-  const output = await new Deno.Command(command, {
-    args: [
-      "-c",
-      "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).output().catch(() => null);
+  let output: Deno.CommandOutput | null = null;
+  try {
+    output = await new Deno.Command(command, {
+      args: [
+        "-c",
+        "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)",
+      ],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+  } catch {
+    output = null;
+  }
 
   if (!output?.success) {
     throw new Error(
@@ -105,11 +110,16 @@ async function ensureCompatiblePython(command: string): Promise<void> {
 }
 
 async function commandExists(command: string): Promise<boolean> {
-  const output = await new Deno.Command(command, {
-    args: ["--version"],
-    stdout: "null",
-    stderr: "null",
-  }).output().catch(() => null);
+  let output: Deno.CommandOutput | null = null;
+  try {
+    output = await new Deno.Command(command, {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+  } catch {
+    output = null;
+  }
   return output?.success ?? false;
 }
 

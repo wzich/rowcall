@@ -139,12 +139,16 @@ export async function getPythonEnvironmentInfo(): Promise<
 async function probePythonCommand(
   command: string,
 ): Promise<Deno.CommandOutput | null> {
-  const probe = new Deno.Command(command, {
-    args: ["--version"],
-    stdout: "null",
-    stderr: "null",
-  });
-  return await probe.output().catch(() => null);
+  try {
+    const probe = new Deno.Command(command, {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    });
+    return await probe.output();
+  } catch {
+    return null;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
