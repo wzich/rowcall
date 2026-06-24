@@ -9,6 +9,7 @@ import {
   type OnConnect,
   type OnNodeDrag,
   type OnNodesChange,
+  PanOnScrollMode,
   Panel,
   ReactFlow,
   useEdgesState,
@@ -289,6 +290,11 @@ export function Canvas({
         onPaneClick={handlePaneClick}
         deleteKeyCode={null}
         autoPanOnNodeDrag={false}
+        zoomOnScroll={false}
+        panOnScroll
+        panOnScrollMode={PanOnScrollMode.Free}
+        panOnScrollSpeed={1}
+        zoomOnPinch
         minZoom={minCanvasZoom}
         maxZoom={maxCanvasZoom}
         proOptions={{ hideAttribution: true }}
