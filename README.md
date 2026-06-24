@@ -6,6 +6,18 @@ a Vite/React UI for editing graphs on a canvas.
 
 ## Alpha Tester Start
 
+Install Deno and Python 3.10 or newer, then prepare Nodebook's local Python
+environment:
+
+```sh
+deno task setup
+```
+
+This creates a repo-local `.venv`, installs the tiny local `nodebook` Python
+package, and installs the alpha example dependencies from
+`requirements-alpha.txt`. The `.venv` uses your installed Python runtime; it is
+not committed to the repo.
+
 Start Nodebook with the built UI and the ecommerce example:
 
 ```sh
@@ -24,15 +36,26 @@ Create a new Python document:
 deno task start --create path/to/analysis.py
 ```
 
-Nodebook uses the first `python3` or `python` on `PATH`, so activate your conda
-or virtual environment before starting it. To choose an interpreter explicitly:
+The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
+only.
+
+### Python Environment
+
+By default, Nodebook prefers `.venv/bin/python` or `.venv/Scripts/python.exe`
+when a local `.venv` exists, then falls back to the first `python3` or `python`
+on `PATH`.
+
+To create `.venv` from a specific Python interpreter:
+
+```sh
+deno task setup --python /path/to/python
+```
+
+To bypass `.venv` and choose an interpreter explicitly at startup:
 
 ```sh
 deno task start --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
 ```
-
-The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
-only.
 
 ## Run Locally For Development
 
@@ -69,8 +92,9 @@ def read_message():
 ```
 
 The decorator records node metadata and returns the original function unchanged.
-For local alpha testing from outside the repository, install the stub package
-into the active Python environment:
+`deno task setup` installs this stub package into `.venv`. For local alpha
+testing from outside the repository, install the stub package into the active
+Python environment:
 
 ```sh
 python -m pip install -e .

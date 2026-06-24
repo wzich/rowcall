@@ -1,5 +1,6 @@
 {
   "tasks": {
+    "setup": "deno run --allow-read --allow-write --allow-run setup.ts",
     "start": "deno run --allow-read --allow-write --allow-net --allow-run start.ts",
     "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-run main.ts",
     "cli": "deno run --allow-read --allow-run cli.ts",

@@ -15,6 +15,7 @@ export type PythonEnvironmentInfo = {
 };
 
 let configuredPythonCommand: string | undefined;
+export const localVirtualEnvDirectory = ".venv";
 
 export function configurePythonCommand(command: string | undefined): void {
   configuredPythonCommand = command && command.length > 0 ? command : undefined;
@@ -25,7 +26,13 @@ export async function resolvePythonCommand(): Promise<string> {
     return configuredPythonCommand;
   }
 
-  for (const command of ["python3", "python"]) {
+  for (
+    const command of [
+      ...getLocalVirtualEnvPythonCandidates(),
+      "python3",
+      "python",
+    ]
+  ) {
     const output = await probePythonCommand(command);
     if (output?.success) {
       return command;
@@ -33,6 +40,18 @@ export async function resolvePythonCommand(): Promise<string> {
   }
 
   return "python3";
+}
+
+export function getLocalVirtualEnvPythonCandidates(
+  cwd = ".",
+): string[] {
+  const prefix = cwd === "." || cwd.length === 0
+    ? localVirtualEnvDirectory
+    : `${cwd}/${localVirtualEnvDirectory}`;
+  return [
+    `${prefix}/bin/python`,
+    `${prefix}/Scripts/python.exe`,
+  ];
 }
 
 export async function getPythonEnvironmentInfo(): Promise<
