@@ -121,7 +121,6 @@ export async function savePythonDocument(
 
 type SidecarNodeMetadata = {
   position?: GraphPosition;
-  title?: string;
   description?: string;
 };
 
@@ -190,9 +189,6 @@ async function loadSidecarNodeMetadata(
       ) {
         metadata.position = { x: positionRecord["x"], y: positionRecord["y"] };
       }
-      if (typeof nodeRecord["title"] === "string") {
-        metadata.title = nodeRecord["title"];
-      }
       if (typeof nodeRecord["description"] === "string") {
         metadata.description = nodeRecord["description"];
       }
@@ -259,11 +255,14 @@ function validateEditableSave(
       }
     }
 
-    if (loadedNode.functionName !== nextNode.functionName) {
+    if (
+      loadedNode.functionName !== nextNode.functionName &&
+      loadedNode.customReturn
+    ) {
       issues.push({
         kind: "unsupported_python",
         message:
-          `Editing function names is not supported yet for node ${nodeId}.`,
+          `Custom-return node ${nodeId} cannot rename its Python function in the canvas yet.`,
         nodeId,
       });
     }
@@ -315,6 +314,15 @@ function validateUniqueNodeFields(
       });
     }
     functionNames.add(node.functionName);
+
+    if (!isValidPythonIdentifier(node.functionName)) {
+      issues.push({
+        kind: "unsupported_python",
+        message:
+          `Node function '${node.functionName}' must be a valid Python name.`,
+        nodeId: node.id,
+      });
+    }
   }
 }
 
@@ -1076,10 +1084,14 @@ function hasStructureChanged(
   loaded: NodebookDocumentV1,
   next: NodebookDocumentV1,
 ): boolean {
+  const nextNodesById = new Map(next.nodes.map((node) => [node.id, node]));
   return !areStringArraysEqual(
     loaded.nodes.map((node) => node.id),
     next.nodes.map((node) => node.id),
-  ) || JSON.stringify(loaded.edges) !== JSON.stringify(next.edges);
+  ) || JSON.stringify(loaded.edges) !== JSON.stringify(next.edges) ||
+    loaded.nodes.some((node) =>
+      nextNodesById.get(node.id)?.functionName !== node.functionName
+    );
 }
 
 function edgeKey(edge: { fromNode: string; toNode: string }): string {
@@ -1138,7 +1150,6 @@ async function writeSidecar(
       const metadata = {
         id: node.id,
         ...(node.position ? { position: node.position } : {}),
-        ...(node.title?.trim() ? { title: node.title.trim() } : {}),
         ...(node.description?.trim()
           ? { description: node.description.trim() }
           : {}),

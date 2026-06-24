@@ -53,7 +53,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
 
   return (
     <article
-      title={`${data.functionName ?? data.label}\n${data.nodeId}`}
+      title={data.functionName ?? data.label}
       className={[
         "relative",
         "w-[360px] rounded-md border bg-white shadow-sm dark:bg-zinc-900",
@@ -75,7 +75,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
               {data.label}
             </h2>
             <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-              {data.functionName ?? data.nodeId}
+              {data.functionName ?? "custom Python"}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">

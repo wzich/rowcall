@@ -1,6 +1,7 @@
 import type { Edge as FlowEdge, Node as FlowNode } from "@xyflow/react";
 import type { OutputEvent, TablePreview } from "../../../../types.ts";
 import { createSimpleLayout } from "./layout.ts";
+import { prettifyFunctionName } from "./nodeNames.ts";
 import type { RuntimeGraph } from "./runtimeTypes.ts";
 
 export type PythonNodeData = {
@@ -102,8 +103,7 @@ export function toReactFlowGraph(
 }
 
 function getNodeLabel(node: RuntimeGraph["nodes"][number]): string {
-  const title = node.title?.trim();
-  return title || node.functionName || node.id;
+  return prettifyFunctionName(node.functionName);
 }
 
 function getNodeInputs(graph: RuntimeGraph, nodeId: string): NodePortPreview[] {

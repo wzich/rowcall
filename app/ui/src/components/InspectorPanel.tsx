@@ -14,7 +14,7 @@ import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
-import type { ThemeMode } from "../App.tsx";
+import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 
@@ -52,7 +52,7 @@ export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 
 export type NodeInspectorSelection = {
   id: string;
-  title: string;
+  displayName: string;
   description: string;
   functionName: string | null;
   code: string;
@@ -64,6 +64,7 @@ export type NodeInspectorSelection = {
   outputPreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
+  nodeLabelsById: Record<string, string>;
   badges: NodeInspectorBadge[];
 };
 
@@ -80,6 +81,7 @@ export type GraphInspectorModel = {
   sourceNodeIds: string[];
   sinkNodeIds: string[];
   isolatedNodeIds: string[];
+  nodeLabelsById: Record<string, string>;
   sinkOutputs: Array<{
     nodeId: string;
     outputs: string[];
@@ -119,9 +121,13 @@ type InspectorPanelProps = {
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
+  onNodeNameChange: (
+    nodeId: string,
+    displayName: string,
+  ) => NodeNameChangeResult;
   onNodeMetadataChange: (
     nodeId: string,
-    metadata: { title?: string; description?: string },
+    metadata: { description?: string },
   ) => void;
   onGlobalsCodeChange: (code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
@@ -156,20 +162,44 @@ function CodeList(
   );
 }
 
+function LabelList(
+  { items, emptyLabel }: { items: string[]; emptyLabel: string },
+) {
+  if (items.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">{emptyLabel}</p>
+    );
+  }
+
+  return (
+    <ul className="mt-2 space-y-1">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`}>
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+            {item}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function NodeIdButton({
   nodeId,
+  label = nodeId,
   onNodeSelect,
 }: {
   nodeId: string;
+  label?: string;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
     <button
       type="button"
-      className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+      className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
       onClick={() => onNodeSelect(nodeId)}
     >
-      {nodeId}
+      {label}
     </button>
   );
 }
@@ -177,10 +207,12 @@ function NodeIdButton({
 function NodeIdList({
   items,
   emptyLabel,
+  labelsById = {},
   onNodeSelect,
 }: {
   items: string[];
   emptyLabel: string;
+  labelsById?: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
 }) {
   if (items.length === 0) {
@@ -195,7 +227,11 @@ function NodeIdList({
     <ul className="mt-2 flex flex-wrap gap-1.5">
       {items.map((item) => (
         <li key={item}>
-          <NodeIdButton nodeId={item} onNodeSelect={onNodeSelect} />
+          <NodeIdButton
+            nodeId={item}
+            label={labelsById[item]}
+            onNodeSelect={onNodeSelect}
+          />
         </li>
       ))}
     </ul>
@@ -206,11 +242,13 @@ function DependencyList({
   title,
   items,
   emptyLabel,
+  labelsById = {},
   onNodeSelect,
 }: {
   title: string;
   items: string[];
   emptyLabel: string;
+  labelsById?: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
@@ -233,7 +271,11 @@ function DependencyList({
           <ul className="mt-2 space-y-1">
             {items.map((item) => (
               <li key={item}>
-                <NodeIdButton nodeId={item} onNodeSelect={onNodeSelect} />
+                <NodeIdButton
+                  nodeId={item}
+                  label={labelsById[item]}
+                  onNodeSelect={onNodeSelect}
+                />
               </li>
             ))}
           </ul>
@@ -655,13 +697,18 @@ function RunResult({
               ? (
                 <>
                   {subject} did not run because{" "}
-                  <code className="font-mono">{failedNodeId}</code> failed.
+                  {selectedNode.nodeLabelsById[failedNodeId] ?? "a step"}{" "}
+                  failed.
                 </>
               )
               : `${subject} did not run because an upstream node failed.`}
           </p>
         </div>
-        <NodeTraceResult step={traceStep} />
+        <NodeTraceResult
+          step={traceStep}
+          label={selectedNode.displayName}
+          nodeLabelsById={selectedNode.nodeLabelsById}
+        />
       </section>
     );
   }
@@ -716,19 +763,35 @@ function RunResult({
           variant="danger"
         />
       </div>
-      <NodeTraceResult step={traceStep} />
+      <NodeTraceResult
+        step={traceStep}
+        label={selectedNode.displayName}
+        nodeLabelsById={selectedNode.nodeLabelsById}
+      />
     </section>
   );
 }
 
-function NodeTraceResult({ step }: { step: ExecutionTraceStep | null }) {
+function NodeTraceResult({
+  step,
+  label,
+  nodeLabelsById,
+}: {
+  step: ExecutionTraceStep | null;
+  label: string;
+  nodeLabelsById: Record<string, string>;
+}) {
   if (!step) {
     return null;
   }
 
   return (
-    <TraceDetails title="Trace" summary={`Step ${step.index}: ${step.nodeId}`}>
-      <TraceStep step={step} />
+    <TraceDetails title="Trace" summary={`Step ${step.index}: ${label}`}>
+      <TraceStep
+        step={step}
+        label={label}
+        nodeLabelsById={nodeLabelsById}
+      />
     </TraceDetails>
   );
 }
@@ -802,6 +865,7 @@ function GraphInspector({
         <NodeIdList
           items={graph.sourceNodeIds}
           emptyLabel="No source nodes"
+          labelsById={graph.nodeLabelsById}
           onNodeSelect={onNodeSelect}
         />
       </section>
@@ -813,6 +877,7 @@ function GraphInspector({
         <NodeIdList
           items={graph.sinkNodeIds}
           emptyLabel="No sink nodes"
+          labelsById={graph.nodeLabelsById}
           onNodeSelect={onNodeSelect}
         />
       </section>
@@ -829,6 +894,7 @@ function GraphInspector({
                 <div key={sinkOutput.nodeId}>
                   <NodeIdButton
                     nodeId={sinkOutput.nodeId}
+                    label={graph.nodeLabelsById[sinkOutput.nodeId]}
                     onNodeSelect={onNodeSelect}
                   />
                   <CodeList
@@ -849,6 +915,7 @@ function GraphInspector({
           <NodeIdList
             items={graph.isolatedNodeIds}
             emptyLabel="No isolated nodes"
+            labelsById={graph.nodeLabelsById}
             onNodeSelect={onNodeSelect}
           />
         </section>
@@ -856,6 +923,7 @@ function GraphInspector({
 
       <GraphRunResult
         executionState={graphExecutionState}
+        nodeLabelsById={graph.nodeLabelsById}
         onNodeSelect={onNodeSelect}
       />
     </div>
@@ -864,9 +932,11 @@ function GraphInspector({
 
 function GraphRunResult({
   executionState,
+  nodeLabelsById,
   onNodeSelect,
 }: {
   executionState: GraphExecutionDisplayState | null;
+  nodeLabelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
 }) {
   if (!executionState) {
@@ -952,6 +1022,7 @@ function GraphRunResult({
                       <div key={nodeId}>
                         <NodeIdButton
                           nodeId={nodeId}
+                          label={nodeLabelsById[nodeId]}
                           onNodeSelect={onNodeSelect}
                         />
                         <PreviewBlock
@@ -963,7 +1034,10 @@ function GraphRunResult({
                 )}
             </section>
 
-            <GraphTraceResult response={response} />
+            <GraphTraceResult
+              response={response}
+              nodeLabelsById={nodeLabelsById}
+            />
           </div>
         )
         : (
@@ -980,20 +1054,30 @@ function GraphRunResult({
                   <div className="mt-1">
                     <NodeIdButton
                       nodeId={response.error.nodeId}
+                      label={nodeLabelsById[response.error.nodeId]}
                       onNodeSelect={onNodeSelect}
                     />
                   </div>
                 </div>
               )}
             </div>
-            <GraphTraceResult response={response} />
+            <GraphTraceResult
+              response={response}
+              nodeLabelsById={nodeLabelsById}
+            />
           </>
         )}
     </section>
   );
 }
 
-function GraphTraceResult({ response }: { response: ExecutionResponse }) {
+function GraphTraceResult({
+  response,
+  nodeLabelsById,
+}: {
+  response: ExecutionResponse;
+  nodeLabelsById: Record<string, string>;
+}) {
   if (!response.trace) {
     return null;
   }
@@ -1010,6 +1094,8 @@ function GraphTraceResult({ response }: { response: ExecutionResponse }) {
           <TraceStep
             key={step.index}
             step={step}
+            label={nodeLabelsById[step.nodeId]}
+            nodeLabelsById={nodeLabelsById}
           />
         ))}
       </div>
@@ -1041,14 +1127,22 @@ function TraceDetails({
   );
 }
 
-function TraceStep({ step }: { step: ExecutionTraceStep }) {
+function TraceStep({
+  step,
+  label = "Step",
+  nodeLabelsById = {},
+}: {
+  step: ExecutionTraceStep;
+  label?: string;
+  nodeLabelsById?: Record<string, string>;
+}) {
   return (
     <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="font-mono text-xs text-zinc-500">Step {step.index}</p>
-          <p className="mt-1 font-mono text-sm font-semibold text-zinc-900">
-            {step.nodeId}
+          <p className="mt-1 text-sm font-semibold text-zinc-900">
+            {label}
           </p>
         </div>
         <span
@@ -1068,7 +1162,12 @@ function TraceStep({ step }: { step: ExecutionTraceStep }) {
           <h5 className="text-xs font-semibold uppercase text-zinc-500">
             Depends On
           </h5>
-          <CodeList items={step.dependsOn} emptyLabel="No dependencies" />
+          <LabelList
+            items={step.dependsOn.map((nodeId) =>
+              nodeLabelsById[nodeId] ?? "Step"
+            )}
+            emptyLabel="No dependencies"
+          />
         </section>
 
         <section>
@@ -1223,6 +1322,7 @@ function NodeInspector({
       <FlowNavigation
         upstreamDependencies={selectedNode.upstreamDependencies}
         downstreamDependencies={selectedNode.downstreamDependencies}
+        labelsById={selectedNode.nodeLabelsById}
         onNodeSelect={onNodeSelect}
       />
 
@@ -1558,7 +1658,9 @@ function getNodeRunSummary(
         variant: "danger",
         title: runStatus === "blocked" ? "Step did not run" : "Run failed",
         detail: failedNodeId
-          ? `Upstream step ${failedNodeId} failed before this step could run.`
+          ? `Upstream step ${
+            selectedNode.nodeLabelsById[failedNodeId] ?? "a step"
+          } failed before this step could run.`
           : "An upstream step failed before this step could run.",
       };
     }
@@ -1654,10 +1756,12 @@ function getSimpleOutputReplacement(
 function FlowNavigation({
   upstreamDependencies,
   downstreamDependencies,
+  labelsById,
   onNodeSelect,
 }: {
   upstreamDependencies: string[];
   downstreamDependencies: string[];
+  labelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
@@ -1668,12 +1772,14 @@ function FlowNavigation({
           title="Upstream"
           items={upstreamDependencies}
           emptyLabel="None"
+          labelsById={labelsById}
           onNodeSelect={onNodeSelect}
         />
         <NodeLinkList
           title="Downstream"
           items={downstreamDependencies}
           emptyLabel="None"
+          labelsById={labelsById}
           onNodeSelect={onNodeSelect}
         />
       </div>
@@ -1685,11 +1791,13 @@ function NodeLinkList({
   title,
   items,
   emptyLabel,
+  labelsById,
   onNodeSelect,
 }: {
   title: string;
   items: string[];
   emptyLabel: string;
+  labelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
 }) {
   return (
@@ -1705,6 +1813,7 @@ function NodeLinkList({
               <NodeIdButton
                 key={item}
                 nodeId={item}
+                label={labelsById[item]}
                 onNodeSelect={onNodeSelect}
               />
             ))}
@@ -1889,6 +1998,7 @@ export function InspectorPanel({
   readOnly,
   onNodeSelect,
   onCodeChange,
+  onNodeNameChange,
   onNodeMetadataChange,
   onGlobalsCodeChange,
   onOutputsChange,
@@ -1909,12 +2019,23 @@ export function InspectorPanel({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
-  const [inspectorWidth, setInspectorWidth] = useState(getDefaultInspectorWidth);
+  const [inspectorWidth, setInspectorWidth] = useState(
+    getDefaultInspectorWidth,
+  );
   const [isResizing, setIsResizing] = useState(false);
+  const [nodeNameDraft, setNodeNameDraft] = useState(
+    selectedNode?.displayName ?? "",
+  );
+  const [nodeNameError, setNodeNameError] = useState<string | null>(null);
 
   useEffect(() => {
     scrollContainerRef.current?.scrollTo({ top: 0 });
   }, [selectedNode?.id]);
+
+  useEffect(() => {
+    setNodeNameDraft(selectedNode?.displayName ?? "");
+    setNodeNameError(null);
+  }, [selectedNode?.id, selectedNode?.displayName]);
 
   useEffect(() => {
     const handleWindowResize = () => {
@@ -1976,15 +2097,27 @@ export function InspectorPanel({
             <div className="flex flex-wrap items-start gap-3">
               <div className="min-w-0 flex-1">
                 <input
-                  className="w-full rounded border border-transparent bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:border-zinc-700 dark:focus:bg-zinc-800"
-                  value={selectedNode.title}
-                  placeholder={selectedNode.functionName ?? selectedNode.id}
+                  className={[
+                    "w-full rounded border bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:bg-zinc-800",
+                    nodeNameError
+                      ? "border-red-300 focus:border-red-400 dark:border-red-800 dark:focus:border-red-700"
+                      : "border-transparent focus:border-zinc-300 dark:focus:border-zinc-700",
+                  ].join(" ")}
+                  value={nodeNameDraft}
+                  placeholder={selectedNode.displayName}
                   readOnly={readOnly}
-                  onChange={(event) =>
-                    onNodeMetadataChange(selectedNode.id, {
-                      title: event.currentTarget.value,
-                    })}
+                  onChange={(event) => {
+                    const nextName = event.currentTarget.value;
+                    setNodeNameDraft(nextName);
+                    const result = onNodeNameChange(selectedNode.id, nextName);
+                    setNodeNameError(result.ok ? null : result.message);
+                  }}
                 />
+                {nodeNameError && (
+                  <p className="mt-1 text-xs font-medium text-red-700 dark:text-red-400">
+                    {nodeNameError}
+                  </p>
+                )}
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                     Python
@@ -1999,9 +2132,9 @@ export function InspectorPanel({
                   ))}
                   <span
                     className="font-mono text-zinc-400 dark:text-zinc-500"
-                    title={`Node ID: ${selectedNode.id}`}
+                    title={selectedNode.functionName ?? ""}
                   >
-                    {selectedNode.functionName ?? selectedNode.id}
+                    {selectedNode.functionName ?? "custom Python"}
                   </span>
                 </div>
               </div>

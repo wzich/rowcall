@@ -188,7 +188,7 @@ Deno.test("loadPythonDocument applies optional sidecar node metadata", async () 
   }
 
   assertEquals(decoded.document.nodes[0].position, { x: 100, y: 200 });
-  assertEquals(decoded.document.nodes[0].title, "Make X");
+  assertEquals(decoded.document.nodes[0].title, undefined);
   assertEquals(
     decoded.document.nodes[0].description,
     "Create the first value.",
@@ -288,7 +288,6 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar metadata",
           ...node,
           code: "x = 2\nprint(x)",
           position: { x: 10, y: 20 },
-          title: "Updated X",
           description: "Print and return the updated value.",
         }
         : node
@@ -315,7 +314,6 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar metadata",
   );
   assertEquals(saved.document.nodes[0].code, "x = 2\nprint(x)");
   assertEquals(saved.document.nodes[0].position, { x: 10, y: 20 });
-  assertEquals(saved.document.nodes[0].title, "Updated X");
   assertEquals(
     saved.document.nodes[0].description,
     "Print and return the updated value.",
@@ -329,7 +327,6 @@ Deno.test("savePythonDocument rewrites standard node body and sidecar metadata",
     nodes: [{
       id: "n_test",
       position: { x: 10, y: 20 },
-      title: "Updated X",
       description: "Print and return the updated value.",
     }],
   });
@@ -559,7 +556,6 @@ Deno.test("savePythonDocument rejects invalid rendered Python without overwritin
         ? {
           ...node,
           code: "def broken():\nx = 2",
-          title: "Should not be written",
         }
         : node
     ),
@@ -962,6 +958,73 @@ Deno.test("savePythonDocument appends child edge for added node", async () => {
   assertEquals(saved.document.edges, [
     { fromNode: "n_parent", toNode: "n_child" },
   ]);
+});
+
+Deno.test("savePythonDocument renames Python node functions and graph references", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/rename_node.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["x"])',
+      "def read_data():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_use", outputs=[])',
+      "def use_data(x):",
+      "    pass",
+      "    return {}",
+      "",
+      "# NodeBook graph",
+      "use_data.depends_on(read_data)",
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const nextDocument = {
+    ...loaded.document,
+    nodes: loaded.document.nodes.map((node) =>
+      node.id === "n_load"
+        ? { ...node, functionName: "read_and_transform_data" }
+        : node
+    ),
+  };
+
+  const saved = await savePythonDocument(documentPath, nextDocument);
+  if (!saved.ok) {
+    throw new Error(saved.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_load", outputs=["x"])',
+      "def read_and_transform_data():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="n_use", outputs=[])',
+      "def use_data(x):",
+      "    pass",
+      "    return {}",
+      "",
+      "# NodeBook graph",
+      "use_data.depends_on(read_and_transform_data)",
+      "",
+    ].join("\n"),
+  );
+  assertEquals(saved.document.nodes[0].functionName, "read_and_transform_data");
 });
 
 Deno.test("savePythonDocument removes deleted nodes and incident edges", async () => {

@@ -29,6 +29,11 @@ import {
 } from "./graph/documentTypes.ts";
 import { createSimpleLayout } from "./graph/layout.ts";
 import {
+  functionNameFromDisplayName,
+  isValidPythonIdentifier,
+  prettifyFunctionName,
+} from "./graph/nodeNames.ts";
+import {
   runGraphMutationOptions,
   runNodeMutationOptions,
   runToNodeMutationOptions,
@@ -38,7 +43,7 @@ import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
 const documentSourceValue = "document:active";
-const generatedFunctionNamePattern = /^new_node_(\d+)$/u;
+const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const themeStorageKey = "nodebook:theme";
 
 export type ThemeMode = "light" | "dark";
@@ -47,6 +52,10 @@ type GeneratedFunctionNameSession = {
   reservedNames: Set<string>;
   nextIndex: number;
 };
+
+export type NodeNameChangeResult =
+  | { ok: true; functionName: string }
+  | { ok: false; message: string };
 
 type SaveErrorMessage = {
   title: string;
@@ -313,6 +322,7 @@ export default function App() {
       nodeCount: editableGraph.nodes.length,
       edgeCount: editableGraph.edges.length,
       globalsCode: editableDocument?.globalsCode ?? "",
+      nodeLabelsById: getNodeLabelsById(editableGraph),
       sourceNodeIds,
       sinkNodeIds,
       isolatedNodeIds,
@@ -353,7 +363,7 @@ export default function App() {
 
     return {
       id: node.id,
-      title: node.title ?? "",
+      displayName: prettifyFunctionName(node.functionName),
       description: node.description ?? "",
       functionName: node.functionName ?? null,
       code: node.displayCode ?? node.code,
@@ -372,6 +382,7 @@ export default function App() {
       ),
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
+      nodeLabelsById: getNodeLabelsById(editableGraph),
       badges,
     };
   }, [editableGraph, executionStateByNodeId, graphNodeDetails, selectedNodeId]);
@@ -505,18 +516,91 @@ export default function App() {
     });
   }, [markDocumentEdited, markNodesStale]);
 
+  const handleNodeNameChange = useCallback((
+    nodeId: string,
+    displayName: string,
+  ): NodeNameChangeResult => {
+    if (!editableDocument) {
+      return { ok: false, message: "The document is not ready yet." };
+    }
+
+    const node = editableDocument.nodes.find((item) => item.id === nodeId);
+    if (!node) {
+      return { ok: false, message: "This step no longer exists." };
+    }
+    if (!node.functionName) {
+      return {
+        ok: false,
+        message: "This step cannot be renamed because it has no Python name.",
+      };
+    }
+
+    const functionName = functionNameFromDisplayName(displayName);
+    if (!functionName) {
+      return { ok: false, message: "Enter a step name." };
+    }
+    if (!isValidPythonIdentifier(functionName)) {
+      return {
+        ok: false,
+        message: `That would create invalid Python name '${functionName}'.`,
+      };
+    }
+
+    const conflictingNode = editableDocument.nodes.find((item) =>
+      item.id !== nodeId && item.functionName === functionName
+    );
+    if (conflictingNode) {
+      return {
+        ok: false,
+        message: `A step named '${
+          prettifyFunctionName(functionName)
+        }' already exists.`,
+      };
+    }
+
+    if (node.functionName === functionName) {
+      return { ok: true, functionName };
+    }
+
+    setEditableDocument((current) => {
+      if (!current) return current;
+      const currentNode = current.nodes.find((item) => item.id === nodeId);
+      if (!currentNode || currentNode.functionName === functionName) {
+        return current;
+      }
+      if (
+        current.nodes.some((item) =>
+          item.id !== nodeId && item.functionName === functionName
+        )
+      ) {
+        return current;
+      }
+
+      markDocumentEdited();
+      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
+      return {
+        ...current,
+        nodes: current.nodes.map((item) =>
+          item.id === nodeId
+            ? { ...item, functionName, runtimeCode: undefined }
+            : item
+        ),
+      };
+    });
+
+    return { ok: true, functionName };
+  }, [editableDocument, markDocumentEdited, markNodesStale]);
+
   const handleNodeMetadataChange = useCallback((
     nodeId: string,
-    metadata: { title?: string; description?: string },
+    metadata: { description?: string },
   ) => {
     setEditableDocument((current) => {
       if (!current) return current;
       const node = current.nodes.find((item) => item.id === nodeId);
       if (!node) return current;
-      const nextTitle = metadata.title ?? node.title;
       const nextDescription = metadata.description ?? node.description;
       if (
-        (node.title ?? "") === (nextTitle ?? "") &&
         (node.description ?? "") === (nextDescription ?? "")
       ) {
         return current;
@@ -529,9 +613,6 @@ export default function App() {
           item.id === nodeId
             ? {
               ...item,
-              ...(metadata.title !== undefined
-                ? { title: metadata.title }
-                : {}),
               ...(metadata.description !== undefined
                 ? { description: metadata.description }
                 : {}),
@@ -947,6 +1028,7 @@ export default function App() {
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
               onCodeChange={handleCodeChange}
+              onNodeNameChange={handleNodeNameChange}
               onNodeMetadataChange={handleNodeMetadataChange}
               onGlobalsCodeChange={handleGlobalsCodeChange}
               onOutputsChange={handleOutputsChange}
@@ -1306,8 +1388,13 @@ function getOutputPreviewsForNode(
 }
 
 function getNodeDisplayTitle(node: RuntimeNode): string {
-  const title = node.title?.trim();
-  return title || node.functionName || node.id;
+  return prettifyFunctionName(node.functionName);
+}
+
+function getNodeLabelsById(graph: RuntimeGraph): Record<string, string> {
+  return Object.fromEntries(
+    graph.nodes.map((node) => [node.id, getNodeDisplayTitle(node)]),
+  );
 }
 
 function createNewPythonNode(
@@ -1318,7 +1405,6 @@ function createNewPythonNode(
   return {
     id,
     functionName,
-    title: "New step",
     parameters: [],
     code: "pass",
     outputs: [],
@@ -1402,13 +1488,13 @@ function reserveNextFunctionName(
   );
 
   while (
-    existingNames.has(`new_node_${index}`) ||
-    session.reservedNames.has(`new_node_${index}`)
+    existingNames.has(`new_step_${index}`) ||
+    session.reservedNames.has(`new_step_${index}`)
   ) {
     index += 1;
   }
 
-  const name = `new_node_${index}`;
+  const name = `new_step_${index}`;
   session.reservedNames.add(name);
   session.nextIndex = index + 1;
 
@@ -1692,10 +1778,6 @@ function collectBindingNames(
       collectBindingNames(child, code, addOutput);
     }
   }
-}
-
-function isValidPythonIdentifier(value: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function arePositionsEqual(
