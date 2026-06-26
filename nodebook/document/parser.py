@@ -109,6 +109,7 @@ def _decode_nodes(module: ast.Module, lines: list[str], issues: list[ValidationI
             )
 
         _validate_function_shape(function_def, node_id, issues)
+        _validate_node_decorators(function_def, node_id, issues)
         _validate_no_direct_node_calls(function_def, node_id, node_function_names, issues)
 
     return decoded
@@ -170,6 +171,39 @@ def _is_node_decorator_syntax(value: ast.AST) -> bool:
 
 def _is_node_call(value: ast.AST) -> bool:
     return isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "node"
+
+
+def _validate_node_decorators(
+    function_def: ast.FunctionDef,
+    node_id: str,
+    issues: list[ValidationIssue],
+) -> None:
+    node_decorators = [
+        decorator
+        for decorator in function_def.decorator_list
+        if _is_node_decorator_syntax(decorator)
+    ]
+    if len(node_decorators) > 1:
+        issues.append(
+            ValidationIssue(
+                kind="unsupported_python",
+                message="Node functions must have exactly one @node(...) decorator",
+                node_id=node_id,
+                path=_statement_path(function_def),
+            )
+        )
+
+    for decorator in function_def.decorator_list:
+        if _is_node_decorator_syntax(decorator):
+            continue
+        issues.append(
+            ValidationIssue(
+                kind="unsupported_python",
+                message="Node functions may not use decorators other than @node(...)",
+                node_id=node_id,
+                path=_statement_path(decorator),
+            )
+        )
 
 
 def _literal_string(value: ast.AST | None) -> str | None:

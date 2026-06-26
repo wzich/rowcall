@@ -33,6 +33,11 @@ they are declared outputs and flow through Edges. A Node can access:
 - explicit user-provided inputs when the Node is a root in the current run, for
   lower-level runtime callers that provide them
 
+In source-backed Nodebook documents, every node function parameter must match a
+Declared Output from a direct upstream Node. Root nodes cannot declare
+parameters. Node functions may use only the `@node(...)` decorator; additional
+Python decorators are rejected because the strict runtime owns node invocation.
+
 Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
 mutating imported modules or `builtins` may be visible to later Nodes. The

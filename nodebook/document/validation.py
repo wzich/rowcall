@@ -14,6 +14,7 @@ def validate_document(document: ExecutableDocument) -> ValidationResult:
     _validate_edge_endpoints(document, issues)
     _validate_cycles(document, issues)
     _validate_conflicting_upstream_outputs(document, issues)
+    _validate_node_parameters_satisfied(document, issues)
     return ValidationResult(ok=len(issues) == 0, issues=tuple(issues))
 
 
@@ -148,3 +149,38 @@ def _validate_conflicting_upstream_outputs(document: ExecutableDocument, issues:
                     node_id=node.id,
                 )
             )
+
+
+def _validate_node_parameters_satisfied(
+    document: ExecutableDocument,
+    issues: list[ValidationIssue],
+) -> None:
+    upstream = build_upstream_adjacency(document)
+    outputs_by_node = {node.id: node.outputs for node in document.nodes}
+    node_ids = set(outputs_by_node)
+
+    for node in document.nodes:
+        available_inputs: set[str] = set()
+        for parent_id in upstream.get(node.id, []):
+            if parent_id not in node_ids:
+                continue
+            available_inputs.update(outputs_by_node[parent_id])
+
+        missing_parameters = [
+            parameter
+            for parameter in node.parameters
+            if parameter not in available_inputs
+        ]
+        if not missing_parameters:
+            continue
+
+        issues.append(
+            ValidationIssue(
+                kind="unsupported_python",
+                message=(
+                    f"Node '{node.id}' has parameters without direct upstream "
+                    f"outputs: {', '.join(missing_parameters)}"
+                ),
+                node_id=node.id,
+            )
+        )

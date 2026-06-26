@@ -83,8 +83,8 @@ def double(x):
     return {"y": y}
 
 @node(id="n_format", outputs=["text"])
-def format_text(y):
-    text = str(y)
+def format_text():
+    text = "ready"
     return {"text": text}
 
 double.depends_on(load)
@@ -102,16 +102,28 @@ double.depends_on(load)
             [("n_load", "n_double"), ("n_double", "n_format")],
         )
 
-        removed = remove_edge(added.source, DOCUMENT_PATH, "n_load", "n_double")
+        removed = remove_edge(added.source, DOCUMENT_PATH, "n_double", "n_format")
 
         self.assertTrue(removed.ok, [issue.to_dict() for issue in removed.issues])
-        self.assertNotIn("double.depends_on(load)", removed.source)
-        self.assertIn("format_text.depends_on(double)", removed.source)
+        self.assertIn("double.depends_on(load)", removed.source)
+        self.assertNotIn("format_text.depends_on(double)", removed.source)
         self.assertIn("VALUE = 1", removed.source)
         assert removed.parse_result.document is not None
         self.assertEqual(
             [(edge.from_node, edge.to_node) for edge in removed.parse_result.document.edges],
-            [("n_double", "n_format")],
+            [("n_load", "n_double")],
+        )
+
+        invalid_removed = remove_edge(added.source, DOCUMENT_PATH, "n_load", "n_double")
+
+        self.assertFalse(invalid_removed.ok)
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": "Node 'n_double' has parameters without direct upstream outputs: x",
+                "nodeId": "n_double",
+            },
+            [issue.to_dict() for issue in invalid_removed.issues],
         )
 
     def test_reject_editing_custom_return_node(self) -> None:

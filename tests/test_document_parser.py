@@ -97,6 +97,69 @@ first.depends_on(second)
         self.assertIn("missing_node_reference", kinds)
         self.assertIn("cycle", kinds)
 
+    def test_rejects_node_parameters_without_upstream_outputs(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="root", outputs=["value"])
+def root(missing):
+    return {"value": missing}
+
+@node(id="child", outputs=["result"])
+def child(value, also_missing):
+    return {"result": value + also_missing}
+
+child.depends_on(root)
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/missing_inputs.py"))
+
+        self.assertFalse(result.ok)
+        issues = [issue.to_dict() for issue in result.issues]
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": "Node 'root' has parameters without direct upstream outputs: missing",
+                "nodeId": "root",
+            },
+            issues,
+        )
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": "Node 'child' has parameters without direct upstream outputs: also_missing",
+                "nodeId": "child",
+            },
+            issues,
+        )
+
+    def test_rejects_extra_node_function_decorators(self) -> None:
+        source = """
+from nodebook import node
+
+def wrap(fn):
+    return fn
+
+@wrap
+@node(id="decorated", outputs=["value"])
+def decorated():
+    return {"value": 1}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/decorated.py"))
+
+        self.assertFalse(result.ok)
+        issues = [issue.to_dict() for issue in result.issues]
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": "Node functions may not use decorators other than @node(...)",
+                "nodeId": "decorated",
+                "path": "6:2",
+            },
+            issues,
+        )
+
     def test_hello_world_example_graph_and_plan(self) -> None:
         result = self.parse_fixture("examples/hello_world.py")
 
