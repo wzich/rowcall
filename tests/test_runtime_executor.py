@@ -201,6 +201,24 @@ def talk():
         self.assertEqual(node_result["outputEvents"][1]["kind"], "display")
         self.assertEqual(result["trace"][0]["stdout"], "hello stdout\n")
 
+    def test_captures_display_through_nodebook_module_alias(self) -> None:
+        source = """
+import nodebook as nb
+from nodebook import node
+
+@node(id="talk", outputs=["value"])
+def talk():
+    nb.display({"seen": True})
+    return {"value": 3}
+""".lstrip()
+
+        result = run_source(source, Path("/tmp/display_alias.py"), trace=True)
+
+        self.assertTrue(result["ok"])
+        node_result = result["resultsByNode"]["talk"]
+        self.assertEqual(node_result["displays"][0]["value"]["jsonValue"], {"seen": True})
+        self.assertEqual(node_result["outputEvents"][0]["kind"], "display")
+
     def test_fails_when_declared_output_is_missing(self) -> None:
         source = """
 from nodebook import node

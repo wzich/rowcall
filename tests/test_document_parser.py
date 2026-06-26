@@ -72,6 +72,25 @@ format_text.depends_on(double)
         )
         self.assertEqual(build_full_graph_plan(result.document).to_dict(), target_plan.to_dict())
 
+    def test_preserves_nodebook_module_imports_in_globals(self) -> None:
+        source = """
+import nodebook as nb
+from nodebook import node
+
+@node(id="show", outputs=["x"])
+def show():
+    nb.display({"seen": True})
+    return {"x": 1}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/import_nodebook.py"))
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.document)
+        assert result.document is not None
+        self.assertIn("import nodebook as nb", result.document.globals_code)
+        self.assertNotIn("from nodebook import node", result.document.globals_code)
+
     def test_reports_shape_and_graph_validation_issues(self) -> None:
         source = """
 from nodebook import node

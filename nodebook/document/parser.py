@@ -424,7 +424,9 @@ def _excluded_source_lines(module: ast.Module, node_defs: list[ast.FunctionDef],
             excluded.add(line_number)
 
     for statement in module.body:
-        if _is_nodebook_import(statement) or (isinstance(statement, ast.Expr) and _looks_like_depends_on_call(statement.value)):
+        if _is_nodebook_from_import(statement) or (
+            isinstance(statement, ast.Expr) and _looks_like_depends_on_call(statement.value)
+        ):
             for line_number in range(statement.lineno, (statement.end_lineno or statement.lineno) + 1):
                 excluded.add(line_number)
 
@@ -435,11 +437,9 @@ def _excluded_source_lines(module: ast.Module, node_defs: list[ast.FunctionDef],
     return excluded
 
 
-def _is_nodebook_import(statement: ast.stmt) -> bool:
+def _is_nodebook_from_import(statement: ast.stmt) -> bool:
     if isinstance(statement, ast.ImportFrom) and statement.module == "nodebook":
         return True
-    if isinstance(statement, ast.Import):
-        return any(alias.name == "nodebook" for alias in statement.names)
     return False
 
 
