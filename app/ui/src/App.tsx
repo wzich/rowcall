@@ -63,16 +63,19 @@ type SaveErrorMessage = {
 };
 
 function getInitialThemeMode(): ThemeMode {
-  if (typeof window === "undefined") {
+  if (
+    typeof globalThis.localStorage === "undefined" ||
+    typeof globalThis.matchMedia === "undefined"
+  ) {
     return "light";
   }
 
-  const storedTheme = window.localStorage.getItem(themeStorageKey);
+  const storedTheme = globalThis.localStorage.getItem(themeStorageKey);
   if (storedTheme === "light" || storedTheme === "dark") {
     return storedTheme;
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
+  return globalThis.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
@@ -107,7 +110,7 @@ export default function App() {
     queryFn: loadPythonRuntime,
   });
   useEffect(() => {
-    window.localStorage.setItem(themeStorageKey, themeMode);
+    globalThis.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
   const {
     executionStateByNodeId,
@@ -770,6 +773,12 @@ export default function App() {
     setSaveError(formatSaveError(result.error));
   }
 
+  function getCurrentPythonSourceForRun(): string | undefined {
+    // TODO: When the UI owns raw Python source state, pass that string here so
+    // dirty editor contents can run without first saving to disk.
+    return undefined;
+  }
+
   async function handleRunNode(nodeId: string) {
     if (!editableGraph || !(await validateGraphForExecution())) {
       return;
@@ -799,7 +808,9 @@ export default function App() {
     runToNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
+      document: editableDocument ?? undefined,
       inputs: {},
+      source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,
@@ -817,7 +828,9 @@ export default function App() {
     const abortController = startRunAbortController();
     runGraphMutation.mutate({
       graph: editableGraph,
+      document: editableDocument ?? undefined,
       inputs: {},
+      source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,

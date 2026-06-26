@@ -10,18 +10,28 @@ import {
 } from "./graph.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
 import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
-import { loadPythonDocument, savePythonDocument } from "./python_document.ts";
+import {
+  loadPythonDocument,
+  renderPythonDocumentSource,
+  savePythonDocument,
+} from "./python_document.ts";
 import {
   clearRuntimeSessionCache,
+  clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   runGraph,
   runSingleNode,
+  runSourceGraph,
+  runSourceToNode,
   runToNode,
   streamRunGraph,
   streamRunSingleNode,
   streamRunToNode,
+  streamSourceRunGraph,
+  streamSourceRunToNode,
 } from "./executor.ts";
 import { configurePythonCommand } from "./runtime_config.ts";
+import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
 const app = new Hono();
@@ -36,11 +46,11 @@ def start():
 `;
 const startupOptions = getStartupOptions(Deno.args);
 configurePythonCommand(startupOptions.pythonCommand);
-const activeDocumentPath = startupOptions.documentPath;
 const createActiveDocumentIfMissing = startupOptions.create;
-await ensureActiveDocumentExists(activeDocumentPath, {
+await ensureActiveDocumentExists(startupOptions.documentPath, {
   createIfMissing: createActiveDocumentIfMissing,
 });
+const activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
 console.info(`Nodebook document: ${activeDocumentPath}`);
 console.info(
   `Nodebook URL: http://${startupOptions.hostname}:${startupOptions.port}/`,
@@ -171,6 +181,55 @@ async function createNodebookDocument(path: string): Promise<void> {
   }
 
   await Deno.writeTextFile(path, defaultNewDocumentSource);
+}
+
+async function readActiveDocumentSource(): Promise<string> {
+  return await Deno.readTextFile(activeDocumentPath);
+}
+
+async function getRunRequestSource(
+  body: { source?: unknown; document?: unknown },
+): Promise<{ ok: true; source: string } | ApiErrorResponse> {
+  if (typeof body.source === "string") {
+    return { ok: true, source: body.source };
+  }
+
+  if (body.document !== undefined) {
+    const decoded = decodeNodebookDocument(body.document);
+    if (!decoded.ok) {
+      return documentDecodeError(decoded.issues);
+    }
+
+    const rendered = await renderPythonDocumentSource(
+      activeDocumentPath,
+      decoded.document,
+    );
+    if (!rendered.ok) {
+      return documentDecodeError(rendered.issues);
+    }
+
+    return { ok: true, source: rendered.source };
+  }
+
+  return { ok: true, source: await readActiveDocumentSource() };
+}
+
+function hasRunRequestSource(body: { source?: unknown }): body is {
+  source: string;
+} {
+  return typeof body.source === "string";
+}
+
+function hasRunRequestDocument(body: { document?: unknown }): boolean {
+  return body.document !== undefined;
+}
+
+function sourceBackedInputsError(): ApiErrorResponse {
+  return errorResponse({
+    kind: "invalid_request",
+    message:
+      "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
+  });
 }
 
 function getParentDirectory(path: string): string | undefined {
@@ -381,7 +440,7 @@ app.get("/document", async (c) => {
       document: formatDocument(decoded.document),
       path: activeDocumentPath,
     });
-  } catch (error) {
+  } catch (_error) {
     return c.json(
       errorResponse({
         kind: "file_read_error",
@@ -504,73 +563,169 @@ app.post("/run-node", async (c) => {
 
 app.post("/run-to-node", async (c) => {
   const body = await c.req.json();
+  const hasSourceInput = hasRunRequestSource(body) ||
+    hasRunRequestDocument(body);
+  let graph: Graph | null = null;
 
-  const resolved = decodeAndValidateGraph(body.graph);
-  if (!resolved.ok) {
-    return c.json(
-      resolved,
-      422,
-    );
-  }
-  const graph = resolved.graph;
   const nodeId = body.nodeId;
 
-  try {
-    assertNodeExists(graph, nodeId);
-  } catch {
-    return c.json(nodeNotFoundError(nodeId), 422);
+  if (hasSourceInput) {
+    if (typeof nodeId !== "string") {
+      return c.json(
+        errorResponse({
+          kind: "invalid_request",
+          message: "Run-to-node requests require a string nodeId.",
+        }),
+        422,
+      );
+    }
+  } else {
+    const resolved = decodeAndValidateGraph(body.graph);
+    if (!resolved.ok) {
+      return c.json(
+        resolved,
+        422,
+      );
+    }
+    graph = resolved.graph;
+
+    try {
+      assertNodeExists(graph, nodeId);
+    } catch {
+      return c.json(nodeNotFoundError(nodeId), 422);
+    }
   }
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
+  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+    return c.json(sourceBackedInputsError(), 422);
+  }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
+    if (!hasSourceInput && graph) {
+      return streamExecutionEvents(
+        runId,
+        "run_to_node",
+        streamRunToNode(runId, graph, nodeId, inputs, trace),
+        nodeId,
+      );
+    }
+
+    const sourceResult = await getRunRequestSource(body);
+    if (!sourceResult.ok) {
+      return c.json(sourceResult, 422);
+    }
     return streamExecutionEvents(
       runId,
       "run_to_node",
-      streamRunToNode(runId, graph, nodeId, inputs, trace),
+      streamSourceRunToNode(
+        runId,
+        sourceResult.source,
+        activeDocumentPath,
+        nodeId,
+        inputs,
+        trace,
+      ),
       nodeId,
     );
   }
 
-  const result = await runToNode(graph, nodeId, inputs, trace);
+  if (!hasSourceInput && graph) {
+    const result = await runToNode(graph, nodeId, inputs, trace);
+    return c.json(result);
+  }
+
+  const sourceResult = await getRunRequestSource(body);
+  if (!sourceResult.ok) {
+    return c.json(sourceResult, 422);
+  }
+  const result = await runSourceToNode(
+    sourceResult.source,
+    activeDocumentPath,
+    nodeId,
+    inputs,
+    trace,
+  );
 
   return c.json(result);
 });
 
 app.post("/run-graph", async (c) => {
   const body = await c.req.json();
+  const hasSourceInput = hasRunRequestSource(body) ||
+    hasRunRequestDocument(body);
+  let graph: Graph | null = null;
 
-  const resolved = decodeAndValidateGraph(body.graph);
-  if (!resolved.ok) {
-    return c.json(
-      resolved,
-      422,
-    );
+  if (!hasSourceInput) {
+    const resolved = decodeAndValidateGraph(body.graph);
+    if (!resolved.ok) {
+      return c.json(
+        resolved,
+        422,
+      );
+    }
+    graph = resolved.graph;
   }
-
-  const graph = resolved.graph;
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
+  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+    return c.json(sourceBackedInputsError(), 422);
+  }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
+    if (!hasSourceInput && graph) {
+      return streamExecutionEvents(
+        runId,
+        "run_graph",
+        streamRunGraph(runId, graph, inputs, trace),
+      );
+    }
+
+    const sourceResult = await getRunRequestSource(body);
+    if (!sourceResult.ok) {
+      return c.json(sourceResult, 422);
+    }
     return streamExecutionEvents(
       runId,
       "run_graph",
-      streamRunGraph(runId, graph, inputs, trace),
+      streamSourceRunGraph(
+        runId,
+        sourceResult.source,
+        activeDocumentPath,
+        inputs,
+        trace,
+      ),
     );
   }
 
-  const result = await runGraph(graph, inputs, trace);
+  if (!hasSourceInput && graph) {
+    const result = await runGraph(graph, inputs, trace);
+    return c.json(result);
+  }
+
+  const sourceResult = await getRunRequestSource(body);
+  if (!sourceResult.ok) {
+    return c.json(sourceResult, 422);
+  }
+  const result = await runSourceGraph(
+    sourceResult.source,
+    activeDocumentPath,
+    inputs,
+    trace,
+  );
 
   return c.json(result);
 });
 
 app.post("/runtime-session/clear-cache", async (c) => {
-  await clearRuntimeSessionCache();
+  await Promise.all([
+    clearRuntimeSessionCache(),
+    clearSourceRuntimeSessionCache(),
+  ]);
   return c.json({ ok: true });
 });
 

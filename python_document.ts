@@ -27,6 +27,10 @@ export type SavePythonDocumentResult =
   | { ok: true; document: NodebookDocumentV1; issues: [] }
   | { ok: false; issues: ValidationIssue[] };
 
+export type RenderPythonDocumentSourceResult =
+  | { ok: true; source: string; document: NodebookDocumentV1; issues: [] }
+  | { ok: false; issues: ValidationIssue[] };
+
 export async function loadPythonDocument(
   path: string,
 ): Promise<LoadPythonDocumentResult> {
@@ -117,6 +121,40 @@ export async function savePythonDocument(
   await writeSidecar(path, document);
 
   return await loadPythonDocument(path);
+}
+
+export async function renderPythonDocumentSource(
+  path: string,
+  document: NodebookDocumentV1,
+): Promise<RenderPythonDocumentSourceResult> {
+  const loaded = await loadPythonDocument(path);
+  if (!loaded.ok) {
+    return loaded;
+  }
+
+  const issues = validateEditableSave(loaded.document, document);
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  const candidateSource = await renderPythonDocumentText(
+    path,
+    loaded.document,
+    document,
+  );
+  const candidateValidation = await validateRenderedPythonDocument(
+    candidateSource,
+  );
+  if (!candidateValidation.ok) {
+    return candidateValidation;
+  }
+
+  return {
+    ok: true,
+    source: candidateSource,
+    document: candidateValidation.document,
+    issues: [],
+  };
 }
 
 type SidecarNodeMetadata = {
@@ -215,11 +253,6 @@ function validateEditableSave(
   const addedNodeIds = new Set(
     next.nodes
       .filter((node) => !loadedNodesById.has(node.id))
-      .map((node) => node.id),
-  );
-  const deletedNodeIds = new Set(
-    loaded.nodes
-      .filter((node) => !nextNodesById.has(node.id))
       .map((node) => node.id),
   );
   const nextNodeIds = next.nodes.map((node) => node.id);

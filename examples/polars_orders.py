@@ -4,7 +4,7 @@ import polars as pl
 from nodebook import display, node
 
 
-DATA_PATH = Path("examples/data/orders.csv")
+DATA_PATH = Path(__file__).parent / "data" / "orders.csv"
 
 
 @node(id="n_orders_load", outputs=["orders_raw"])

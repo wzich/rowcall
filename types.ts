@@ -105,7 +105,12 @@ export type GraphValidationResult =
   | { ok: false; issues: ValidationIssue[] };
 
 export type ExecutionError = {
-  kind: "runtime_error" | "node_not_found" | "internal_error" | "cache_miss";
+  kind:
+    | "runtime_error"
+    | "node_not_found"
+    | "internal_error"
+    | "cache_miss"
+    | "invalid_request";
   message: string;
   nodeId?: string;
 };

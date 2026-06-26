@@ -18,9 +18,13 @@ import {
   buildDownstreamAdjacency,
   buildUpstreamAdjacency,
   collectRequiredNodeIds,
-  getNodeById,
   getSinkNodes,
 } from "./graph.ts";
+import {
+  PythonWorkerClient,
+  type PythonWorkerEvent,
+} from "./python_worker_client.ts";
+import { hasExplicitRunInputs } from "./run_inputs.ts";
 
 type RunnerNodeEvent = {
   type: "node_started" | "node_completed" | "node_failed";
@@ -311,6 +315,7 @@ export { getPythonEnvironmentInfo, resolvePythonCommand };
 export type { PythonEnvironmentInfo };
 
 const runtimeSession = new PythonRuntimeSession();
+const sourceRuntimeWorker = new PythonWorkerClient();
 
 export function buildRunPlan(graph: Graph, targetNodeId: string): RunPlan {
   return buildRunPlanForTargets(graph, [targetNodeId]);
@@ -416,6 +421,25 @@ export async function runToNode(
   );
 }
 
+export async function runSourceToNode(
+  source: string,
+  documentPath: string,
+  nodeId: string,
+  inputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): Promise<ExecutionResponse> {
+  if (hasExplicitRunInputs(inputs)) {
+    return sourceBackedInputsNotSupportedResponse("run_to_node", nodeId, trace);
+  }
+  return await executeSourceRun(
+    source,
+    documentPath,
+    "run_to_node",
+    nodeId,
+    trace,
+  );
+}
+
 export async function* streamRunToNode(
   runId: string,
   graph: Graph,
@@ -433,6 +457,35 @@ export async function* streamRunToNode(
     "run_to_node",
     nodeId,
     "refresh",
+  );
+}
+
+export async function* streamSourceRunToNode(
+  runId: string,
+  source: string,
+  documentPath: string,
+  nodeId: string,
+  inputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  if (hasExplicitRunInputs(inputs)) {
+    yield* streamSourceBackedInputsNotSupported(
+      runId,
+      "run_to_node",
+      nodeId,
+      trace,
+    );
+    return;
+  }
+  // The Phase 5 worker emits coarse run events only. Node-level streaming stays
+  // on the legacy graph runner until the worker protocol grows those events.
+  yield* streamSourceRun(
+    runId,
+    source,
+    documentPath,
+    "run_to_node",
+    nodeId,
+    trace,
   );
 }
 
@@ -455,6 +508,28 @@ export async function runGraph(
   );
 }
 
+export async function runSourceGraph(
+  source: string,
+  documentPath: string,
+  userInputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): Promise<ExecutionResponse> {
+  if (hasExplicitRunInputs(userInputs)) {
+    return sourceBackedInputsNotSupportedResponse(
+      "run_graph",
+      undefined,
+      trace,
+    );
+  }
+  return await executeSourceRun(
+    source,
+    documentPath,
+    "run_graph",
+    undefined,
+    trace,
+  );
+}
+
 export async function* streamRunGraph(
   runId: string,
   graph: Graph,
@@ -473,6 +548,34 @@ export async function* streamRunGraph(
     "run_graph",
     undefined,
     "refresh",
+  );
+}
+
+export async function* streamSourceRunGraph(
+  runId: string,
+  source: string,
+  documentPath: string,
+  userInputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  if (hasExplicitRunInputs(userInputs)) {
+    yield* streamSourceBackedInputsNotSupported(
+      runId,
+      "run_graph",
+      undefined,
+      trace,
+    );
+    return;
+  }
+  // The Phase 5 worker emits coarse run events only. Node-level streaming stays
+  // on the legacy graph runner until the worker protocol grows those events.
+  yield* streamSourceRun(
+    runId,
+    source,
+    documentPath,
+    "run_graph",
+    undefined,
+    trace,
   );
 }
 
@@ -520,8 +623,23 @@ export async function clearRuntimeSessionCache(): Promise<void> {
   await runtimeSession.clearCache();
 }
 
+export async function clearSourceRuntimeSessionCache(): Promise<void> {
+  const event = await sourceRuntimeWorker.requestFinalEvent(
+    "clear_session_cache",
+  );
+  if (event.type !== "session_cache_cleared" || event.ok === false) {
+    throw new Error(
+      workerErrorMessage(event, "Failed to clear Python worker cache"),
+    );
+  }
+}
+
 export async function shutdownRuntimeSession(): Promise<void> {
   await runtimeSession.shutdown();
+}
+
+export async function shutdownSourceRuntimeSession(): Promise<void> {
+  await sourceRuntimeWorker.shutdown();
 }
 
 export function printNodeRunResult(result: NodeRunResult): void {
@@ -685,7 +803,223 @@ async function* streamPythonRunPlan(
   });
 }
 
-async function* streamOneShotPythonRunPlan(
+async function executeSourceRun(
+  source: string,
+  documentPath: string,
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): Promise<ExecutionResponse> {
+  let finalResponse: ExecutionResponse | null = null;
+
+  for await (
+    const event of streamSourceWorkerRun(
+      source,
+      documentPath,
+      runType,
+      targetNodeId,
+      traceEnabled,
+    )
+  ) {
+    if (event.type === "run_completed" || event.type === "run_failed") {
+      finalResponse = readWorkerExecutionResponse(event);
+    }
+  }
+
+  if (!finalResponse) {
+    throw new Error("Python worker ended before sending a final run event");
+  }
+
+  return finalResponse;
+}
+
+function sourceBackedInputsNotSupportedResponse(
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): ExecutionResponse {
+  return {
+    ok: false,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+    finalNodeIds: [],
+    executedNodeIds: [],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: traceEnabled ? [] : null,
+    error: {
+      kind: "invalid_request",
+      message:
+        "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
+    },
+  };
+}
+
+async function* streamSourceBackedInputsNotSupported(
+  runId: string,
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): AsyncGenerator<ExecutionStreamEvent> {
+  yield {
+    type: "run_started",
+    runId,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+  };
+  yield {
+    type: "run_failed",
+    runId,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+    response: sourceBackedInputsNotSupportedResponse(
+      runType,
+      targetNodeId,
+      traceEnabled,
+    ),
+  };
+}
+
+async function* streamSourceRun(
+  runId: string,
+  source: string,
+  documentPath: string,
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): AsyncGenerator<ExecutionStreamEvent> {
+  for await (
+    const event of streamSourceWorkerRun(
+      source,
+      documentPath,
+      runType,
+      targetNodeId,
+      traceEnabled,
+    )
+  ) {
+    if (event.type === "run_started") {
+      yield {
+        type: "run_started",
+        runId,
+        runType,
+        targetNodeId,
+      };
+      continue;
+    }
+
+    if (event.type === "run_plan") {
+      yield {
+        type: "run_plan",
+        runId,
+        runType,
+        targetNodeId,
+        plan: readWorkerRunPlan(event),
+      };
+      continue;
+    }
+
+    if (event.type === "run_completed" || event.type === "run_failed") {
+      yield {
+        type: event.type,
+        runId,
+        runType,
+        targetNodeId,
+        response: readWorkerExecutionResponse(event),
+      };
+      continue;
+    }
+
+    if (event.type === "error") {
+      yield {
+        type: "run_failed",
+        runId,
+        runType,
+        targetNodeId,
+        response: workerEventToExecutionFailure(event, runType, targetNodeId),
+      };
+      continue;
+    }
+  }
+}
+
+async function* streamSourceWorkerRun(
+  source: string,
+  documentPath: string,
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): AsyncGenerator<PythonWorkerEvent> {
+  const payload: Record<string, unknown> = {
+    source,
+    documentPath,
+    trace: traceEnabled,
+  };
+  if (targetNodeId) {
+    payload.target = targetNodeId;
+  }
+
+  yield* sourceRuntimeWorker.request(runType, payload);
+}
+
+function readWorkerRunPlan(event: PythonWorkerEvent): RunPlan {
+  const plan = event["plan"];
+  if (
+    isRecord(plan) && Array.isArray(plan["targetNodeIds"]) &&
+    Array.isArray(plan["steps"])
+  ) {
+    return plan as RunPlan;
+  }
+  return { targetNodeIds: [], steps: [] };
+}
+
+function readWorkerExecutionResponse(
+  event: PythonWorkerEvent,
+): ExecutionResponse {
+  const response = event["response"];
+  if (!isRecord(response)) {
+    throw new Error(
+      workerErrorMessage(
+        event,
+        "Python worker did not return an execution response",
+      ),
+    );
+  }
+  return response as ExecutionResponse;
+}
+
+function workerEventToExecutionFailure(
+  event: PythonWorkerEvent,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined,
+): ExecutionResponse {
+  return {
+    ok: false,
+    runType,
+    targetNodeId,
+    finalNodeIds: [],
+    executedNodeIds: [],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: null,
+    error: {
+      kind: "internal_error",
+      message: workerErrorMessage(event, "Python worker execution failed"),
+    },
+  };
+}
+
+function workerErrorMessage(
+  event: PythonWorkerEvent,
+  fallback: string,
+): string {
+  return event.error?.message ?? fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function* _streamOneShotPythonRunPlan(
   graph: Graph,
   runPlan: RunPlan,
   userInputs: Record<string, unknown>,

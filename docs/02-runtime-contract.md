@@ -7,10 +7,18 @@
 The Nodebook Canvas is the 2D interface where a user builds a program by
 arranging Nodes and connecting them with Edges.
 
+### Document
+
+A Nodebook document is a Python source file. The Python source is the canonical
+executable artifact: it contains `@node(...)` declarations, node functions, and
+top-level `depends_on(...)` graph edges. Optional `.nodebook.json` sidecars
+store editor metadata such as canvas positions and are ignored by the runtime.
+
 ### Graph
 
-A Graph is a directed acyclic graph of Nodes connected by Edges. In the initial
-version, one Canvas contains one Graph.
+A Graph is a directed acyclic graph of Nodes connected by Edges. The app may
+derive an in-memory graph from Python source for editing and legacy APIs. The
+runtime parses source into an executable graph before planning and execution.
 
 ### Node
 
@@ -21,8 +29,17 @@ they are declared outputs and flow through Edges. A Node can access:
 
 - variables it defines in its own code
 - variables made available from directly connected upstream Nodes
+- top-level document globals, imports, and helpers evaluated once for the run
 - explicit user-provided inputs when the Node is a root in the current run, for
   lower-level runtime callers that provide them
+
+In source-backed Nodebook documents, every node function parameter must match a
+Declared Output from a direct upstream Node. Root nodes cannot declare
+parameters. Node functions may use only the `@node(...)` decorator; additional
+Python decorators are rejected because the strict runtime owns node invocation.
+`from nodebook import ...` declarations may only import `display` and `node`,
+and may not use aliases. For other package symbols, use a module import such as
+`import nodebook as nb`.
 
 Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
@@ -77,13 +94,18 @@ are not passed through Edges as Outputs.
 If an upstream Node fails during a Run, execution stops and downstream Nodes do
 not execute.
 
-The runtime keeps an in-memory Python session cache for the active server
-process. `Run graph` and `Run upstream to node` recompute their planned Nodes
-fresh and refresh cache entries for every successful Node. `Run single node` is
-for iterative development: it executes only the selected Node, using copied
-outputs from valid cached upstream Nodes. If any required upstream cache entry
-is missing or transitively stale, `Run single node` fails with `cache_miss`
-instead of silently recomputing upstream Nodes.
+Full-graph and upstream-to-node runs are source-backed. The app sends either
+current Python source or a validated editable document model that the server
+renders to Python source, then the Python runtime worker parses, validates,
+plans, and executes it with the active document path as file context.
+
+`Run single node` currently remains cache-backed through the legacy session
+runner. It is for iterative development: it executes only the selected Node,
+using copied outputs from valid cached upstream Nodes. If any required upstream
+cache entry is missing or transitively stale, `Run single node` fails with
+`cache_miss` instead of silently recomputing upstream Nodes. This behavior will
+move behind the Python runtime worker once the worker grows cache-aware
+single-node execution.
 
 Cache entries are valid only when the Node code, declared output names, explicit
 root inputs, and upstream cache keys still match. Failed executions are not
@@ -96,9 +118,11 @@ server restarts, and it can be cleared explicitly with
 
 The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
-sources should be modeled as normal Python code inside root Nodes. The
-lower-level runtime API keeps explicit inputs available for internal callers and
-future experiments.
+sources should be modeled as normal Python code inside root Nodes.
+
+Source-backed app and worker runs follow the same rule. Empty `inputs` objects
+are tolerated for shared request-shape compatibility, but non-empty explicit
+inputs are rejected instead of being ignored.
 
 Future runtime configurations may expose explicit isolation modes:
 
@@ -127,7 +151,7 @@ event: node_started
 data: {"type":"node_started","runId":"...","nodeId":"a","index":0}
 ```
 
-The current event sequence is:
+For cache-backed single-node and legacy graph APIs, the event sequence is:
 
 - `run_started`
 - `run_plan`
@@ -141,15 +165,24 @@ to mark planned Nodes as queued before individual Nodes start running.
 The final `run_completed` or `run_failed` event contains the full
 `ExecutionResponse`, matching the non-streaming JSON response shape.
 
-In the current runtime, `stdout` and `stderr` are still node-completion
-artifacts. They are streamed as part of `node_completed` or `node_failed`, not
-as live chunks while Python code is still running inside a Node.
+For source-backed worker runs, the current streaming sequence is coarser:
 
-The Python runner writes runtime telemetry to its process stdout as
+- `run_started`
+- `run_plan`
+- `run_completed` or `run_failed`
+
+The worker does not yet emit per-node streaming events. The final event still
+contains the full `ExecutionResponse`.
+
+In the current runtime, `stdout` and `stderr` are still node result artifacts.
+They are included in node results, not streamed as live chunks while Python code
+is still running inside a Node.
+
+The Python runtime worker writes runtime telemetry to its process stdout as
 newline-delimited JSON. User code `stdout` and `stderr` are redirected while
-each Node executes and included in that Node's completion event. Runtime preview
-and copy operations also capture stdout and stderr before telemetry resumes, so
-user-defined hooks such as `__repr__` cannot corrupt the runtime event protocol.
+each Node executes and included in that Node's result. Runtime preview and copy
+operations also capture stdout and stderr before telemetry resumes, so
+user-defined hooks such as `__repr__` cannot corrupt the worker protocol.
 
 The browser UI keeps one active run at a time. The API does not yet enforce
 server-side concurrency or resource limits for direct callers; that should be

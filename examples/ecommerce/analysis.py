@@ -4,7 +4,7 @@ import pandas as pd
 from nodebook import display, node
 
 
-DATA_DIR = Path("examples/ecommerce/data")
+DATA_DIR = Path(__file__).parent / "data"
 
 
 @node(id="n_load_orders", outputs=["orders_raw"])

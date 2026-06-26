@@ -4,7 +4,7 @@ import pandas as pd
 from nodebook import display, node
 
 
-DATA_DIR = Path("examples/transit_reliability/data")
+DATA_DIR = Path(__file__).parent / "data"
 
 
 def _combine_service_datetime(df, date_col, time_col):
