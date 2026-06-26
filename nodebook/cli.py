@@ -1,0 +1,300 @@
+"""Public Python CLI for Nodebook documents."""
+
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TextIO
+
+from nodebook.document import ParseResult, load_document
+from nodebook.runtime import run_document
+
+
+USAGE = """Usage:
+  nodebook validate <document.py> [--json]
+  nodebook run <document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+"""
+
+
+@dataclass(frozen=True)
+class CliOptions:
+    command: str
+    document_path: str
+    json: bool = False
+    trace: bool = False
+    target: str | None = None
+
+
+class CliUsageError(Exception):
+    """Raised for command-line usage errors."""
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    out = sys.stdout if stdout is None else stdout
+    err = sys.stderr if stderr is None else stderr
+
+    if "--help" in args or "-h" in args:
+        out.write(USAGE)
+        return 0
+
+    try:
+        options = parse_cli_options(args)
+    except CliUsageError as exc:
+        json_requested = "--json" in args
+        command, document_path = partial_command_and_path(args)
+        if json_requested:
+            write_json(
+                {
+                    "ok": False,
+                    "command": command,
+                    "documentPath": document_path,
+                    "error": {"kind": "usage_error", "message": str(exc)},
+                },
+                out,
+            )
+        else:
+            err.write(f"{exc}\n\n{USAGE}")
+        return 2
+
+    if options.command == "validate":
+        return handle_validate(options, stdout=out, stderr=err)
+    if options.command == "run":
+        return handle_run(options, stdout=out, stderr=err)
+
+    raise AssertionError(f"Unhandled command: {options.command}")
+
+
+def parse_cli_options(args: list[str]) -> CliOptions:
+    if not args:
+        raise CliUsageError("Missing command. Use `validate` or `run`.")
+
+    command = args[0]
+    if command not in {"validate", "run"}:
+        raise CliUsageError(f"Unknown command: {command}")
+
+    positionals: list[str] = []
+    json_output = False
+    trace = False
+    target: str | None = None
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg == "--json":
+            json_output = True
+        elif arg == "--trace":
+            trace = True
+        elif arg == "--to":
+            index += 1
+            if index >= len(args) or args[index].startswith("-"):
+                raise CliUsageError("Invalid value for --to.")
+            target = args[index]
+        elif arg.startswith("--to="):
+            value = arg.split("=", 1)[1]
+            if not value:
+                raise CliUsageError("Invalid value for --to.")
+            target = value
+        elif arg.startswith("-"):
+            raise CliUsageError(f"Unknown option: {arg}")
+        else:
+            positionals.append(arg)
+        index += 1
+
+    if len(positionals) == 0:
+        raise CliUsageError(f"Missing document path for {command}.")
+    if len(positionals) > 1:
+        raise CliUsageError(f"Unexpected extra argument: {' '.join(positionals[1:])}")
+
+    document_path = positionals[0]
+    if not document_path.endswith(".py"):
+        raise CliUsageError("Nodebook document path must end with .py.")
+    if command == "validate" and target is not None:
+        raise CliUsageError("`validate` does not accept --to.")
+    if command == "validate" and trace:
+        raise CliUsageError("`validate` does not accept --trace.")
+
+    return CliOptions(
+        command=command,
+        document_path=document_path,
+        json=json_output,
+        trace=trace,
+        target=target,
+    )
+
+
+def handle_validate(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
+    document_path = resolve_display_path(options.document_path)
+    try:
+        result = load_document(options.document_path)
+    except OSError as exc:
+        result = None
+        error = {"kind": "load_error", "message": str(exc)}
+    else:
+        error = None
+
+    if options.json:
+        payload: dict[str, Any] = {
+            "ok": bool(result and result.ok),
+            "command": "validate",
+            "documentPath": document_path,
+        }
+        if result and result.ok and result.document is not None:
+            payload["summary"] = document_summary(result)
+        elif result is not None:
+            payload["issues"] = [issue.to_dict() for issue in result.issues]
+        else:
+            payload["error"] = error
+        write_json(payload, stdout)
+        return 0 if payload["ok"] else 1
+
+    if result and result.ok:
+        stdout.write(f"OK {document_path}\n")
+        stdout.write(format_document_summary(result) + "\n")
+        return 0
+
+    stderr.write(f"Validation failed: {document_path}\n")
+    if result is not None:
+        write_issues(result, stderr)
+    elif error is not None:
+        stderr.write(f"- {error['kind']}: {error['message']}\n")
+    return 1
+
+
+def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
+    document_path = resolve_display_path(options.document_path)
+    try:
+        response = run_document(options.document_path, target=options.target, trace=options.trace)
+    except OSError as exc:
+        response = {
+            "ok": False,
+            "runType": "run_to_node" if options.target else "run_graph",
+            "finalNodeIds": [],
+            "executedNodeIds": [],
+            "resultsByNode": {},
+            "finalOutputsByNode": {},
+            "trace": [] if options.trace else None,
+            "error": {"kind": "load_error", "message": str(exc)},
+        }
+    except Exception as exc:
+        response = {
+            "ok": False,
+            "runType": "run_to_node" if options.target else "run_graph",
+            "finalNodeIds": [],
+            "executedNodeIds": [],
+            "resultsByNode": {},
+            "finalOutputsByNode": {},
+            "trace": [] if options.trace else None,
+            "error": {"kind": "execution_error", "message": str(exc)},
+        }
+
+    payload: dict[str, Any] = {
+        "ok": bool(response.get("ok")),
+        "command": "run",
+        "documentPath": document_path,
+        "response": response,
+    }
+    if options.target is not None:
+        payload["target"] = {"requested": options.target, "nodeId": response.get("targetNodeId")}
+
+    if options.json:
+        write_json(payload, stdout)
+    else:
+        write_run_summary(payload, stdout=stdout, stderr=stderr)
+
+    return 0 if payload["ok"] else 1
+
+
+def document_summary(result: ParseResult) -> dict[str, Any]:
+    assert result.document is not None
+    return {
+        "nodeCount": len(result.document.nodes),
+        "edgeCount": len(result.document.edges),
+        "nodes": [
+            {
+                "id": node.id,
+                "functionName": node.function_name,
+                "outputs": list(node.outputs),
+            }
+            for node in result.document.nodes
+        ],
+    }
+
+
+def format_document_summary(result: ParseResult) -> str:
+    assert result.document is not None
+    return f"{len(result.document.nodes)} nodes, {len(result.document.edges)} edges"
+
+
+def write_issues(result: ParseResult, stream: TextIO) -> None:
+    for issue in result.issues:
+        issue_path = f" ({issue.path})" if issue.path else ""
+        stream.write(f"- {issue.kind}{issue_path}: {issue.message}\n")
+
+
+def write_run_summary(payload: dict[str, Any], *, stdout: TextIO, stderr: TextIO) -> None:
+    response = payload["response"]
+    target = payload.get("target")
+    run_label = f"target {target['requested']}" if target else "document"
+    stdout.write(f"{'OK' if payload['ok'] else 'FAILED'} run {run_label}\n")
+
+    executed_node_ids = response.get("executedNodeIds") or []
+    if executed_node_ids:
+        stdout.write(f"Executed: {' -> '.join(executed_node_ids)}\n")
+
+    final_outputs = response.get("finalOutputsByNode") or {}
+    if final_outputs:
+        stdout.write("Final outputs:\n")
+        for node_id, outputs in final_outputs.items():
+            stdout.write(f"- {node_id}:\n")
+            for name, preview in outputs.items():
+                stdout.write(f"  {name}: {format_preview(preview)}\n")
+
+    error = response.get("error")
+    if error:
+        kind = error.get("kind", "error")
+        message = error.get("message", "Unknown error")
+        stderr.write(f"{kind}: {message}\n")
+
+
+def format_preview(preview: Any) -> str:
+    if isinstance(preview, dict):
+        if "jsonValue" in preview:
+            return json.dumps(preview["jsonValue"], ensure_ascii=False)
+        if "summary" in preview:
+            return str(preview["summary"])
+        if "text" in preview:
+            return str(preview["text"])
+    return json.dumps(preview, ensure_ascii=False, default=str)
+
+
+def write_json(value: dict[str, Any], stream: TextIO) -> None:
+    stream.write(json.dumps(value, indent=2, ensure_ascii=False, default=str))
+    stream.write("\n")
+
+
+def resolve_display_path(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return path
+
+
+def partial_command_and_path(args: list[str]) -> tuple[str | None, str | None]:
+    command = args[0] if args and not args[0].startswith("-") else None
+    document_path = None
+    for arg in args[1:]:
+        if not arg.startswith("-"):
+            document_path = arg
+            break
+    return command, document_path
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

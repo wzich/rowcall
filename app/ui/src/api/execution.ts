@@ -1,3 +1,4 @@
+import type { NodebookDocumentV1 } from "../../../../document.ts";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
@@ -7,7 +8,9 @@ import type {
 export type RunExecutionRequest = {
   graph: Graph;
   nodeId: string;
+  document?: NodebookDocumentV1;
   inputs?: Record<string, unknown>;
+  source?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
   signal?: AbortSignal;
@@ -15,7 +18,9 @@ export type RunExecutionRequest = {
 
 export type RunGraphRequest = {
   graph: Graph;
+  document?: NodebookDocumentV1;
   inputs?: Record<string, unknown>;
+  source?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
   signal?: AbortSignal;
@@ -30,8 +35,16 @@ export class RunExecutionRequestError extends Error {
 
 async function runExecution(
   path: "/run-node" | "/run-to-node",
-  { graph, nodeId, inputs = {}, trace = false, onEvent, signal }:
-    RunExecutionRequest,
+  {
+    graph,
+    nodeId,
+    document,
+    inputs = {},
+    source,
+    trace = false,
+    onEvent,
+    signal,
+  }: RunExecutionRequest,
 ): Promise<ExecutionResponse> {
   const response = await fetch(path, {
     method: "POST",
@@ -42,7 +55,11 @@ async function runExecution(
     body: JSON.stringify({
       graph,
       nodeId,
+      ...(path === "/run-to-node" && document !== undefined
+        ? { document }
+        : {}),
       inputs,
+      ...(path === "/run-to-node" && source !== undefined ? { source } : {}),
       trace,
     }),
     signal,
@@ -64,7 +81,8 @@ async function runExecution(
 }
 
 async function runGraphExecution(
-  { graph, inputs = {}, trace = false, onEvent, signal }: RunGraphRequest,
+  { graph, document, inputs = {}, source, trace = false, onEvent, signal }:
+    RunGraphRequest,
 ): Promise<ExecutionResponse> {
   const response = await fetch("/run-graph", {
     method: "POST",
@@ -74,7 +92,9 @@ async function runGraphExecution(
     },
     body: JSON.stringify({
       graph,
+      ...(document !== undefined ? { document } : {}),
       inputs,
+      ...(source !== undefined ? { source } : {}),
       trace,
     }),
     signal,

@@ -1,26 +1,28 @@
 # Headless CLI
 
 Nodebook documents can be validated and run without opening the canvas editor.
-The CLI is the beta automation surface for humans, agents, and scripts.
+The Python CLI is the beta automation surface for humans, agents, and scripts.
+`deno task cli` remains available as a thin wrapper around the Python CLI for
+developer convenience.
 
 ## Commands
 
 Validate a document:
 
 ```sh
-deno task cli validate path/to/analysis.py
+python -m nodebook validate path/to/analysis.py
 ```
 
 Run the full graph:
 
 ```sh
-deno task cli run path/to/analysis.py
+python -m nodebook run path/to/analysis.py
 ```
 
 Run upstream to a target node:
 
 ```sh
-deno task cli run path/to/analysis.py --to node_id_or_function_name
+python -m nodebook run path/to/analysis.py --to node_id_or_function_name
 ```
 
 Targets must exactly match either a stable node ID or a Python function name. If
@@ -32,14 +34,23 @@ guessing.
 - `--json` prints structured machine-readable output.
 - `--trace` includes ordered per-step execution details, including input
   previews for each executed node.
-- `--python /path/to/python` chooses the Python interpreter used by document
-  loading and execution.
 
 Example:
 
 ```sh
-deno task cli run examples/ecommerce/analysis.py --to build_customer_facts --json --trace --python "$CONDA_PREFIX/bin/python"
+python -m nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
 ```
+
+If the package is installed into the active environment, the console script is
+equivalent:
+
+```sh
+nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+```
+
+When using Deno tasks, choose the Python interpreter through the surrounding
+environment or the app startup flags. The task itself delegates to
+`python -m nodebook`.
 
 ## JSON Output
 

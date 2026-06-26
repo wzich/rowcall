@@ -6,12 +6,17 @@ import {
 } from "@std/assert";
 import {
   clearRuntimeSessionCache,
+  clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   resolvePythonCommand,
+  runSourceGraph,
   shutdownRuntimeSession,
+  shutdownSourceRuntimeSession,
   streamRunGraph,
   streamRunSingleNode,
   streamRunToNode,
+  streamSourceRunGraph,
+  streamSourceRunToNode,
 } from "./executor.ts";
 import type { ExecutionStreamEvent, Graph } from "./types.ts";
 
@@ -49,6 +54,20 @@ function runtimeTest(
   });
 }
 
+function sourceRuntimeTest(
+  name: string,
+  fn: () => Promise<void>,
+): void {
+  Deno.test(name, async () => {
+    await clearSourceRuntimeSessionCache();
+    try {
+      await fn();
+    } finally {
+      await shutdownSourceRuntimeSession();
+    }
+  });
+}
+
 Deno.test("getPythonEnvironmentInfo reports the resolved Python runtime", async () => {
   const command = await resolvePythonCommand();
   const python = await getPythonEnvironmentInfo();
@@ -59,6 +78,155 @@ Deno.test("getPythonEnvironmentInfo reports the resolved Python runtime", async 
   assertStringIncludes(python.implementation, "Python");
   assertExists(python.version.match(/^\d+\.\d+\.\d+/));
 });
+
+sourceRuntimeTest(
+  "runSourceGraph executes current source through Python worker",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const documentPath = `${directory}/worker_source.py`;
+    const source = [
+      "from nodebook import node",
+      "",
+      '@node(id="a", outputs=["x"])',
+      "def a():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="b", outputs=["y"])',
+      "def b(x):",
+      "    y = x + 1",
+      '    return {"y": y}',
+      "",
+      "b.depends_on(a)",
+      "",
+    ].join("\n");
+    await Deno.writeTextFile(documentPath, source);
+
+    const response = await runSourceGraph(source, documentPath, {}, true);
+
+    assertEquals(response.ok, true);
+    assertEquals(response.executedNodeIds, ["a", "b"]);
+    assertEquals(response.finalOutputsByNode.b.y.jsonValue, 2);
+    assertExists(response.trace);
+    assertEquals(response.trace.map((step) => step.nodeId), ["a", "b"]);
+  },
+);
+
+sourceRuntimeTest(
+  "streamSourceRunGraph uses provided source instead of reading disk",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const documentPath = `${directory}/dirty_source.py`;
+    await Deno.writeTextFile(
+      documentPath,
+      [
+        "from nodebook import node",
+        "",
+        '@node(id="only", outputs=["value"])',
+        "def only():",
+        '    return {"value": "disk"}',
+        "",
+      ].join("\n"),
+    );
+    const dirtySource = [
+      "from nodebook import node",
+      "",
+      '@node(id="only", outputs=["value"])',
+      "def only():",
+      '    return {"value": "dirty"}',
+      "",
+    ].join("\n");
+
+    const events = await collectEvents(
+      streamSourceRunGraph("source-run-1", dirtySource, documentPath),
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "run_started",
+      "run_plan",
+      "run_completed",
+    ]);
+    assertObjectMatch(events[1], {
+      type: "run_plan",
+      plan: {
+        targetNodeIds: ["only"],
+        steps: [{ nodeId: "only", dependsOn: [] }],
+      },
+    });
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+    assertObjectMatch(finalEvent, {
+      type: "run_completed",
+      response: {
+        ok: true,
+        finalOutputsByNode: {
+          only: {
+            value: { jsonValue: "dirty" },
+          },
+        },
+      },
+    });
+  },
+);
+
+sourceRuntimeTest(
+  "streamSourceRunToNode emits coarse worker events for target runs",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const documentPath = `${directory}/target_source.py`;
+    const source = [
+      "from nodebook import node",
+      "",
+      '@node(id="a", outputs=["x"])',
+      "def a():",
+      '    return {"x": 2}',
+      "",
+      '@node(id="b", outputs=["y"])',
+      "def b(x):",
+      '    return {"y": x + 3}',
+      "",
+      "b.depends_on(a)",
+      "",
+    ].join("\n");
+    await Deno.writeTextFile(documentPath, source);
+
+    const events = await collectEvents(
+      streamSourceRunToNode("source-run-2", source, documentPath, "b"),
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "run_started",
+      "run_plan",
+      "run_completed",
+    ]);
+    assertObjectMatch(events[1], {
+      type: "run_plan",
+      targetNodeId: "b",
+      plan: {
+        targetNodeIds: ["b"],
+        steps: [
+          { nodeId: "a", dependsOn: [] },
+          { nodeId: "b", dependsOn: ["a"] },
+        ],
+      },
+    });
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+    assertObjectMatch(finalEvent, {
+      type: "run_completed",
+      targetNodeId: "b",
+      response: {
+        ok: true,
+        executedNodeIds: ["a", "b"],
+        finalOutputsByNode: {
+          b: {
+            y: { jsonValue: 5 },
+          },
+        },
+      },
+    });
+  },
+);
 
 runtimeTest(
   "streamRunGraph emits progress events and final response",

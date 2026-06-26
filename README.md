@@ -1,8 +1,9 @@
 # Nodebook
 
 Nodebook is a canvas-based computational notebook prototype. The current repo
-has a Deno/Hono API for editing and running graph-shaped Python notebooks, plus
-a Vite/React UI for editing graphs on a canvas.
+has a Python runtime for parsing, validating, planning, and executing
+graph-shaped Python notebooks, plus a Deno/Hono API and Vite/React canvas UI
+for editing and managing those documents.
 
 ## Alpha Tester Start
 
@@ -44,19 +45,26 @@ only.
 Validate and run a Nodebook Python document without opening the canvas:
 
 ```sh
-deno task cli validate path/to/analysis.py
-deno task cli run path/to/analysis.py
-deno task cli run path/to/analysis.py --to node_id_or_function_name
+python -m nodebook validate path/to/analysis.py
+python -m nodebook run path/to/analysis.py
+python -m nodebook run path/to/analysis.py --to node_id_or_function_name
 ```
 
 Running without `--to` executes the full graph. Targets must be exact node IDs
 or exact Python function names.
 
-Pass `--json` for structured output, `--trace` to include per-step input
-previews, and `--python /path/to/python` to choose a Python interpreter:
+Pass `--json` for structured output and `--trace` to include per-step input
+previews:
 
 ```sh
-deno task cli run path/to/analysis.py --json --trace --python "$CONDA_PREFIX/bin/python"
+python -m nodebook run path/to/analysis.py --json --trace
+```
+
+An installed `nodebook` console script exposes the same commands. The Deno task
+is only a wrapper around the Python CLI, so this also works after setup:
+
+```sh
+deno task cli run path/to/analysis.py --json --trace
 ```
 
 The beta CLI intentionally does not accept external input values. Data and
@@ -118,8 +126,8 @@ def read_message():
 ```
 
 The decorator records node metadata and returns the original function unchanged.
-`deno task setup` installs this stub package into `.venv`. For local alpha
-testing from outside the repository, install the stub package into the active
+`deno task setup` installs the local Python package into `.venv`. For local
+alpha testing from outside the repository, install the package into the active
 Python environment:
 
 ```sh
@@ -141,6 +149,9 @@ deno task ui:dev
 
 The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document,
 inspection, and execution requests to the API at `http://127.0.0.1:8000/`.
+Full-graph and run-to-node execution go through the Python runtime worker.
+Single-node iterative runs currently use the legacy session runner until the
+Python worker grows cache-aware single-node execution.
 
 ## Build And Serve The UI
 

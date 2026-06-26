@@ -9,4 +9,7 @@ description = "Minimal Python document API for Nodebook."
 requires-python = ">=3.10"
 
 [tool.setuptools]
-packages = ["nodebook"]
+packages = ["nodebook", "nodebook.document", "nodebook.runtime"]
+
+[project.scripts]
+nodebook = "nodebook.cli:main"
