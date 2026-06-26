@@ -134,6 +134,52 @@ second.depends_on(first)
             self.assertEqual(counter_path.read_text(), "1")
             self.assertEqual(result["finalOutputsByNode"]["second"]["y"]["jsonValue"], 2)
 
+    def test_missing_module_in_document_globals_is_classified(self) -> None:
+        source = """
+import definitely_missing_nodebook_globals_package
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    return {"x": 1}
+""".lstrip()
+
+        result = run_source(source, Path("/tmp/missing_globals.py"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["executedNodeIds"], [])
+        self.assertEqual(result["error"]["kind"], "missing_module")
+        self.assertEqual(result["error"]["phase"], "document_globals")
+        self.assertEqual(
+            result["error"]["missingModule"],
+            "definitely_missing_nodebook_globals_package",
+        )
+        self.assertEqual(result["error"]["pythonExecutable"], sys.executable)
+
+    def test_missing_module_in_node_execution_is_classified(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    import definitely_missing_nodebook_node_package
+    return {"x": 1}
+""".lstrip()
+
+        result = run_source(source, Path("/tmp/missing_node.py"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["executedNodeIds"], ["first"])
+        self.assertEqual(result["error"]["kind"], "missing_module")
+        self.assertEqual(result["error"]["phase"], "node_execution")
+        self.assertEqual(result["error"]["nodeId"], "first")
+        self.assertEqual(
+            result["error"]["missingModule"],
+            "definitely_missing_nodebook_node_package",
+        )
+        node_error = result["resultsByNode"]["first"]["errorDetails"]
+        self.assertEqual(node_error["kind"], "missing_module")
+
     def test_captures_stdout_and_display(self) -> None:
         source = """
 from nodebook import display, node

@@ -132,6 +132,12 @@ def execute_plan(
     executed_node_ids: list[str] = []
     globals_result = build_document_globals(document)
     if not globals_result["ok"]:
+        error = {
+            **globals_result["errorDetails"],
+            "stdout": globals_result["stdout"],
+            "stderr": globals_result["stderr"],
+            "error": globals_result["error"],
+        }
         return build_response(
             ok=False,
             run_type=run_type,
@@ -140,13 +146,7 @@ def execute_plan(
             executed_node_ids=[],
             results_by_node={},
             trace=trace,
-            error={
-                "kind": "runtime_error",
-                "message": "Failed execution in document globals",
-                "stdout": globals_result["stdout"],
-                "stderr": globals_result["stderr"],
-                "error": globals_result["error"],
-            },
+            error=error,
         )
     globals_scope = globals_result["scope"]
 
@@ -179,6 +179,23 @@ def execute_plan(
             inputs=inputs,
             result=result,
         )
+        error_details = result.get("errorDetails")
+        error = {
+            **(
+                error_details
+                if isinstance(error_details, dict)
+                else {
+                    "kind": "runtime_error",
+                    "phase": "node_execution",
+                    "message": f"Failed execution at node {node_id}",
+                    "nodeId": node_id,
+                    "pythonExecutable": sys.executable,
+                }
+            ),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+            "error": result.get("error"),
+        }
         return build_response(
             ok=False,
             run_type=run_type,
@@ -187,11 +204,7 @@ def execute_plan(
             executed_node_ids=executed_node_ids,
             results_by_node=results_by_node,
             trace=trace,
-            error={
-                "kind": "runtime_error",
-                "message": f"Failed execution at node {node_id}",
-                "nodeId": node_id,
-            },
+            error=error,
         )
 
     return build_response(
@@ -219,10 +232,12 @@ def build_document_globals(document: ExecutableDocument) -> dict[str, Any]:
                 code = compile(document.globals_code, str(document.path), "exec")
                 exec(code, scope, scope)
     except Exception as exc:
+        error_details = classify_exception(exc, phase="document_globals")
         return {
             "ok": False,
             "scope": scope,
             "error": str(exc),
+            "errorDetails": error_details,
             "stdout": stdout_buffer.getvalue(),
             "stderr": stderr_buffer.getvalue() + traceback.format_exc(),
         }
@@ -280,7 +295,13 @@ def execute_node(
                     exec(code, scope, scope)
     except Exception as exc:
         stderr_text = stderr_buffer.getvalue() + traceback.format_exc()
-        result = make_error_result(str(exc), stdout_buffer.getvalue(), stderr_text)
+        error_details = classify_exception(exc, phase="node_execution", node_id=node.id)
+        result = make_error_result(
+            str(exc),
+            stdout_buffer.getvalue(),
+            stderr_text,
+            error_details=error_details,
+        )
         result["displays"] = displays
         result["outputEvents"] = output_events
         result["warnings"] = result_warnings
@@ -315,8 +336,14 @@ def execute_node(
     }
 
 
-def make_error_result(message: str, stdout: str = "", stderr: str = "") -> dict[str, Any]:
-    return {
+def make_error_result(
+    message: str,
+    stdout: str = "",
+    stderr: str = "",
+    *,
+    error_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "ok": False,
         "stdout": stdout,
         "stderr": stderr,
@@ -326,6 +353,45 @@ def make_error_result(message: str, stdout: str = "", stderr: str = "") -> dict[
         "warnings": [],
         "error": message,
     }
+    if error_details is not None:
+        result["errorDetails"] = error_details
+    return result
+
+
+def classify_exception(
+    exc: Exception,
+    *,
+    phase: str,
+    node_id: str | None = None,
+) -> dict[str, Any]:
+    missing_module = exc.name if isinstance(exc, ModuleNotFoundError) else None
+    if missing_module:
+        if phase == "document_globals":
+            message = f"Missing Python package while loading document globals: {missing_module}"
+        elif node_id:
+            message = f"Missing Python package while running node {node_id}: {missing_module}"
+        else:
+            message = f"Missing Python package while running document: {missing_module}"
+        details: dict[str, Any] = {
+            "kind": "missing_module",
+            "phase": phase,
+            "message": message,
+            "missingModule": missing_module,
+            "pythonExecutable": sys.executable,
+        }
+    else:
+        message = "Failed execution in document globals" if phase == "document_globals" else (
+            f"Failed execution at node {node_id}" if node_id else "Failed execution"
+        )
+        details = {
+            "kind": "runtime_error",
+            "phase": phase,
+            "message": message,
+            "pythonExecutable": sys.executable,
+        }
+    if node_id is not None:
+        details["nodeId"] = node_id
+    return details
 
 
 def append_stdout_event(output_events: list[dict[str, Any]], text: str) -> None:

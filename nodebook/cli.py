@@ -242,11 +242,12 @@ def write_run_summary(payload: dict[str, Any], *, stdout: TextIO, stderr: TextIO
     response = payload["response"]
     target = payload.get("target")
     run_label = f"target {target['requested']}" if target else "document"
-    stdout.write(f"{'OK' if payload['ok'] else 'FAILED'} run {run_label}\n")
+    summary_stream = stdout if payload["ok"] else stderr
+    summary_stream.write(f"{'OK' if payload['ok'] else 'FAILED'} run {run_label}\n")
 
     executed_node_ids = response.get("executedNodeIds") or []
     if executed_node_ids:
-        stdout.write(f"Executed: {' -> '.join(executed_node_ids)}\n")
+        summary_stream.write(f"Executed: {' -> '.join(executed_node_ids)}\n")
 
     final_outputs = response.get("finalOutputsByNode") or {}
     if final_outputs:
@@ -258,9 +259,61 @@ def write_run_summary(payload: dict[str, Any], *, stdout: TextIO, stderr: TextIO
 
     error = response.get("error")
     if error:
-        kind = error.get("kind", "error")
-        message = error.get("message", "Unknown error")
-        stderr.write(f"{kind}: {message}\n")
+        write_run_error(
+            error,
+            document_path=str(payload.get("documentPath") or ""),
+            show_trace=response.get("trace") is not None,
+            stream=stderr,
+        )
+
+
+def write_run_error(
+    error: Any,
+    *,
+    document_path: str,
+    show_trace: bool,
+    stream: TextIO,
+) -> None:
+    if not isinstance(error, dict):
+        stream.write(f"error: {error}\n")
+        return
+
+    kind = str(error.get("kind") or "error")
+    message = str(error.get("message") or "Unknown error")
+
+    if kind == "missing_module":
+        missing_module = str(error.get("missingModule") or "unknown")
+        phase = error.get("phase")
+        node_id = error.get("nodeId")
+        if phase == "document_globals":
+            stream.write(
+                f"Missing Python package while loading document globals: {missing_module}\n"
+            )
+        elif node_id:
+            stream.write(f"Missing Python package while running node {node_id}: {missing_module}\n")
+        else:
+            stream.write(f"Missing Python package: {missing_module}\n")
+
+        python_executable = error.get("pythonExecutable")
+        if python_executable:
+            stream.write(f"Python used: {python_executable}\n")
+        if document_path:
+            stream.write(f"Document: {document_path}\n")
+        if node_id:
+            stream.write(f"Node: {node_id}\n")
+        stream.write("\nRun Nodebook with a Python environment that has this package installed.\n")
+    else:
+        stream.write(f"{kind}: {message}\n")
+        python_executable = error.get("pythonExecutable")
+        if python_executable:
+            stream.write(f"Python used: {python_executable}\n")
+
+    stderr_text = error.get("stderr")
+    if show_trace and isinstance(stderr_text, str) and stderr_text:
+        stream.write("\nTraceback:\n")
+        stream.write(stderr_text)
+        if not stderr_text.endswith("\n"):
+            stream.write("\n")
 
 
 def format_preview(preview: Any) -> str:

@@ -84,6 +84,88 @@ def second():
         self.assertEqual(payload["response"]["executedNodeIds"], ["n_load", "n_shout"])
         self.assertEqual(payload["response"]["finalOutputsByNode"]["n_shout"]["message"]["jsonValue"], "HELLO!")
 
+    def test_run_missing_module_json_is_structured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing.py"
+            path.write_text(
+                """
+import definitely_missing_nodebook_cli_json_package
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    return {"x": 1}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(["run", str(path), "--json"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        error = payload["response"]["error"]
+        self.assertEqual(error["kind"], "missing_module")
+        self.assertEqual(error["phase"], "document_globals")
+        self.assertEqual(
+            error["missingModule"],
+            "definitely_missing_nodebook_cli_json_package",
+        )
+        self.assertEqual(error["pythonExecutable"], sys.executable)
+
+    def test_run_missing_module_console_output_is_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing.py"
+            path.write_text(
+                """
+import definitely_missing_nodebook_cli_console_package
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    return {"x": 1}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(["run", str(path)], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        console_error = stderr.getvalue()
+        self.assertIn("FAILED run document", console_error)
+        self.assertIn(
+            "Missing Python package while loading document globals: "
+            "definitely_missing_nodebook_cli_console_package",
+            console_error,
+        )
+        self.assertIn(f"Python used: {sys.executable}", console_error)
+        self.assertIn("Run Nodebook with a Python environment", console_error)
+        self.assertNotIn("Traceback", console_error)
+
+    def test_run_missing_module_console_trace_includes_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing.py"
+            path.write_text(
+                """
+import definitely_missing_nodebook_cli_trace_package
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    return {"x": 1}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(["run", str(path), "--trace"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Traceback", stderr.getvalue())
+
     def test_usage_failure_exits_2(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
