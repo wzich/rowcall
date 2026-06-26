@@ -808,7 +808,7 @@ export default function App() {
     runToNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
-      document: editableDocument,
+      document: editableDocument ?? undefined,
       inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
@@ -828,7 +828,7 @@ export default function App() {
     const abortController = startRunAbortController();
     runGraphMutation.mutate({
       graph: editableGraph,
-      document: editableDocument,
+      document: editableDocument ?? undefined,
       inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
