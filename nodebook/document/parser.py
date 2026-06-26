@@ -38,6 +38,7 @@ def parse_source(source: str, document_path: str | Path) -> ParseResult:
 
     lines = source.splitlines()
     issues: list[ValidationIssue] = []
+    _validate_nodebook_imports(module, issues)
     decoded_nodes = _decode_nodes(module, lines, issues)
     edges = _decode_edges(module, decoded_nodes, issues)
     excluded = _excluded_source_lines(module, [node.function_def for node in decoded_nodes], lines)
@@ -281,6 +282,22 @@ def _validate_no_direct_node_calls(
                 path=_path_for(child.lineno, child.col_offset + 1),
             )
         )
+
+
+def _validate_nodebook_imports(module: ast.Module, issues: list[ValidationIssue]) -> None:
+    for statement in module.body:
+        if not _is_nodebook_from_import(statement):
+            continue
+        for alias in statement.names:
+            if alias.asname is None:
+                continue
+            issues.append(
+                ValidationIssue(
+                    kind="unsupported_python",
+                    message="from nodebook imports may not use aliases",
+                    path=_statement_path(statement),
+                )
+            )
 
 
 def _decode_edges(

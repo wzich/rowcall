@@ -91,6 +91,22 @@ def show():
         self.assertIn("import nodebook as nb", result.document.globals_code)
         self.assertNotIn("from nodebook import node", result.document.globals_code)
 
+    def test_rejects_aliased_from_nodebook_imports(self) -> None:
+        source = """
+from nodebook import display as show, node
+
+@node(id="show", outputs=["x"])
+def show_value():
+    show({"seen": True})
+    return {"x": 1}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/aliased_nodebook_import.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].kind, "unsupported_python")
+        self.assertEqual(result.issues[0].message, "from nodebook imports may not use aliases")
+
     def test_reports_shape_and_graph_validation_issues(self) -> None:
         source = """
 from nodebook import node
