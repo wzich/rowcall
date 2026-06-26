@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted and implemented for the beta runtime split.
 
 ## Context
 
@@ -22,9 +22,9 @@ than notebook cell order.
 
 ## Decision
 
-Python files will become the canonical computational document format for
-Nodebook. A normal `.py` file can be opened by the editor without any sidecar
-file. If no sidecar metadata exists, the editor may choose an automatic layout.
+Python files are the canonical computational document format for Nodebook. A
+normal `.py` file can be opened by the editor without any sidecar file. If no
+sidecar metadata exists, the editor may choose an automatic layout.
 
 Nodebook may store optional canvas metadata in a sibling `.nodebook.json` file.
 The sidecar is not the source of truth for computation. It stores UI-only data
@@ -82,18 +82,23 @@ ordinary UI-authored nodes.
 
 Nodebook-authored files remain normal Python files. Users and agents may edit
 them directly. If raw edits change wrappers, signatures, or return statements,
-Nodebook should validate the file on load and either accept the custom shape or
-produce actionable validation errors. The first implementation should detect and
-preserve custom returns, but it does not need to offer full UI editing for them.
-Nodes with custom return control flow should be shown in the canvas as
-custom-managed nodes: they remain visible and runnable, but UI actions that
-would require safely regenerating return statements should be disabled or routed
-through an explicit conversion flow.
+Nodebook validates the file on load and either accepts the custom shape or
+produces actionable validation errors. The beta implementation detects and
+preserves custom returns, but it does not offer full UI editing for them. Nodes
+with custom return control flow are custom-managed nodes: they remain visible
+and runnable, but UI actions that would require safely regenerating return
+statements are disabled.
 
 Top-level imports, constants, helper functions, and classes are allowed. The UI
 should eventually expose code outside node functions through a "Globals" section
 in the graph inspector. Top-level mutable state is outside the isolated
 data-flow guarantee and should be documented as advanced behavior.
+
+`from nodebook import ...` is intentionally strict because those imports are
+removed from globals before execution. It may only import `node` and `display`,
+without aliases. Other Nodebook package symbols should be referenced through a
+module import such as `import nodebook` or `import nodebook as nb`, which is
+preserved in document globals.
 
 Node functions should not call other node functions directly. Data dependencies
 must flow through explicit graph edges so the canvas remains authoritative for
@@ -127,32 +132,31 @@ contract and avoids ambiguous parameter binding.
 
 ## Implementation Notes
 
-The migration should be staged.
+The implemented split uses these boundaries:
 
-1. Define a small Python `nodebook` authoring API that can register decorated
-   node functions and explicit `depends_on` edges.
-2. Build a Python document loader that turns a `.py` file into the existing
-   runtime `Graph` shape plus document metadata.
-3. Add optional sidecar loading for positions and UI-only state.
-4. Update save behavior so normal UI-authored node edits regenerate the function
-   body and return dictionary while custom returns are preserved or flagged with
-   specific validation errors.
-5. Remove persisted JSON document loading and saving once Python documents are
-   the only canonical document format. Keep `.nodebook.json` sidecars because
-   they store UI-only canvas metadata, not embedded node code.
-6. Add file watching and reconciliation later so external `.py` edits can
-   refresh the canvas without requiring a full restart. The Python file is the
-   authority when it changes externally. If there are no unsaved canvas edits,
-   the canvas should reload. If unsaved canvas edits exist, the first
-   implementation may invalidate the draft and require the user to reload before
-   saving again.
+1. A small Python `nodebook` authoring API declares node functions and explicit
+   `depends_on` edges.
+2. The Python document loader parses a `.py` file into an executable document
+   with source, globals, nodes, edges, validation issues, and planning metadata.
+3. The Python runtime owns source-backed validation, graph planning, execution,
+   value previews, stdout/stderr capture, display events, and CLI behavior.
+4. The Deno/Hono app server owns editing APIs, startup configuration, and the
+   browser-facing API. Full-graph and run-to-node execution call the Python
+   runtime worker. Cache-backed single-node execution remains on the legacy
+   session runner until the worker grows cache-aware single-node execution.
+5. Normal UI-authored node edits regenerate function bodies, parameters, output
+   declarations, return dictionaries, and graph edges as Python source rewrites.
+   Custom returns are preserved or flagged with specific validation errors.
+6. `.nodebook.json` sidecars remain UI-only metadata. They are not required to
+   validate or run a Python document.
+7. File watching and reconciliation remain future work. The Python file should
+   remain authoritative when it changes externally.
 
 ## Follow-On Decisions
 
-- Use concrete-syntax editing rather than Python's built-in `ast` module for
-  save operations that need to preserve comments and formatting. LibCST is the
-  leading candidate for the first implementation because it supports
-  format-preserving parsing and code generation.
+- Consider concrete-syntax editing for future save operations that need broader
+  comment and formatting preservation. The beta implementation uses constrained
+  source rewrites for supported editor operations.
 - Create the `.nodebook.json` sidecar on first canvas save. A bare `.py` file
   remains sufficient to open and run the document.
 - Treat external file writes as authoritative. Nodebook should reload cleanly
@@ -163,6 +167,3 @@ The migration should be staged.
 
 - Should custom-managed nodes get a one-way "normalize this node" action that
   rewrites custom returns into the standard generated return dictionary shape?
-- Should the first implementation depend on LibCST immediately, or should it
-  start with a narrower parser/serializer and adopt LibCST when save behavior
-  expands?
