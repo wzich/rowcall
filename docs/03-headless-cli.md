@@ -99,3 +99,24 @@ source of truth for a run.
 
 Lower-level runtime APIs may still accept explicit inputs for internal and UI
 experiments, but those inputs are not part of the public headless CLI contract.
+
+## Python Environment Troubleshooting
+
+Nodebook runs documents with the Python interpreter used to launch the CLI. It
+does not auto-detect Conda, virtualenv, or other interpreters, and it does not
+switch environments automatically.
+
+If a top-level import or node-body import fails, non-JSON CLI output prints the
+missing package and the Python executable that was used. For example:
+
+```text
+FAILED run document
+Missing Python package while loading document globals: polars
+Python used: /path/to/python
+Document: /path/to/document.py
+
+Run Nodebook with a Python environment that has this package installed.
+```
+
+When `--json` is set, the same information is available in structured error
+fields such as `kind`, `phase`, `missingModule`, and `pythonExecutable`.
