@@ -19,6 +19,9 @@ from .models import (
 from .validation import validate_document
 
 
+SUPPORTED_NODEBOOK_FROM_IMPORTS = {"display", "node"}
+
+
 def load_document(path: str | Path) -> ParseResult:
     document_path = Path(path).expanduser().resolve()
     return parse_source(document_path.read_text(), document_path)
@@ -289,6 +292,14 @@ def _validate_nodebook_imports(module: ast.Module, issues: list[ValidationIssue]
         if not _is_nodebook_from_import(statement):
             continue
         for alias in statement.names:
+            if alias.name not in SUPPORTED_NODEBOOK_FROM_IMPORTS:
+                issues.append(
+                    ValidationIssue(
+                        kind="unsupported_python",
+                        message="from nodebook imports may only include display and node",
+                        path=_statement_path(statement),
+                    )
+                )
             if alias.asname is None:
                 continue
             issues.append(

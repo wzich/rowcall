@@ -107,6 +107,25 @@ def show_value():
         self.assertEqual(result.issues[0].kind, "unsupported_python")
         self.assertEqual(result.issues[0].message, "from nodebook imports may not use aliases")
 
+    def test_rejects_unsupported_from_nodebook_import_names(self) -> None:
+        source = """
+from nodebook import NodebookNodeError, node
+
+@node(id="show", outputs=["x"])
+def show_value():
+    error_type = NodebookNodeError
+    return {"x": error_type.__name__}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/unsupported_nodebook_import.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].kind, "unsupported_python")
+        self.assertEqual(
+            result.issues[0].message,
+            "from nodebook imports may only include display and node",
+        )
+
     def test_reports_shape_and_graph_validation_issues(self) -> None:
         source = """
 from nodebook import node

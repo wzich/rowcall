@@ -37,8 +37,9 @@ In source-backed Nodebook documents, every node function parameter must match a
 Declared Output from a direct upstream Node. Root nodes cannot declare
 parameters. Node functions may use only the `@node(...)` decorator; additional
 Python decorators are rejected because the strict runtime owns node invocation.
-`from nodebook import ...` declarations may not use aliases; use `display`,
-`node`, or a module import such as `import nodebook as nb`.
+`from nodebook import ...` declarations may only import `display` and `node`,
+and may not use aliases. For other package symbols, use a module import such as
+`import nodebook as nb`.
 
 Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
