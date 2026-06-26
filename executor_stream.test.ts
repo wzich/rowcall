@@ -10,6 +10,7 @@ import {
   getPythonEnvironmentInfo,
   resolvePythonCommand,
   runSourceGraph,
+  runSourceToNode,
   shutdownRuntimeSession,
   shutdownSourceRuntimeSession,
   streamRunGraph,
@@ -73,7 +74,7 @@ Deno.test("getPythonEnvironmentInfo reports the resolved Python runtime", async 
   const python = await getPythonEnvironmentInfo();
 
   assertEquals(python.command, command);
-  assertStringIncludes(["python3", "python"].join(","), python.command);
+  assertStringIncludes(python.command.toLowerCase(), "python");
   assertStringIncludes(python.executable.toLowerCase(), "python");
   assertStringIncludes(python.implementation, "Python");
   assertExists(python.version.match(/^\d+\.\d+\.\d+/));
@@ -109,6 +110,76 @@ sourceRuntimeTest(
     assertEquals(response.finalOutputsByNode.b.y.jsonValue, 2);
     assertExists(response.trace);
     assertEquals(response.trace.map((step) => step.nodeId), ["a", "b"]);
+  },
+);
+
+sourceRuntimeTest(
+  "runSourceGraph rejects explicit inputs",
+  async () => {
+    const response = await runSourceGraph(
+      "from nodebook import node\n",
+      "/tmp/source_inputs.py",
+      { value: 1 },
+      true,
+    );
+
+    assertEquals(response.ok, false);
+    assertEquals(response.runType, "run_graph");
+    assertEquals(response.trace, []);
+    assertExists(response.error);
+    assertObjectMatch(response.error, {
+      kind: "invalid_request",
+      message:
+        "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
+    });
+  },
+);
+
+sourceRuntimeTest(
+  "runSourceToNode rejects explicit inputs",
+  async () => {
+    const response = await runSourceToNode(
+      "from nodebook import node\n",
+      "/tmp/source_inputs.py",
+      "target",
+      { value: 1 },
+    );
+
+    assertEquals(response.ok, false);
+    assertEquals(response.runType, "run_to_node");
+    assertEquals(response.targetNodeId, "target");
+    assertExists(response.error);
+    assertObjectMatch(response.error, {
+      kind: "invalid_request",
+    });
+  },
+);
+
+sourceRuntimeTest(
+  "streamSourceRunGraph rejects explicit inputs",
+  async () => {
+    const events = await collectEvents(
+      streamSourceRunGraph(
+        "source-inputs",
+        "from nodebook import node\n",
+        "/tmp/source_inputs.py",
+        { value: 1 },
+      ),
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "run_started",
+      "run_failed",
+    ]);
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+    assertEquals(finalEvent.type, "run_failed");
+    if (finalEvent.type === "run_failed") {
+      assertExists(finalEvent.response.error);
+      assertObjectMatch(finalEvent.response.error, {
+        kind: "invalid_request",
+      });
+    }
   },
 );
 

@@ -11,8 +11,8 @@ arranging Nodes and connecting them with Edges.
 
 A Nodebook document is a Python source file. The Python source is the canonical
 executable artifact: it contains `@node(...)` declarations, node functions, and
-top-level `depends_on(...)` graph edges. Optional `.nodebook.json` sidecars store
-editor metadata such as canvas positions and are ignored by the runtime.
+top-level `depends_on(...)` graph edges. Optional `.nodebook.json` sidecars
+store editor metadata such as canvas positions and are ignored by the runtime.
 
 ### Graph
 
@@ -111,6 +111,10 @@ server restarts, and it can be cleared explicitly with
 The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
 sources should be modeled as normal Python code inside root Nodes.
+
+Source-backed app and worker runs follow the same rule. Empty `inputs` objects
+are tolerated for shared request-shape compatibility, but non-empty explicit
+inputs are rejected instead of being ignored.
 
 Future runtime configurations may expose explicit isolation modes:
 

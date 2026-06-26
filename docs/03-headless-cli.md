@@ -97,8 +97,9 @@ should enter through Python code in the document, usually in root nodes that
 read files or define constants. This keeps the Python document as the complete
 source of truth for a run.
 
-Lower-level runtime APIs may still accept explicit inputs for internal and UI
-experiments, but those inputs are not part of the public headless CLI contract.
+Legacy graph-only runtime APIs may still accept explicit inputs for internal and
+UI experiments. Source-backed document runs reject non-empty explicit inputs so
+the Python document remains the complete source of truth for a run.
 
 ## Python Environment Troubleshooting
 

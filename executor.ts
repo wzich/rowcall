@@ -24,6 +24,7 @@ import {
   PythonWorkerClient,
   type PythonWorkerEvent,
 } from "./python_worker_client.ts";
+import { hasExplicitRunInputs } from "./run_inputs.ts";
 
 type RunnerNodeEvent = {
   type: "node_started" | "node_completed" | "node_failed";
@@ -424,11 +425,12 @@ export async function runSourceToNode(
   source: string,
   documentPath: string,
   nodeId: string,
-  _inputs: Record<string, unknown> = {},
+  inputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): Promise<ExecutionResponse> {
-  // The Phase 5 worker protocol executes source documents and does not yet
-  // accept ad-hoc API inputs. Keep the parameter for route compatibility.
+  if (hasExplicitRunInputs(inputs)) {
+    return sourceBackedInputsNotSupportedResponse("run_to_node", nodeId, trace);
+  }
   return await executeSourceRun(
     source,
     documentPath,
@@ -463,9 +465,18 @@ export async function* streamSourceRunToNode(
   source: string,
   documentPath: string,
   nodeId: string,
-  _inputs: Record<string, unknown> = {},
+  inputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): AsyncGenerator<ExecutionStreamEvent> {
+  if (hasExplicitRunInputs(inputs)) {
+    yield* streamSourceBackedInputsNotSupported(
+      runId,
+      "run_to_node",
+      nodeId,
+      trace,
+    );
+    return;
+  }
   // The Phase 5 worker emits coarse run events only. Node-level streaming stays
   // on the legacy graph runner until the worker protocol grows those events.
   yield* streamSourceRun(
@@ -500,11 +511,16 @@ export async function runGraph(
 export async function runSourceGraph(
   source: string,
   documentPath: string,
-  _userInputs: Record<string, unknown> = {},
+  userInputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): Promise<ExecutionResponse> {
-  // The Phase 5 worker protocol executes source documents and does not yet
-  // accept ad-hoc API inputs. Keep the parameter for route compatibility.
+  if (hasExplicitRunInputs(userInputs)) {
+    return sourceBackedInputsNotSupportedResponse(
+      "run_graph",
+      undefined,
+      trace,
+    );
+  }
   return await executeSourceRun(
     source,
     documentPath,
@@ -539,9 +555,18 @@ export async function* streamSourceRunGraph(
   runId: string,
   source: string,
   documentPath: string,
-  _userInputs: Record<string, unknown> = {},
+  userInputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): AsyncGenerator<ExecutionStreamEvent> {
+  if (hasExplicitRunInputs(userInputs)) {
+    yield* streamSourceBackedInputsNotSupported(
+      runId,
+      "run_graph",
+      undefined,
+      trace,
+    );
+    return;
+  }
   // The Phase 5 worker emits coarse run events only. Node-level streaming stays
   // on the legacy graph runner until the worker protocol grows those events.
   yield* streamSourceRun(
@@ -806,6 +831,53 @@ async function executeSourceRun(
   }
 
   return finalResponse;
+}
+
+function sourceBackedInputsNotSupportedResponse(
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): ExecutionResponse {
+  return {
+    ok: false,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+    finalNodeIds: [],
+    executedNodeIds: [],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: traceEnabled ? [] : null,
+    error: {
+      kind: "invalid_request",
+      message:
+        "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
+    },
+  };
+}
+
+async function* streamSourceBackedInputsNotSupported(
+  runId: string,
+  runType: "run_graph" | "run_to_node",
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): AsyncGenerator<ExecutionStreamEvent> {
+  yield {
+    type: "run_started",
+    runId,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+  };
+  yield {
+    type: "run_failed",
+    runId,
+    runType,
+    ...(targetNodeId ? { targetNodeId } : {}),
+    response: sourceBackedInputsNotSupportedResponse(
+      runType,
+      targetNodeId,
+      traceEnabled,
+    ),
+  };
 }
 
 async function* streamSourceRun(

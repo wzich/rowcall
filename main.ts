@@ -31,6 +31,7 @@ import {
   streamSourceRunToNode,
 } from "./executor.ts";
 import { configurePythonCommand } from "./runtime_config.ts";
+import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
 const app = new Hono();
@@ -221,6 +222,14 @@ function hasRunRequestSource(body: { source?: unknown }): body is {
 
 function hasRunRequestDocument(body: { document?: unknown }): boolean {
   return body.document !== undefined;
+}
+
+function sourceBackedInputsError(): ApiErrorResponse {
+  return errorResponse({
+    kind: "invalid_request",
+    message:
+      "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
+  });
 }
 
 function getParentDirectory(path: string): string | undefined {
@@ -589,6 +598,9 @@ app.post("/run-to-node", async (c) => {
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
+  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+    return c.json(sourceBackedInputsError(), 422);
+  }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
@@ -659,6 +671,9 @@ app.post("/run-graph", async (c) => {
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
+  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+    return c.json(sourceBackedInputsError(), 422);
+  }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
