@@ -2,52 +2,86 @@
 
 Nodebook is a canvas-based computational notebook prototype. The current repo
 has a Python runtime for parsing, validating, planning, and executing
-graph-shaped Python notebooks, plus a Deno/Hono API and Vite/React canvas UI
-for editing and managing those documents.
+graph-shaped Python notebooks, plus a Deno/Hono API and Vite/React canvas UI for
+editing and managing those documents.
 
-## Alpha Tester Start
+## Beta Tester Start
 
-Install Deno and Python 3.10 or newer, then prepare Nodebook's local Python
-environment:
+Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
+must already be installed; Nodebook creates its own managed virtual environment
+for the local runtime and example dependencies.
 
-```sh
-deno task setup
-```
-
-This creates a repo-local `.venv`, installs the tiny local `nodebook` Python
-package, and installs the alpha example dependencies from
-`requirements-alpha.txt`. The `.venv` uses your installed Python runtime; it is
-not committed to the repo.
-
-Start Nodebook with the built UI and the ecommerce example:
+The hosted installer URL is a placeholder until a release host exists:
 
 ```sh
-deno task start
+curl -fsSL https://beta.nodebook.dev/install.sh | sh
 ```
 
-Open another Python document:
+For now, build the launcher locally and install it with a direct file URL:
 
 ```sh
-deno task start path/to/analysis.py
+deno task ui:build
+deno task beta:compile
+NODEBOOK_DOWNLOAD_URL=file://$PWD/dist/nodebook sh packaging/install.sh
 ```
 
-Create a new Python document:
+If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
+`export PATH=...` line to your shell profile.
+
+Show command help:
 
 ```sh
-deno task start --create path/to/analysis.py
+nodebook
 ```
+
+Open an existing Python document:
+
+```sh
+nodebook path/to/analysis.py
+```
+
+If `path/to/analysis.py` does not exist and its parent directory exists,
+Nodebook creates a starter document there. Missing parent directories are
+treated as errors so typos do not silently create nested paths.
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
+
+### Managed Environment
+
+The beta launcher stores its managed files under:
+
+```text
+~/.nodebook
+~/.nodebook/venvs/default
+~/.nodebook/logs/nodebook.log
+```
+
+On first run, or after `nodebook reset-env`, the launcher uses `python3` then
+`python` to find Python 3.10 or newer, creates the managed venv, installs the
+bundled `nodebook` Python package, and installs `requirements-alpha.txt`
+dependencies such as pandas and polars.
+
+Inspect a local install:
+
+```sh
+nodebook doctor
+```
+
+Recreate only the managed venv:
+
+```sh
+nodebook reset-env
+```
 
 ### Headless CLI
 
 Validate and run a Nodebook Python document without opening the canvas:
 
 ```sh
-python -m nodebook validate path/to/analysis.py
-python -m nodebook run path/to/analysis.py
-python -m nodebook run path/to/analysis.py --to node_id_or_function_name
+nodebook validate path/to/analysis.py
+nodebook run path/to/analysis.py
+nodebook run path/to/analysis.py --to node_id_or_function_name
 ```
 
 Running without `--to` executes the full graph. Targets must be exact node IDs
@@ -57,13 +91,15 @@ Pass `--json` for structured output and `--trace` to include per-step input
 previews:
 
 ```sh
-python -m nodebook run path/to/analysis.py --json --trace
+nodebook run path/to/analysis.py --json --trace
 ```
 
-An installed `nodebook` console script exposes the same commands. The Deno task
-is only a wrapper around the Python CLI, so this also works after setup:
+The launcher delegates headless commands to the Python CLI inside the managed
+venv. During development, `python3 -m nodebook` and `deno task cli` are still
+useful local wrappers:
 
 ```sh
+python3 -m nodebook run path/to/analysis.py --json --trace
 deno task cli run path/to/analysis.py --json --trace
 ```
 
@@ -73,25 +109,24 @@ reproducible from the file itself.
 
 See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
 
-### Python Environment
-
-By default, Nodebook prefers `.venv/bin/python` or `.venv/Scripts/python.exe`
-when a local `.venv` exists, then falls back to the first `python3` or `python`
-on `PATH`.
-
-To create `.venv` from a specific Python interpreter:
+To choose a specific Python interpreter for environment creation:
 
 ```sh
-deno task setup --python /path/to/python
-```
-
-To bypass `.venv` and choose an interpreter explicitly at startup:
-
-```sh
-deno task start --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
+nodebook --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
 ```
 
 ## Run Locally For Development
+
+Install Deno and Python 3.10 or newer, then prepare the repo-local development
+environment:
+
+```sh
+deno task setup
+```
+
+This creates a repo-local `.venv`, installs the local `nodebook` Python package,
+and installs `requirements-alpha.txt`. This is separate from the beta launcher's
+`~/.nodebook/venvs/default`.
 
 Start the Deno API:
 
@@ -165,3 +200,32 @@ handle document, inspection, and execution API routes.
 
 Use Vite for active UI development. Use the Hono-served build when you want a
 single local server or a production-style static app host.
+
+## Build The Beta Launcher
+
+Build the UI, then compile the macOS beta launcher:
+
+```sh
+deno task ui:build
+deno task beta:compile
+```
+
+The compiled binary is written to `dist/nodebook`. It embeds the built UI, the
+Python package, `runner.py`, `python_document_loader.py`, and
+`requirements-alpha.txt`.
+
+For release hosting, publish platform-specific binaries such as:
+
+```text
+nodebook-darwin-arm64
+nodebook-darwin-x64
+```
+
+The installer template in `packaging/install.sh` is host-agnostic. Until the
+hosted `https://beta.nodebook.dev/install.sh` URL exists, configure it with
+either a direct binary URL or a release base URL:
+
+```sh
+NODEBOOK_DOWNLOAD_URL=https://beta.nodebook.dev/v0.0.0/nodebook-darwin-arm64 sh packaging/install.sh
+NODEBOOK_RELEASE_BASE=https://beta.nodebook.dev NODEBOOK_VERSION=v0.0.0 sh packaging/install.sh
+```

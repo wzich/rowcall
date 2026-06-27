@@ -15,10 +15,24 @@ export type PythonEnvironmentInfo = {
 };
 
 let configuredPythonCommand: string | undefined;
+let configuredPythonRunnerPath: string | undefined;
+let configuredPythonDocumentLoaderPath: string | undefined;
 export const localVirtualEnvDirectory = ".venv";
 
 export function configurePythonCommand(command: string | undefined): void {
   configuredPythonCommand = command && command.length > 0 ? command : undefined;
+}
+
+export function configurePythonRunnerPath(path: string | undefined): void {
+  configuredPythonRunnerPath = path && path.length > 0 ? path : undefined;
+}
+
+export function configurePythonDocumentLoaderPath(
+  path: string | undefined,
+): void {
+  configuredPythonDocumentLoaderPath = path && path.length > 0
+    ? path
+    : undefined;
 }
 
 export async function resolvePythonCommand(): Promise<string> {
@@ -40,6 +54,14 @@ export async function resolvePythonCommand(): Promise<string> {
   }
 
   return "python3";
+}
+
+export function resolvePythonRunnerPath(): string {
+  return configuredPythonRunnerPath ?? "runner.py";
+}
+
+export function resolvePythonDocumentLoaderPath(): string {
+  return configuredPythonDocumentLoaderPath ?? "python_document_loader.py";
 }
 
 export function getLocalVirtualEnvPythonCandidates(

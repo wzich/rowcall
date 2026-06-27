@@ -12,6 +12,7 @@ import {
   getPythonEnvironmentInfo,
   type PythonEnvironmentInfo,
   resolvePythonCommand,
+  resolvePythonRunnerPath,
 } from "./runtime_config.ts";
 
 import {
@@ -221,7 +222,7 @@ class PythonRuntimeSession {
     if (this.child && this.writer) return;
 
     const command = new Deno.Command(await resolvePythonCommand(), {
-      args: ["runner.py", "--session"],
+      args: [resolvePythonRunnerPath(), "--session"],
       stdin: "piped",
       stdout: "piped",
       stderr: "piped",
@@ -1029,7 +1030,7 @@ async function* _streamOneShotPythonRunPlan(
   cacheMode: "refresh" | "single_node",
 ): AsyncGenerator<RunnerEvent> {
   const command = new Deno.Command(await resolvePythonCommand(), {
-    args: ["runner.py"],
+    args: [resolvePythonRunnerPath()],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",

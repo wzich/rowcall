@@ -5,7 +5,10 @@ import {
   type PythonSourceRange,
 } from "./document.ts";
 import type { ValidationIssue } from "./types.ts";
-import { resolvePythonCommand } from "./runtime_config.ts";
+import {
+  resolvePythonCommand,
+  resolvePythonDocumentLoaderPath,
+} from "./runtime_config.ts";
 
 type PythonLoaderSuccess = {
   ok: true;
@@ -35,7 +38,7 @@ export async function loadPythonDocument(
   path: string,
 ): Promise<LoadPythonDocumentResult> {
   const command = new Deno.Command(await resolvePythonCommand(), {
-    args: ["python_document_loader.py", path],
+    args: [resolvePythonDocumentLoaderPath(), path],
     stdout: "piped",
     stderr: "piped",
   });

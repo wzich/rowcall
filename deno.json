@@ -2,6 +2,9 @@
   "tasks": {
     "setup": "deno run --allow-read --allow-write --allow-run setup.ts",
     "start": "deno run --allow-read --allow-write --allow-net --allow-run start.ts",
+    "beta": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env beta_launcher.ts",
+    "beta:check": "deno check beta_launcher.ts main.ts",
+    "beta:compile": "deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include runner.py --include python_document_loader.py --include nodebook --include app/ui/dist --output dist/nodebook beta_launcher.ts",
     "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-run main.ts",
     "cli": "deno run --allow-read --allow-run cli.ts",
     "ui:check": "cd app/ui && deno task check",

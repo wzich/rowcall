@@ -2,6 +2,9 @@ export type StartupOptions = {
   documentPath: string;
   create: boolean;
   pythonCommand?: string;
+  pythonRunnerPath?: string;
+  pythonDocumentLoaderPath?: string;
+  uiDistPath?: string;
   port: number;
   hostname: string;
 };
@@ -14,6 +17,9 @@ export function parseStartupOptions(args: string[]): StartupOptions {
   let documentPath: string | undefined;
   let create = false;
   let pythonCommand: string | undefined;
+  let pythonRunnerPath: string | undefined;
+  let pythonDocumentLoaderPath: string | undefined;
+  let uiDistPath: string | undefined;
   let port = defaultPort;
   let hostname = defaultHostname;
 
@@ -37,6 +43,24 @@ export function parseStartupOptions(args: string[]): StartupOptions {
 
     if (arg === "--python") {
       pythonCommand = readFlagValue(args, index, "--python");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--runner") {
+      pythonRunnerPath = readFlagValue(args, index, "--runner");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--loader") {
+      pythonDocumentLoaderPath = readFlagValue(args, index, "--loader");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--ui-dist") {
+      uiDistPath = readFlagValue(args, index, "--ui-dist");
       index += 1;
       continue;
     }
@@ -75,6 +99,9 @@ export function parseStartupOptions(args: string[]): StartupOptions {
     documentPath: resolvedDocumentPath,
     create,
     ...(pythonCommand ? { pythonCommand } : {}),
+    ...(pythonRunnerPath ? { pythonRunnerPath } : {}),
+    ...(pythonDocumentLoaderPath ? { pythonDocumentLoaderPath } : {}),
+    ...(uiDistPath ? { uiDistPath } : {}),
     port,
     hostname,
   };
