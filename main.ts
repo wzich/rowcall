@@ -30,12 +30,17 @@ import {
   streamSourceRunGraph,
   streamSourceRunToNode,
 } from "./executor.ts";
-import { configurePythonCommand } from "./runtime_config.ts";
+import {
+  configurePythonCommand,
+  configurePythonDocumentLoaderPath,
+  configurePythonRunnerPath,
+} from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
 const app = new Hono();
-const uiDistPath = "app/ui/dist";
+let uiDistPath: string | URL = "app/ui/dist";
+let activeDocumentPath = "";
 const defaultNewDocumentSource = `from nodebook import node
 
 
@@ -44,17 +49,39 @@ def start():
     message = "hello"
     return {"message": message}
 `;
-const startupOptions = getStartupOptions(Deno.args);
-configurePythonCommand(startupOptions.pythonCommand);
-const createActiveDocumentIfMissing = startupOptions.create;
-await ensureActiveDocumentExists(startupOptions.documentPath, {
-  createIfMissing: createActiveDocumentIfMissing,
-});
-const activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
-console.info(`Nodebook document: ${activeDocumentPath}`);
-console.info(
-  `Nodebook URL: http://${startupOptions.hostname}:${startupOptions.port}/`,
-);
+export type NodebookServerOptions = {
+  uiDistPath?: string | URL;
+  pythonRunnerPath?: string;
+};
+
+export async function startNodebookServer(
+  args = Deno.args,
+  options: NodebookServerOptions = {},
+): Promise<void> {
+  const startupOptions = getStartupOptions(args);
+  configurePythonCommand(startupOptions.pythonCommand);
+  configurePythonRunnerPath(
+    options.pythonRunnerPath ?? startupOptions.pythonRunnerPath,
+  );
+  configurePythonDocumentLoaderPath(startupOptions.pythonDocumentLoaderPath);
+  uiDistPath = options.uiDistPath ?? startupOptions.uiDistPath ??
+    "app/ui/dist";
+  const createActiveDocumentIfMissing = startupOptions.create;
+  await ensureActiveDocumentExists(startupOptions.documentPath, {
+    createIfMissing: createActiveDocumentIfMissing,
+  });
+  activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
+  console.info(`Nodebook document: ${activeDocumentPath}`);
+  console.info(
+    `Nodebook URL: http://${startupOptions.hostname}:${startupOptions.port}/`,
+  );
+
+  const server = Deno.serve(
+    { hostname: startupOptions.hostname, port: startupOptions.port },
+    app.fetch,
+  );
+  await server.finished;
+}
 
 app.use("*", async (c, next) => {
   await next();
@@ -301,7 +328,7 @@ async function serveBuiltUiAsset(path: string): Promise<Response> {
   }
 
   try {
-    const file = await Deno.readFile(`${uiDistPath}/${path}`);
+    const file = await Deno.readFile(resolveUiDistPath(path));
     return new Response(file, {
       headers: {
         "Content-Type": getStaticContentType(path),
@@ -317,7 +344,7 @@ async function serveBuiltUiAsset(path: string): Promise<Response> {
 
 async function serveBuiltUiIndex(): Promise<Response> {
   try {
-    const file = await Deno.readFile(`${uiDistPath}/index.html`);
+    const file = await Deno.readFile(resolveUiDistPath("index.html"));
     return new Response(file, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
@@ -337,6 +364,17 @@ async function serveBuiltUiIndex(): Promise<Response> {
     }
     throw error;
   }
+}
+
+function resolveUiDistPath(path: string): string | URL {
+  if (typeof uiDistPath === "string") {
+    return `${uiDistPath}/${path}`;
+  }
+  return new URL(path, ensureTrailingSlash(uiDistPath));
+}
+
+function ensureTrailingSlash(url: URL): URL {
+  return new URL(url.href.endsWith("/") ? url.href : `${url.href}/`);
 }
 
 function streamExecutionEvents(
@@ -736,7 +774,6 @@ app.get("/assets/*", (c) => {
 
 app.get("*", () => serveBuiltUiIndex());
 
-Deno.serve(
-  { hostname: startupOptions.hostname, port: startupOptions.port },
-  app.fetch,
-);
+if (import.meta.main) {
+  await startNodebookServer();
+}

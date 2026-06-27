@@ -52,6 +52,33 @@ Deno.test("parseStartupOptions accepts explicit document flag", () => {
   );
 });
 
+Deno.test("parseStartupOptions accepts packaged runtime helper paths", () => {
+  assertEquals(
+    parseStartupOptions([
+      "--document",
+      "analysis.py",
+      "--python",
+      "/env/bin/python",
+      "--runner",
+      "/app/runner.py",
+      "--loader",
+      "/app/python_document_loader.py",
+      "--ui-dist",
+      "/app/ui/dist",
+    ]),
+    {
+      documentPath: "analysis.py",
+      create: false,
+      pythonCommand: "/env/bin/python",
+      pythonRunnerPath: "/app/runner.py",
+      pythonDocumentLoaderPath: "/app/python_document_loader.py",
+      uiDistPath: "/app/ui/dist",
+      port: defaultPort,
+      hostname: defaultHostname,
+    },
+  );
+});
+
 Deno.test("parseStartupOptions rejects invalid startup args", () => {
   assertThrows(
     () => parseStartupOptions(["analysis.py", "extra.py"]),

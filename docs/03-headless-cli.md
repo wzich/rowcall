@@ -1,28 +1,32 @@
 # Headless CLI
 
 Nodebook documents can be validated and run without opening the canvas editor.
-The Python CLI is the beta automation surface for humans, agents, and scripts.
-`deno task cli` remains available as a thin wrapper around the Python CLI for
-developer convenience.
+The `nodebook` launcher is the beta automation surface for humans, agents, and
+scripts. It routes headless commands through the managed Python environment
+under `~/.nodebook/venvs/default`.
+
+The Python module CLI remains the underlying runtime contract:
+`python3 -m nodebook` and `deno task cli` are useful for development and local
+package testing.
 
 ## Commands
 
 Validate a document:
 
 ```sh
-python -m nodebook validate path/to/analysis.py
+nodebook validate path/to/analysis.py
 ```
 
 Run the full graph:
 
 ```sh
-python -m nodebook run path/to/analysis.py
+nodebook run path/to/analysis.py
 ```
 
 Run upstream to a target node:
 
 ```sh
-python -m nodebook run path/to/analysis.py --to node_id_or_function_name
+nodebook run path/to/analysis.py --to node_id_or_function_name
 ```
 
 Targets must exactly match either a stable node ID or a Python function name. If
@@ -38,19 +42,18 @@ guessing.
 Example:
 
 ```sh
-python -m nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
-```
-
-If the package is installed into the active environment, the console script is
-equivalent:
-
-```sh
 nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
 ```
 
-When using Deno tasks, choose the Python interpreter through the surrounding
-environment or the app startup flags. The task itself delegates to
-`python -m nodebook`.
+For developer workflows, the Python module CLI is equivalent when the package is
+installed into the active environment:
+
+```sh
+python3 -m nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+```
+
+When using Deno tasks, `deno task cli` delegates to `python3 -m nodebook` or the
+repo-local `.venv` selected by `runtime_config.ts`.
 
 ## JSON Output
 
@@ -103,9 +106,21 @@ the Python document remains the complete source of truth for a run.
 
 ## Python Environment Troubleshooting
 
-Nodebook runs documents with the Python interpreter used to launch the CLI. It
-does not auto-detect Conda, virtualenv, or other interpreters, and it does not
-switch environments automatically.
+The beta launcher runs documents with its managed venv:
+
+```text
+~/.nodebook/venvs/default
+```
+
+On first use, or after `nodebook reset-env`, it selects `python3` then `python`
+and requires Python 3.10 or newer. Pass `--python /path/to/python` to choose a
+specific interpreter for environment creation.
+
+Use `nodebook doctor` to inspect the selected Python, managed venv, installed
+package status, pandas/polars availability, and log path.
+
+The lower-level Python module CLI runs with the interpreter used to launch it.
+It does not auto-detect Conda, virtualenv, or other interpreters.
 
 If a top-level import or node-body import fails, non-JSON CLI output prints the
 missing package and the Python executable that was used. For example:

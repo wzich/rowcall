@@ -1,0 +1,7 @@
+{
+  "version": "0.0.0",
+  "downloads": {
+    "darwin-arm64": "https://beta.nodebook.dev/v0.0.0/nodebook-darwin-arm64",
+    "darwin-x64": "https://beta.nodebook.dev/v0.0.0/nodebook-darwin-x64"
+  }
+}
