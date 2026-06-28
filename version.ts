@@ -1,1 +1,1 @@
-export const nodebookVersion = "0.0.0";
+export const nodebookVersion = "0.1.0";

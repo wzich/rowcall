@@ -1,0 +1,5 @@
+/install.sh
+  Content-Type: text/x-shellscript; charset=utf-8
+
+/latest.json
+  Content-Type: application/json; charset=utf-8

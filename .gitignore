@@ -2,6 +2,7 @@
 **/.venv/
 **/.vite/
 **/dist/
+.wrangler/
 **/*.egg-info/
 **/__pycache__/
 **/.DS_Store
