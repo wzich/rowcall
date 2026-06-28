@@ -13,8 +13,10 @@ from nodebook.runtime import run_document
 
 
 USAGE = """Usage:
-  nodebook validate <document.py> [--json]
-  nodebook run <document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+  nodebook validate <folder-or-document.py> [--json]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+
+Folders resolve to graph.py inside the folder.
 """
 
 
@@ -113,8 +115,6 @@ def parse_cli_options(args: list[str]) -> CliOptions:
         raise CliUsageError(f"Unexpected extra argument: {' '.join(positionals[1:])}")
 
     document_path = positionals[0]
-    if not document_path.endswith(".py"):
-        raise CliUsageError("Nodebook document path must end with .py.")
     if command == "validate" and target is not None:
         raise CliUsageError("`validate` does not accept --to.")
     if command == "validate" and trace:
@@ -130,14 +130,23 @@ def parse_cli_options(args: list[str]) -> CliOptions:
 
 
 def handle_validate(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
-    document_path = resolve_display_path(options.document_path)
     try:
-        result = load_document(options.document_path)
-    except OSError as exc:
+        resolved_document_path = resolve_document_input_path(options.document_path)
+    except (OSError, ValueError) as exc:
+        resolved_document_path = Path(options.document_path).expanduser()
         result = None
         error = {"kind": "load_error", "message": str(exc)}
     else:
+        result = None
         error = None
+
+    document_path = resolve_display_path(str(resolved_document_path))
+    try:
+        if error is None:
+            result = load_document(str(resolved_document_path))
+    except OSError as exc:
+        result = None
+        error = {"kind": "load_error", "message": str(exc)}
 
     if options.json:
         payload: dict[str, Any] = {
@@ -168,9 +177,31 @@ def handle_validate(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> i
 
 
 def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
-    document_path = resolve_display_path(options.document_path)
     try:
-        response = run_document(options.document_path, target=options.target, trace=options.trace)
+        resolved_document_path = resolve_document_input_path(options.document_path)
+    except (OSError, ValueError) as exc:
+        resolved_document_path = Path(options.document_path).expanduser()
+        response = {
+            "ok": False,
+            "runType": "run_to_node" if options.target else "run_graph",
+            "finalNodeIds": [],
+            "executedNodeIds": [],
+            "resultsByNode": {},
+            "finalOutputsByNode": {},
+            "trace": [] if options.trace else None,
+            "error": {"kind": "load_error", "message": str(exc)},
+        }
+    else:
+        response = None
+
+    document_path = resolve_display_path(str(resolved_document_path))
+    try:
+        if response is None:
+            response = run_document(
+                str(resolved_document_path),
+                target=options.target,
+                trace=options.trace,
+            )
     except OSError as exc:
         response = {
             "ok": False,
@@ -337,6 +368,27 @@ def resolve_display_path(path: str) -> str:
         return str(Path(path).expanduser().resolve())
     except OSError:
         return path
+
+
+def resolve_document_input_path(path: str) -> Path:
+    candidate = Path(path).expanduser()
+    if candidate.is_dir():
+        document_path = candidate / "graph.py"
+        if not document_path.is_file():
+            raise FileNotFoundError(
+                f"Nodebook folder does not contain graph.py: {candidate}"
+            )
+        return document_path
+
+    if candidate.exists() and not candidate.is_file():
+        raise ValueError(f"Nodebook path is not a file or directory: {candidate}")
+
+    if candidate.suffix != ".py":
+        raise ValueError(
+            "Nodebook document path must be a .py file or a folder containing graph.py."
+        )
+
+    return candidate
 
 
 def partial_command_and_path(args: list[str]) -> tuple[str | None, str | None]:

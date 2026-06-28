@@ -15,6 +15,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_help_accepts_standard_flags(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        exit_code = main(["--help"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("nodebook run <folder-or-document.py>", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_validate_success_json(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -31,6 +41,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "validate")
         self.assertEqual(payload["summary"]["nodeCount"], 2)
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_validate_folder_path_resolves_to_graph_py(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.py"
+            path.write_text(
+                """
+from nodebook import node
+
+@node(id="n_start", outputs=["value"])
+def start():
+    return {"value": 1}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(
+                ["validate", directory, "--json"], stdout=stdout, stderr=stderr
+            )
+
+        self.assertEqual(exit_code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["documentPath"].endswith("graph.py"))
 
     def test_validate_failure_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -51,14 +85,18 @@ def second():
             stdout = io.StringIO()
             stderr = io.StringIO()
 
-            exit_code = main(["validate", str(path), "--json"], stdout=stdout, stderr=stderr)
+            exit_code = main(
+                ["validate", str(path), "--json"], stdout=stdout, stderr=stderr
+            )
 
         self.assertEqual(exit_code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["command"], "validate")
         self.assertIn("issues", payload)
-        self.assertIn("duplicate_node_id", [issue["kind"] for issue in payload["issues"]])
+        self.assertIn(
+            "duplicate_node_id", [issue["kind"] for issue in payload["issues"]]
+        )
         self.assertEqual(stderr.getvalue(), "")
 
     def test_run_success_json_with_python_module_entrypoint(self) -> None:
@@ -81,8 +119,43 @@ def second():
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["command"], "run")
-        self.assertEqual(payload["response"]["executedNodeIds"], ["n_load", "n_shout"])
-        self.assertEqual(payload["response"]["finalOutputsByNode"]["n_shout"]["message"]["jsonValue"], "HELLO!")
+        self.assertEqual(
+            payload["response"]["executedNodeIds"], ["n_load", "n_shout"]
+        )
+        self.assertEqual(
+            payload["response"]["finalOutputsByNode"]["n_shout"]["message"][
+                "jsonValue"
+            ],
+            "HELLO!",
+        )
+
+    def test_run_folder_path_resolves_to_graph_py(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.py"
+            path.write_text(
+                """
+from nodebook import node
+
+@node(id="n_start", outputs=["value"])
+def start():
+    return {"value": 2}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(
+                ["run", directory, "--json"], stdout=stdout, stderr=stderr
+            )
+
+        self.assertEqual(exit_code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["documentPath"].endswith("graph.py"))
+        self.assertEqual(
+            payload["response"]["finalOutputsByNode"]["n_start"]["value"]["jsonValue"],
+            2,
+        )
 
     def test_run_missing_module_json_is_structured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

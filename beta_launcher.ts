@@ -9,11 +9,13 @@ import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { nodebookVersion } from "./version.ts";
 
 export type BetaCommand =
-  | { kind: "help" }
+  | { kind: "help"; topic?: string }
   | { kind: "version" }
   | { kind: "doctor"; checkUpdates: boolean; pythonCommand?: string }
   | { kind: "reset-env" }
   | { kind: "update" }
+  | { kind: "new"; targetPath: string; openBrowser: boolean }
+  | { kind: "example"; targetPath: string; openBrowser: boolean }
   | {
     kind: "headless";
     cliCommand: "run" | "validate";
@@ -64,19 +66,82 @@ const sourceModePermissionArgs = [
 const defaultDocumentSource = `from nodebook import node
 
 
-@node(id="n_start", outputs=["message"])
-def start():
-    message = "hello"
+# Nodebook documents are normal Python files.
+# Nodes declare outputs; depends_on declares graph edges.
+# Run: nodebook validate . && nodebook run . --json
+# Help: nodebook help format
+
+
+@node(id="n_load", outputs=["message"])
+def load_message():
+    message = "hello from Nodebook"
     return {"message": message}
+
+
+@node(id="n_shout", outputs=["shouted"])
+def shout_message(message):
+    shouted = message.upper()
+    return {"shouted": shouted}
+
+
+shout_message.depends_on(load_message)
+`;
+
+const exampleDocumentSource = `from pathlib import Path
+
+import polars as pl
+from nodebook import node
+
+
+# Nodebook documents are normal Python files.
+# Nodes declare outputs; depends_on declares graph edges.
+# Run: nodebook validate . && nodebook run . --json
+# Help: nodebook help format
+
+
+@node(id="n_load_orders", outputs=["orders"])
+def load_orders():
+    orders = pl.read_csv(Path(__file__).parent / "data" / "orders.csv")
+    return {"orders": orders}
+
+
+@node(id="n_summarize_orders", outputs=["summary"])
+def summarize_orders(orders):
+    summary = (
+        orders
+        .group_by("category")
+        .agg(
+            pl.len().alias("orders"),
+            pl.col("amount").sum().alias("revenue"),
+        )
+        .sort("revenue", descending=True)
+    )
+    return {"summary": summary}
+
+
+summarize_orders.depends_on(load_orders)
+`;
+
+const exampleOrdersCsv = `order_id,category,amount
+1001,Books,28.40
+1002,Kitchen,85.00
+1003,Books,17.95
+1004,Games,64.99
+1005,Kitchen,42.50
+1006,Games,21.25
 `;
 
 const helpText = `Nodebook ${nodebookVersion}
 
 Usage:
   nodebook                         Show this help
-  nodebook <document.py>           Open or create a Nodebook document
-  nodebook run <document.py>       Run a document without opening the UI
-  nodebook validate <document.py>  Validate a document without opening the UI
+  nodebook help [topic]            Show help for a command or topic
+  nodebook <path>                  Open an existing folder or .py document
+  nodebook open <path>             Open an existing folder or .py document
+  nodebook new <path>              Create a Nodebook folder or .py document
+  nodebook example <folder>        Create a sample Nodebook project
+  nodebook run <path>              Run a document without opening the UI
+  nodebook validate <path>         Validate a document without opening the UI
   nodebook doctor                  Inspect the local Nodebook install
   nodebook reset-env               Recreate the managed Python environment
   nodebook update                  Check for a launcher update
@@ -86,7 +151,111 @@ Options:
   --port <port>                    Start the UI server on a custom port
   --hostname <host>                Bind the UI server to a custom host
   --no-open                        Do not open the browser after starting
+  --open                           Open after creating with new/example
   --version                        Print the launcher version
+
+Paths:
+  Folders resolve to graph.py inside the folder. For example, nodebook run
+  my-work runs my-work/graph.py. Passing a .py path uses that exact file.
+
+Try:
+  nodebook new my-work --open
+  nodebook example my-example
+  nodebook run my-example --json
+  nodebook help format
+`;
+
+const formatHelpText = `Nodebook Python Document Format
+
+Nodebook documents are normal Python files. A node is a Python function
+decorated with @node. The decorator declares stable output names, and the
+function returns a dict with those output names.
+
+Example:
+  from nodebook import node
+
+  @node(id="n_load", outputs=["numbers"])
+  def load_numbers():
+      return {"numbers": [1, 2, 3]}
+
+  @node(id="n_total", outputs=["total"])
+  def total_numbers(numbers):
+      return {"total": sum(numbers)}
+
+  total_numbers.depends_on(load_numbers)
+
+Edges are explicit: depends_on says which upstream nodes may provide inputs.
+Function parameters consume upstream outputs by name. Run nodebook validate
+<path> to check IDs, outputs, edges, and parameter binding.
+`;
+
+const runHelpText = `Usage:
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+
+Folders resolve to graph.py inside the folder.
+
+Examples:
+  nodebook run my-work
+  nodebook run my-work --to total_numbers --json
+  nodebook run my-work/graph.py --json --trace
+`;
+
+const validateHelpText = `Usage:
+  nodebook validate <folder-or-document.py> [--json]
+
+Folders resolve to graph.py inside the folder.
+
+Examples:
+  nodebook validate my-work
+  nodebook validate my-work/graph.py --json
+`;
+
+const newHelpText = `Usage:
+  nodebook new <folder-or-document.py> [--open]
+
+If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
+creates graph.py inside the folder path.
+
+Examples:
+  nodebook new my-work
+  nodebook new my-work --open
+  nodebook new graph.py
+`;
+
+const openHelpText = `Usage:
+  nodebook open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>]
+
+Folders resolve to graph.py inside the folder. The path must already exist.
+
+Examples:
+  nodebook open my-work
+  nodebook open my-work/explore.py
+`;
+
+const exampleHelpText = `Usage:
+  nodebook example <folder> [--open]
+
+Creates a sample Nodebook project with graph.py and data/orders.csv.
+`;
+
+const doctorHelpText = `Usage:
+  nodebook doctor [--updates] [--python <path>]
+
+Inspects the local Nodebook install, managed Python environment, dependency
+availability, and log path.
+`;
+
+const resetEnvHelpText = `Usage:
+  nodebook reset-env
+
+Recreates the managed Python environment used by the launcher.
+`;
+
+const updateHelpText = `Usage:
+  nodebook update
+
+Checks for launcher updates. Update checks are not implemented yet; rerun the
+beta installer to upgrade Nodebook.
 `;
 
 export function parseBetaCommand(args: string[]): BetaCommand {
@@ -99,11 +268,26 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     };
   }
 
+  if (args[0] === "--help" || args[0] === "-h") {
+    return { kind: "help" };
+  }
+
+  if (args[0] === "help") {
+    if (args.length > 2) {
+      throw new Error("Usage: nodebook help [topic]");
+    }
+    const topic = args[1];
+    return topic ? { kind: "help", topic } : { kind: "help" };
+  }
+
   if (args[0] === "--version" || args[0] === "-V") {
     return { kind: "version" };
   }
 
   if (args[0] === "doctor") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: "doctor" };
+    }
     const parsed = parseArgs(args.slice(1), {
       boolean: ["updates"],
       string: ["python"],
@@ -119,14 +303,65 @@ export function parseBetaCommand(args: string[]): BetaCommand {
   }
 
   if (args[0] === "reset-env") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: "reset-env" };
+    }
+    if (args.length > 1) {
+      throw new Error("Usage: nodebook reset-env");
+    }
     return { kind: "reset-env" };
   }
 
   if (args[0] === "update") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: "update" };
+    }
+    if (args.length > 1) {
+      throw new Error("Usage: nodebook update");
+    }
     return { kind: "update" };
   }
 
+  if (args[0] === "new") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: "new" };
+    }
+    const parsed = parseArgs(args.slice(1), {
+      boolean: ["open"],
+      unknown: rejectUnknownOption,
+    });
+    if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
+      throw new Error("Usage: nodebook new <folder-or-document.py> [--open]");
+    }
+    return {
+      kind: "new",
+      targetPath: parsed._[0],
+      openBrowser: Boolean(parsed.open),
+    };
+  }
+
+  if (args[0] === "example") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: "example" };
+    }
+    const parsed = parseArgs(args.slice(1), {
+      boolean: ["open"],
+      unknown: rejectUnknownOption,
+    });
+    if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
+      throw new Error("Usage: nodebook example <folder> [--open]");
+    }
+    return {
+      kind: "example",
+      targetPath: parsed._[0],
+      openBrowser: Boolean(parsed.open),
+    };
+  }
+
   if (args[0] === "run" || args[0] === "validate") {
+    if (args.includes("--help") || args.includes("-h")) {
+      return { kind: "help", topic: args[0] };
+    }
     const { pythonCommand, forwardedArgs } = stripGlobalPythonOption(
       args.slice(1),
     );
@@ -138,22 +373,26 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     };
   }
 
-  const parsed = parseArgs(args, {
+  const openArgs = args[0] === "open" ? args.slice(1) : args;
+  if (
+    args[0] === "open" &&
+    (openArgs.includes("--help") || openArgs.includes("-h"))
+  ) {
+    return { kind: "help", topic: "open" };
+  }
+
+  const parsed = parseArgs(openArgs, {
     boolean: ["no-open"],
     string: ["python", "port", "hostname"],
     unknown: rejectUnknownOption,
   });
   if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-    throw new Error("Expected exactly one .py document path.");
-  }
-  const documentPath = parsed._[0];
-  if (!documentPath.endsWith(".py")) {
-    throw new Error("Nodebook document path must end with .py");
+    throw new Error("Expected exactly one folder or .py document path.");
   }
 
   return {
     kind: "launch",
-    documentPath,
+    documentPath: parsed._[0],
     openBrowser: !parsed["no-open"],
     ...(typeof parsed.python === "string"
       ? { pythonCommand: parsed.python }
@@ -172,7 +411,7 @@ export async function runBetaCommand(
   const paths = options.paths ?? getBetaPaths();
   switch (command.kind) {
     case "help":
-      console.info(helpText);
+      console.info(helpTextForTopic(command.topic));
       return { code: 0 };
     case "version":
       console.info(nodebookVersion);
@@ -193,6 +432,36 @@ export async function runBetaCommand(
         "Update checks are not implemented yet. Rerun the beta installer to upgrade Nodebook.",
       );
       return { code: 1 };
+    case "new": {
+      const documentPath = await createNewDocument(command.targetPath);
+      if (!command.openBrowser) return { code: 0 };
+      await appendLog(paths, `nodebook ${command.kind}`);
+      await ensureManagedEnvironment(paths);
+      await ensureBundledAssets(paths);
+      await ensureServerPortAvailable(defaultHostname, defaultPort);
+      return await launchServer({
+        kind: "launch",
+        documentPath,
+        openBrowser: true,
+        port: defaultPort,
+        hostname: defaultHostname,
+      }, paths);
+    }
+    case "example": {
+      const documentPath = await createExampleProject(command.targetPath);
+      if (!command.openBrowser) return { code: 0 };
+      await appendLog(paths, `nodebook ${command.kind}`);
+      await ensureManagedEnvironment(paths);
+      await ensureBundledAssets(paths);
+      await ensureServerPortAvailable(defaultHostname, defaultPort);
+      return await launchServer({
+        kind: "launch",
+        documentPath,
+        openBrowser: true,
+        port: defaultPort,
+        hostname: defaultHostname,
+      }, paths);
+    }
     case "headless": {
       await appendLog(paths, `nodebook ${command.kind}`);
       const python = await ensureManagedEnvironment(
@@ -209,7 +478,10 @@ export async function runBetaCommand(
     }
     case "launch":
       await appendLog(paths, `nodebook ${command.kind}`);
-      await ensureDocumentReady(command.documentPath);
+      command = {
+        ...command,
+        documentPath: await resolveExistingDocumentPath(command.documentPath),
+      };
       await ensureManagedEnvironment(paths, command.pythonCommand);
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(command.hostname, command.port);
@@ -222,20 +494,134 @@ export async function runBetaCommand(
   }
 }
 
-export async function ensureDocumentReady(documentPath: string): Promise<void> {
+function helpTextForTopic(topic: string | undefined): string {
+  switch (topic) {
+    case undefined:
+      return helpText;
+    case "format":
+      return formatHelpText;
+    case "run":
+      return runHelpText;
+    case "validate":
+      return validateHelpText;
+    case "new":
+      return newHelpText;
+    case "open":
+      return openHelpText;
+    case "example":
+    case "examples":
+      return exampleHelpText;
+    case "doctor":
+      return doctorHelpText;
+    case "reset-env":
+      return resetEnvHelpText;
+    case "update":
+      return updateHelpText;
+    default:
+      throw new Error(`Unknown help topic: ${topic}`);
+  }
+}
+
+export async function resolveExistingDocumentPath(
+  path: string,
+): Promise<string> {
   try {
-    const stat = await Deno.stat(documentPath);
-    if (!stat.isFile) {
-      throw new Error(`Nodebook document path is not a file: ${documentPath}`);
+    const stat = await Deno.stat(path);
+    if (stat.isDirectory) {
+      const documentPath = `${path.replace(/\/+$/, "")}/graph.py`;
+      const documentStat = await Deno.stat(documentPath).catch((error) => {
+        if (error instanceof Deno.errors.NotFound) return null;
+        throw error;
+      });
+      if (!documentStat?.isFile) {
+        throw new Error(
+          `Nodebook folder does not contain graph.py: ${path}\n\nCreate it with:\n  nodebook new ${path}`,
+        );
+      }
+      return documentPath;
     }
-    return;
+    if (!stat.isFile) {
+      throw new Error(`Nodebook path is not a file or directory: ${path}`);
+    }
+    if (!path.endsWith(".py")) {
+      throw new Error(
+        "Nodebook document path must be a .py file or a folder containing graph.py.",
+      );
+    }
+    return path;
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) {
       throw error;
     }
   }
 
-  const parent = getParentDirectory(documentPath);
+  const noun = path.endsWith(".py") ? "Nodebook document" : "Nodebook folder";
+  throw new Error(
+    `Path not found: ${path}\n\nCreate a new ${noun}:\n  nodebook new ${path}\n\nCreate and open it:\n  nodebook new ${path} --open`,
+  );
+}
+
+export async function createNewDocument(targetPath: string): Promise<string> {
+  const standaloneFile = targetPath.endsWith(".py");
+  const folderPath = standaloneFile
+    ? undefined
+    : targetPath.replace(/\/+$/, "");
+  const documentPath = standaloneFile ? targetPath : `${folderPath}/graph.py`;
+
+  try {
+    const stat = await Deno.stat(documentPath);
+    if (stat.isFile) {
+      throw new Error(`Nodebook document already exists: ${documentPath}`);
+    }
+    throw new Error(`Nodebook document path is not a file: ${documentPath}`);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      throw error;
+    }
+  }
+
+  if (folderPath) {
+    await Deno.mkdir(folderPath, { recursive: true });
+  } else {
+    const parent = getParentDirectory(documentPath);
+    if (parent) {
+      try {
+        const stat = await Deno.stat(parent);
+        if (!stat.isDirectory) {
+          throw new Error(`Parent path is not a directory: ${parent}`);
+        }
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) {
+          throw new Error(
+            `Parent directory does not exist: ${parent}. Create it first, or pass a folder path to nodebook new.`,
+          );
+        }
+        throw error;
+      }
+    }
+  }
+
+  await Deno.writeTextFile(documentPath, defaultDocumentSource);
+  console.info(`Created new Nodebook document: ${documentPath}`);
+  return documentPath;
+}
+
+export async function createExampleProject(
+  targetPath: string,
+): Promise<string> {
+  if (targetPath.endsWith(".py")) {
+    throw new Error("nodebook example expects a folder path, not a .py file.");
+  }
+  const directory = targetPath.replace(/\/+$/, "");
+  const documentPath = `${directory}/graph.py`;
+  const dataPath = `${directory}/data/orders.csv`;
+  if (await pathExists(documentPath)) {
+    throw new Error(`Nodebook document already exists: ${documentPath}`);
+  }
+  if (await pathExists(dataPath)) {
+    throw new Error(`Example data file already exists: ${dataPath}`);
+  }
+  const parent = getParentDirectory(directory);
   if (parent) {
     try {
       const stat = await Deno.stat(parent);
@@ -251,9 +637,12 @@ export async function ensureDocumentReady(documentPath: string): Promise<void> {
       throw error;
     }
   }
-
-  await Deno.writeTextFile(documentPath, defaultDocumentSource);
-  console.info(`Created new Nodebook document: ${documentPath}`);
+  await Deno.mkdir(`${directory}/data`, { recursive: true });
+  await Deno.writeTextFile(documentPath, exampleDocumentSource);
+  await Deno.writeTextFile(dataPath, exampleOrdersCsv);
+  console.info(`Created Nodebook example: ${directory}`);
+  console.info(`Open it with: nodebook open ${directory}`);
+  return documentPath;
 }
 
 export async function ensureManagedEnvironment(

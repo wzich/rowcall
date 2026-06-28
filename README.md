@@ -34,18 +34,36 @@ If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 Show command help:
 
 ```sh
-nodebook
+nodebook --help
 ```
 
-Open an existing Python document:
+Create and open a new Nodebook folder:
 
 ```sh
-nodebook path/to/analysis.py
+nodebook new my-work --open
 ```
 
-If `path/to/analysis.py` does not exist and its parent directory exists,
-Nodebook creates a starter document there. Missing parent directories are
-treated as errors so typos do not silently create nested paths.
+This creates:
+
+```text
+my-work/
+  graph.py
+```
+
+Open an existing Nodebook folder or Python document:
+
+```sh
+nodebook open my-work
+nodebook open path/to/graph.py
+```
+
+For convenience, `nodebook my-work` is an alias for `nodebook open my-work` when
+the path already exists. Folder paths resolve to `graph.py` inside the folder.
+To create a standalone Python document instead of a folder, pass a `.py` path:
+
+```sh
+nodebook new graph.py
+```
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
@@ -82,9 +100,9 @@ nodebook reset-env
 Validate and run a Nodebook Python document without opening the canvas:
 
 ```sh
-nodebook validate path/to/analysis.py
-nodebook run path/to/analysis.py
-nodebook run path/to/analysis.py --to node_id_or_function_name
+nodebook validate my-work
+nodebook run my-work
+nodebook run my-work --to node_id_or_function_name
 ```
 
 Running without `--to` executes the full graph. Targets must be exact node IDs
@@ -94,7 +112,7 @@ Pass `--json` for structured output and `--trace` to include per-step input
 previews:
 
 ```sh
-nodebook run path/to/analysis.py --json --trace
+nodebook run my-work --json --trace
 ```
 
 The launcher delegates headless commands to the Python CLI inside the managed
@@ -102,8 +120,8 @@ venv. During development, `python3 -m nodebook` and `deno task cli` are still
 useful local wrappers:
 
 ```sh
-python3 -m nodebook run path/to/analysis.py --json --trace
-deno task cli run path/to/analysis.py --json --trace
+python3 -m nodebook run my-work --json --trace
+deno task cli run my-work --json --trace
 ```
 
 The beta CLI intentionally does not accept external input values. Data and
@@ -115,7 +133,7 @@ See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
 To choose a specific Python interpreter for environment creation:
 
 ```sh
-nodebook --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
+nodebook open --python "$CONDA_PREFIX/bin/python" my-work
 ```
 
 ## Run Locally For Development
