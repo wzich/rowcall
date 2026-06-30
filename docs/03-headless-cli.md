@@ -11,27 +11,64 @@ package testing.
 
 ## Commands
 
+Create a new Nodebook project:
+
+```sh
+nodebook new path/to/project
+```
+
+This creates `path/to/project/graph.py`. To create and immediately open the
+canvas editor, pass `--open`:
+
+```sh
+nodebook new path/to/project --open
+```
+
+Create a sample project with data:
+
+```sh
+nodebook example path/to/sample-project
+```
+
 Validate a document:
 
 ```sh
-nodebook validate path/to/analysis.py
+nodebook validate path/to/project
 ```
 
 Run the full graph:
 
 ```sh
-nodebook run path/to/analysis.py
+nodebook run path/to/project
 ```
 
 Run upstream to a target node:
 
 ```sh
-nodebook run path/to/analysis.py --to node_id_or_function_name
+nodebook run path/to/project --to node_id_or_function_name
 ```
 
 Targets must exactly match either a stable node ID or a Python function name. If
 a target matches more than one node reference, the CLI fails instead of
 guessing.
+
+Folder paths resolve to `graph.py` inside the folder. Passing a `.py` path uses
+that exact file:
+
+```sh
+nodebook run path/to/project/graph.py
+```
+
+Opening follows the same path rule:
+
+```sh
+nodebook open path/to/project
+nodebook open path/to/project/explore.py
+```
+
+For convenience, `nodebook path/to/project` is an alias for
+`nodebook open path/to/project` when the path already exists. Missing paths are
+not created implicitly; use `nodebook new <path>` instead.
 
 ## Options
 

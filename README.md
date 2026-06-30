@@ -11,18 +11,21 @@ Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
 must already be installed; Nodebook creates its own managed virtual environment
 for the local runtime and example dependencies.
 
-The hosted installer URL is a placeholder until a release host exists:
-
 ```sh
-curl -fsSL https://beta.nodebook.dev/install.sh | sh
+curl -fsSL https://nodebook.rodeo/install.sh | sh
 ```
 
-For now, build the launcher locally and install it with a direct file URL:
+To upgrade, run the same installer command again. It replaces only the
+`nodebook` launcher in `~/.local/bin`; the launcher refreshes its managed Python
+runtime the next time it runs if the bundled Nodebook version changed.
+
+For local release testing, build and assemble the release site, then install
+from the generated file URL:
 
 ```sh
-deno task ui:build
-deno task beta:compile
-NODEBOOK_DOWNLOAD_URL=file://$PWD/dist/nodebook sh packaging/install.sh
+deno task release:build
+deno task release:site
+NODEBOOK_RELEASE_BASE=file://$PWD/dist/r2 sh dist/site/install.sh
 ```
 
 If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
@@ -31,18 +34,36 @@ If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 Show command help:
 
 ```sh
-nodebook
+nodebook --help
 ```
 
-Open an existing Python document:
+Create and open a new Nodebook folder:
 
 ```sh
-nodebook path/to/analysis.py
+nodebook new my-work --open
 ```
 
-If `path/to/analysis.py` does not exist and its parent directory exists,
-Nodebook creates a starter document there. Missing parent directories are
-treated as errors so typos do not silently create nested paths.
+This creates:
+
+```text
+my-work/
+  graph.py
+```
+
+Open an existing Nodebook folder or Python document:
+
+```sh
+nodebook open my-work
+nodebook open path/to/graph.py
+```
+
+For convenience, `nodebook my-work` is an alias for `nodebook open my-work` when
+the path already exists. Folder paths resolve to `graph.py` inside the folder.
+To create a standalone Python document instead of a folder, pass a `.py` path:
+
+```sh
+nodebook new graph.py
+```
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
@@ -79,9 +100,9 @@ nodebook reset-env
 Validate and run a Nodebook Python document without opening the canvas:
 
 ```sh
-nodebook validate path/to/analysis.py
-nodebook run path/to/analysis.py
-nodebook run path/to/analysis.py --to node_id_or_function_name
+nodebook validate my-work
+nodebook run my-work
+nodebook run my-work --to node_id_or_function_name
 ```
 
 Running without `--to` executes the full graph. Targets must be exact node IDs
@@ -91,7 +112,7 @@ Pass `--json` for structured output and `--trace` to include per-step input
 previews:
 
 ```sh
-nodebook run path/to/analysis.py --json --trace
+nodebook run my-work --json --trace
 ```
 
 The launcher delegates headless commands to the Python CLI inside the managed
@@ -99,8 +120,8 @@ venv. During development, `python3 -m nodebook` and `deno task cli` are still
 useful local wrappers:
 
 ```sh
-python3 -m nodebook run path/to/analysis.py --json --trace
-deno task cli run path/to/analysis.py --json --trace
+python3 -m nodebook run my-work --json --trace
+deno task cli run my-work --json --trace
 ```
 
 The beta CLI intentionally does not accept external input values. Data and
@@ -112,7 +133,7 @@ See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
 To choose a specific Python interpreter for environment creation:
 
 ```sh
-nodebook --python "$CONDA_PREFIX/bin/python" path/to/analysis.py
+nodebook open --python "$CONDA_PREFIX/bin/python" my-work
 ```
 
 ## Run Locally For Development
@@ -221,11 +242,85 @@ nodebook-darwin-arm64
 nodebook-darwin-x64
 ```
 
-The installer template in `packaging/install.sh` is host-agnostic. Until the
-hosted `https://beta.nodebook.dev/install.sh` URL exists, configure it with
-either a direct binary URL or a release base URL:
+The installer template in `packaging/install.sh` defaults to the release asset
+host at `https://releases.nodebook.rodeo`. It can also be configured with either
+a direct binary URL or a release base URL:
 
 ```sh
-NODEBOOK_DOWNLOAD_URL=https://beta.nodebook.dev/v0.0.0/nodebook-darwin-arm64 sh packaging/install.sh
-NODEBOOK_RELEASE_BASE=https://beta.nodebook.dev NODEBOOK_VERSION=v0.0.0 sh packaging/install.sh
+NODEBOOK_DOWNLOAD_URL=https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64 sh packaging/install.sh
+NODEBOOK_RELEASE_BASE=https://releases.nodebook.rodeo NODEBOOK_VERSION=v0.1.0 sh packaging/install.sh
+```
+
+## Release To nodebook.rodeo
+
+The release host is a Cloudflare Pages project named `nodebook-rodeo`. The
+committed `site/` directory contains the editable landing page source. The
+deployable site is generated into `dist/site/` and is not committed.
+
+Compiled release binaries are too large for Cloudflare Pages static assets, so
+the large downloads are generated into `dist/r2/` and uploaded to a Cloudflare
+R2 bucket. The default bucket name is `nodebook-rodeo-releases`, and the
+expected public custom domain is `https://releases.nodebook.rodeo`.
+
+Build both macOS binaries:
+
+```sh
+deno task release:build
+```
+
+Assemble the deployable static site and R2 asset directory:
+
+```sh
+deno task release:site
+```
+
+This writes:
+
+```text
+dist/site/
+  index.html
+  install.sh
+  latest.json
+
+dist/r2/
+  latest/nodebook-darwin-arm64
+  latest/nodebook-darwin-arm64.sha256
+  latest/nodebook-darwin-x64
+  latest/nodebook-darwin-x64.sha256
+  v0.1.0/nodebook-darwin-arm64
+  v0.1.0/nodebook-darwin-arm64.sha256
+  v0.1.0/nodebook-darwin-x64
+  v0.1.0/nodebook-darwin-x64.sha256
+```
+
+Upload the generated R2 assets and deploy the generated site to Cloudflare Pages
+with Wrangler:
+
+```sh
+deno task release:deploy
+```
+
+Deploy just one side when testing:
+
+```sh
+deno task release:deploy:assets
+deno task release:deploy:site
+```
+
+Run the complete local release flow:
+
+```sh
+deno task release
+```
+
+If the Cloudflare Pages Git integration is enabled for `site/`, automatic Git
+deployments can publish the source-only site over the generated release site.
+For real alpha releases, deploy `dist/site/` with Wrangler or disable automatic
+deployments for the Pages project.
+
+Override the R2 bucket name or public download base if needed:
+
+```sh
+NODEBOOK_R2_BUCKET=my-bucket deno task release:deploy:assets
+NODEBOOK_RELEASE_DOWNLOAD_BASE=https://downloads.example.com deno task release:site
 ```
