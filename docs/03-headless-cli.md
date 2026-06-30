@@ -11,6 +11,25 @@ package testing.
 
 ## Commands
 
+Create a new Nodebook project:
+
+```sh
+nodebook new path/to/project
+```
+
+This creates `path/to/project/graph.py`. To create and immediately open the
+canvas editor, pass `--open`:
+
+```sh
+nodebook new path/to/project --open
+```
+
+Create a sample project with data:
+
+```sh
+nodebook example path/to/sample-project
+```
+
 Validate a document:
 
 ```sh
@@ -39,6 +58,17 @@ that exact file:
 ```sh
 nodebook run path/to/project/graph.py
 ```
+
+Opening follows the same path rule:
+
+```sh
+nodebook open path/to/project
+nodebook open path/to/project/explore.py
+```
+
+For convenience, `nodebook path/to/project` is an alias for
+`nodebook open path/to/project` when the path already exists. Missing paths are
+not created implicitly; use `nodebook new <path>` instead.
 
 ## Options
 

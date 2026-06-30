@@ -26,10 +26,19 @@ Python files are the canonical computational document format for Nodebook. A
 normal `.py` file can be opened by the editor without any sidecar file. If no
 sidecar metadata exists, the editor may choose an automatic layout.
 
-Nodebook may store optional canvas metadata in a sibling `.nodebook.json` file.
-The sidecar is not the source of truth for computation. It stores UI-only data
-such as node positions and future visual preferences. Deleting the sidecar must
-not destroy or invalidate the computational document.
+For first-run CLI UX, Nodebook recommends folder-backed projects:
+`nodebook new my-work` creates `my-work/graph.py`, and public CLI folder paths
+resolve to `graph.py` inside the folder. This keeps generated canvas metadata
+and future `data/` files close to the document without making users manage a
+loose sidecar on the Desktop. Passing a `.py` path remains supported for users
+who want a standalone Python document or multiple documents in one folder.
+
+Nodebook may store optional canvas metadata in a sibling `.nodebook.json` file
+named after the Python source file. The sidecar is not the source of truth for
+computation. It stores UI-only data such as node positions and future visual
+preferences. Deleting the sidecar must not destroy or invalidate the
+computational document. For example, `graph.py` uses `graph.nodebook.json`, and
+`explore.py` uses `explore.nodebook.json`.
 
 Nodebook nodes are persisted as Python functions decorated with `@node`.
 Function names are human-readable and may change over time. Stable opaque node
@@ -114,7 +123,8 @@ contract and avoids ambiguous parameter binding.
 - Agents can collaborate by editing Python directly instead of manipulating JSON
   strings.
 - The editor can operate on a bare `.py` file and degrade gracefully when
-  sidecar metadata is absent.
+  sidecar metadata is absent, while the CLI can recommend folder-backed
+  `graph.py` projects for first-time users.
 - Canvas layout and computation have separate ownership boundaries.
 - The runtime graph contract can remain mostly stable while document loading
   evolves from JSON decoding to Python document discovery.
@@ -157,8 +167,8 @@ The implemented split uses these boundaries:
 - Consider concrete-syntax editing for future save operations that need broader
   comment and formatting preservation. The beta implementation uses constrained
   source rewrites for supported editor operations.
-- Create the `.nodebook.json` sidecar on first canvas save. A bare `.py` file
-  remains sufficient to open and run the document.
+- Create the `<document-name>.nodebook.json` sidecar on first canvas save. A
+  bare `.py` file remains sufficient to open and run the document.
 - Treat external file writes as authoritative. Nodebook should reload cleanly
   when there are no unsaved canvas edits and should avoid overwriting newer
   external file contents with stale canvas state.

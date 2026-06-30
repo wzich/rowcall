@@ -11,8 +11,15 @@ arranging Nodes and connecting them with Edges.
 
 A Nodebook document is a Python source file. The Python source is the canonical
 executable artifact: it contains `@node(...)` declarations, node functions, and
-top-level `depends_on(...)` graph edges. Optional `.nodebook.json` sidecars
-store editor metadata such as canvas positions and are ignored by the runtime.
+top-level `depends_on(...)` graph edges. The launcher recommends folder-backed
+projects created with `nodebook new my-work`, which produces `my-work/graph.py`;
+folder paths in the public CLI resolve to `graph.py` inside that folder. Passing
+a `.py` path uses that exact file.
+
+Optional `.nodebook.json` sidecars store editor metadata such as canvas
+positions and are ignored by the runtime. Sidecars are named after the Python
+document, so `graph.py` uses `graph.nodebook.json`, while an alternate
+`explore.py` in the same folder uses `explore.nodebook.json`.
 
 ### Graph
 
