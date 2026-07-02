@@ -3,6 +3,7 @@
 **/.vite/
 **/dist/
 .wrangler/
+.codex/
 **/*.egg-info/
 **/__pycache__/
 **/.DS_Store
