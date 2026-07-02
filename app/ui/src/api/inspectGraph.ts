@@ -1,4 +1,5 @@
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
+import { nodebookFetch } from "./auth.ts";
 
 export type InspectGraphSummary = {
   nodeCount: number;
@@ -54,7 +55,7 @@ export async function inspectGraph(
 async function inspectGraphRequest(
   request: unknown,
 ): Promise<InspectGraphResult> {
-  const response = await fetch("/inspect", {
+  const response = await nodebookFetch("/inspect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),

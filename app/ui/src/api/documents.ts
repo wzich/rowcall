@@ -1,5 +1,6 @@
 import type { InspectGraphValidationIssue } from "./inspectGraph.ts";
 import type { NodebookDocumentV1 } from "../graph/documentTypes.ts";
+import { nodebookFetch } from "./auth.ts";
 
 const activeDocumentPath = "/document";
 
@@ -37,7 +38,7 @@ export class DocumentApiRequestError extends Error {
 }
 
 export async function loadDocument(): Promise<LoadDocumentSuccess> {
-  const response = await fetch(activeDocumentPath);
+  const response = await nodebookFetch(activeDocumentPath);
   const result = await response.json() as LoadDocumentResult;
 
   if (!result.ok) {
@@ -53,7 +54,7 @@ export async function loadDocument(): Promise<LoadDocumentSuccess> {
 export async function saveDocument(
   document: NodebookDocumentV1,
 ): Promise<LoadDocumentSuccess> {
-  const response = await fetch(activeDocumentPath, {
+  const response = await nodebookFetch(activeDocumentPath, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(document),

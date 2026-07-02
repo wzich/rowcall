@@ -1,6 +1,12 @@
 {
   "tasks": {
     "setup": "deno run --allow-read --allow-write --allow-run setup.ts",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint *.ts",
+    "check": "deno task fmt:check && deno task lint && deno check main.ts beta_launcher.ts start.ts cli.ts setup.ts release.ts && deno task ui:check",
+    "test:deno": "deno test --allow-read --allow-write --allow-run --allow-env *.test.ts",
+    "test:python": "python3 -m unittest nodebook_test.py && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test": "deno task test:deno && deno task test:python && deno task ui:test",
     "start": "deno run --allow-read --allow-write --allow-net --allow-run start.ts",
     "beta": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env beta_launcher.ts",
     "beta:check": "deno check beta_launcher.ts main.ts",
@@ -14,9 +20,16 @@
     "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-run main.ts",
     "cli": "deno run --allow-read --allow-run cli.ts",
     "ui:check": "cd app/ui && deno task check",
+    "ui:test": "cd app/ui && deno task test",
     "ui:dev": "cd app/ui && deno task dev",
     "ui:build": "cd app/ui && deno task build",
     "ui:preview": "cd app/ui && deno task preview"
+  },
+  "fmt": {
+    "exclude": [
+      "docs/architecture-review.html",
+      "docs/runtime-app-split-plan.html"
+    ]
   },
   "imports": {
     "@hono/hono": "jsr:@hono/hono@^4.12.9",

@@ -1,5 +1,5 @@
 import { parseArgs } from "@std/cli/parse-args";
-import { startNodebookServer } from "./main.ts";
+import { buildNodebookUrl, startNodebookServer } from "./main.ts";
 import {
   type BetaPaths,
   getBetaPaths,
@@ -791,6 +791,7 @@ async function launchServer(
   command: Extract<BetaCommand, { kind: "launch" }>,
   paths: BetaPaths,
 ): Promise<CommandResult> {
+  const authToken = crypto.randomUUID();
   const serverArgs = [
     "__server",
     "--document",
@@ -799,6 +800,8 @@ async function launchServer(
     String(command.port),
     "--hostname",
     command.hostname,
+    "--auth-token",
+    authToken,
     "--python",
     getVenvPythonPath(paths.venvDir),
     "--runner",
@@ -817,7 +820,7 @@ async function launchServer(
   const stdoutDone = teeProcessOutput(server.stdout, Deno.stdout, paths);
   const stderrDone = teeProcessOutput(server.stderr, Deno.stderr, paths);
   const serverStatus = server.status;
-  const url = `http://${command.hostname}:${command.port}/`;
+  const url = buildNodebookUrl(command.hostname, command.port, authToken);
   try {
     await waitForServer(url, serverStatus);
   } catch (error) {
@@ -975,10 +978,10 @@ async function runChild(
   }).spawn().status;
 }
 
-async function ensureServerPortAvailable(
+function ensureServerPortAvailable(
   hostname: string,
   port: number,
-): Promise<void> {
+): void {
   let listener: Deno.Listener | undefined;
   try {
     listener = Deno.listen({ hostname, port });

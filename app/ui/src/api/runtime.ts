@@ -1,3 +1,5 @@
+import { nodebookFetch } from "./auth.ts";
+
 const pythonRuntimePath = "/runtime/python";
 
 export type PythonRuntimeInfo = {
@@ -37,7 +39,7 @@ export class RuntimeApiRequestError extends Error {
 }
 
 export async function loadPythonRuntime(): Promise<LoadPythonRuntimeSuccess> {
-  const response = await fetch(pythonRuntimePath);
+  const response = await nodebookFetch(pythonRuntimePath);
   const result = await response.json() as LoadPythonRuntimeResult;
 
   if (!result.ok) {

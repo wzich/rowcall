@@ -4,6 +4,7 @@ import type {
   ExecutionStreamEvent,
   Graph,
 } from "../../../../types.ts";
+import { nodebookFetch } from "./auth.ts";
 
 export type RunExecutionRequest = {
   graph: Graph;
@@ -46,7 +47,7 @@ async function runExecution(
     signal,
   }: RunExecutionRequest,
 ): Promise<ExecutionResponse> {
-  const response = await fetch(path, {
+  const response = await nodebookFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -84,7 +85,7 @@ async function runGraphExecution(
   { graph, document, inputs = {}, source, trace = false, onEvent, signal }:
     RunGraphRequest,
 ): Promise<ExecutionResponse> {
-  const response = await fetch("/run-graph", {
+  const response = await nodebookFetch("/run-graph", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -5,6 +5,7 @@ export type StartupOptions = {
   pythonRunnerPath?: string;
   pythonDocumentLoaderPath?: string;
   uiDistPath?: string;
+  authToken?: string;
   port: number;
   hostname: string;
 };
@@ -20,6 +21,7 @@ export function parseStartupOptions(args: string[]): StartupOptions {
   let pythonRunnerPath: string | undefined;
   let pythonDocumentLoaderPath: string | undefined;
   let uiDistPath: string | undefined;
+  let authToken: string | undefined;
   let port = defaultPort;
   let hostname = defaultHostname;
 
@@ -65,6 +67,12 @@ export function parseStartupOptions(args: string[]): StartupOptions {
       continue;
     }
 
+    if (arg === "--auth-token") {
+      authToken = readFlagValue(args, index, "--auth-token");
+      index += 1;
+      continue;
+    }
+
     if (arg === "--port") {
       const rawPort = readFlagValue(args, index, "--port");
       port = parsePort(rawPort);
@@ -102,6 +110,7 @@ export function parseStartupOptions(args: string[]): StartupOptions {
     ...(pythonRunnerPath ? { pythonRunnerPath } : {}),
     ...(pythonDocumentLoaderPath ? { pythonDocumentLoaderPath } : {}),
     ...(uiDistPath ? { uiDistPath } : {}),
+    ...(authToken ? { authToken } : {}),
     port,
     hostname,
   };

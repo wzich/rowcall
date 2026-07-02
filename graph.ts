@@ -338,7 +338,11 @@ function decodeNode(
     return null;
   }
 
-  return { id: id as string, code: code as string, outputs: outputs as string[] };
+  return {
+    id: id as string,
+    code: code as string,
+    outputs: outputs as string[],
+  };
 }
 
 function decodeEdge(

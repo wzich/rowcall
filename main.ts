@@ -41,6 +41,11 @@ import { parseStartupOptions } from "./startup_args.ts";
 const app = new Hono();
 let uiDistPath: string | URL = "app/ui/dist";
 let activeDocumentPath = "";
+let serverSecurity: NodebookServerSecurity = {
+  hostname: "127.0.0.1",
+  port: 8000,
+  authToken: "",
+};
 const defaultNewDocumentSource = `from nodebook import node
 
 
@@ -52,7 +57,22 @@ def start():
 export type NodebookServerOptions = {
   uiDistPath?: string | URL;
   pythonRunnerPath?: string;
+  authToken?: string;
 };
+
+export type NodebookServerSecurity = {
+  hostname: string;
+  port: number;
+  authToken: string;
+};
+
+type RequestSecurityFailure = {
+  ok: false;
+  status: 401 | 403;
+  message: string;
+};
+
+type RequestSecurityResult = { ok: true } | RequestSecurityFailure;
 
 export async function startNodebookServer(
   args = Deno.args,
@@ -66,6 +86,12 @@ export async function startNodebookServer(
   configurePythonDocumentLoaderPath(startupOptions.pythonDocumentLoaderPath);
   uiDistPath = options.uiDistPath ?? startupOptions.uiDistPath ??
     "app/ui/dist";
+  serverSecurity = {
+    hostname: startupOptions.hostname,
+    port: startupOptions.port,
+    authToken: options.authToken ?? startupOptions.authToken ??
+      crypto.randomUUID(),
+  };
   const createActiveDocumentIfMissing = startupOptions.create;
   await ensureActiveDocumentExists(startupOptions.documentPath, {
     createIfMissing: createActiveDocumentIfMissing,
@@ -73,7 +99,13 @@ export async function startNodebookServer(
   activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
   console.info(`Nodebook document: ${activeDocumentPath}`);
   console.info(
-    `Nodebook URL: http://${startupOptions.hostname}:${startupOptions.port}/`,
+    `Nodebook URL: ${
+      buildNodebookUrl(
+        startupOptions.hostname,
+        startupOptions.port,
+        serverSecurity.authToken,
+      )
+    }`,
   );
 
   const server = Deno.serve(
@@ -84,17 +116,17 @@ export async function startNodebookServer(
 }
 
 app.use("*", async (c, next) => {
+  const result = validateLocalRequest(c.req.raw, serverSecurity);
+  if (!result.ok) {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: result.message,
+      }),
+      result.status,
+    );
+  }
   await next();
-  c.header("Access-Control-Allow-Origin", "*");
-  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-  c.header("Access-Control-Allow-Headers", "Content-Type, Accept");
-});
-
-app.options("*", (c) => {
-  c.header("Access-Control-Allow-Origin", "*");
-  c.header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-  c.header("Access-Control-Allow-Headers", "Content-Type, Accept");
-  return c.body(null, 204);
 });
 
 type ApiError = {
@@ -170,6 +202,131 @@ function getStartupOptions(args: string[]) {
     console.error(error instanceof Error ? error.message : String(error));
     Deno.exit(1);
   }
+}
+
+export function buildNodebookUrl(
+  hostname: string,
+  port: number,
+  authToken: string,
+): string {
+  const url = new URL(`http://${formatUrlHost(hostname)}:${port}/`);
+  url.searchParams.set("token", authToken);
+  return url.toString();
+}
+
+function formatUrlHost(hostname: string): string {
+  return hostname.includes(":") && !hostname.startsWith("[")
+    ? `[${hostname}]`
+    : hostname;
+}
+
+export function validateLocalRequest(
+  request: Request,
+  security: NodebookServerSecurity,
+): RequestSecurityResult {
+  if (!isAllowedHostHeader(request.headers.get("host"), security.hostname)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Blocked request with unexpected Host header.",
+    };
+  }
+
+  if (
+    !isAllowedOriginHeader(request.headers.get("origin"), security.hostname)
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Blocked request with unexpected Origin header.",
+    };
+  }
+
+  const url = new URL(request.url);
+  if (!requiresAuthToken(request.method, url.pathname)) {
+    return { ok: true };
+  }
+
+  const requestToken = request.headers.get("x-nodebook-token") ??
+    url.searchParams.get("token");
+  if (!security.authToken || requestToken !== security.authToken) {
+    return {
+      ok: false,
+      status: 401,
+      message: "Missing or invalid Nodebook authorization token.",
+    };
+  }
+
+  return { ok: true };
+}
+
+function requiresAuthToken(method: string, pathname: string): boolean {
+  if (
+    method === "GET" && (pathname === "/" || pathname.startsWith("/assets/"))
+  ) {
+    return false;
+  }
+
+  return [
+    "/document",
+    "/inspect",
+    "/run-node",
+    "/run-to-node",
+    "/run-graph",
+    "/runtime/python",
+    "/runtime-session/clear-cache",
+  ].some((apiPath) =>
+    pathname === apiPath || pathname.startsWith(`${apiPath}/`)
+  );
+}
+
+export function isAllowedHostHeader(
+  hostHeader: string | null,
+  configuredHostname: string,
+): boolean {
+  if (!hostHeader) return false;
+  const hostname = parseHostHeaderHostname(hostHeader);
+  return hostname !== null &&
+    isAllowedLocalHostname(hostname, configuredHostname);
+}
+
+export function isAllowedOriginHeader(
+  originHeader: string | null,
+  configuredHostname: string,
+): boolean {
+  if (!originHeader) return true;
+  try {
+    const origin = new URL(originHeader);
+    return isAllowedLocalHostname(origin.hostname, configuredHostname);
+  } catch {
+    return false;
+  }
+}
+
+function parseHostHeaderHostname(hostHeader: string): string | null {
+  try {
+    return new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedLocalHostname(
+  hostname: string,
+  configuredHostname: string,
+): boolean {
+  const normalized = normalizeHostname(hostname);
+  const configured = normalizeHostname(configuredHostname);
+  return normalized === configured || [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+  ].includes(normalized);
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
 }
 
 async function ensureActiveDocumentExists(

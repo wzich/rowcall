@@ -1,9 +1,10 @@
+import { buildNodebookUrl } from "./main.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
 type LauncherOptions = ReturnType<typeof parseLauncherOptions>;
 
-const serverUrl = (options: LauncherOptions) =>
-  `http://${options.hostname}:${options.port}/`;
+const serverUrl = (options: LauncherOptions, authToken: string) =>
+  buildNodebookUrl(options.hostname, options.port, authToken);
 
 async function main(): Promise<void> {
   let options: LauncherOptions;
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
   }
   ensureServerPortAvailable(options);
 
+  const authToken = crypto.randomUUID();
   const serverArgs = [
     "run",
     "--allow-read",
@@ -38,6 +40,8 @@ async function main(): Promise<void> {
     String(options.port),
     "--hostname",
     options.hostname,
+    "--auth-token",
+    authToken,
     ...(options.create ? ["--create"] : []),
     ...(options.pythonCommand ? ["--python", options.pythonCommand] : []),
   ];
@@ -48,7 +52,7 @@ async function main(): Promise<void> {
   }).spawn();
   const serverStatus = server.status;
 
-  const url = serverUrl(options);
+  const url = serverUrl(options, authToken);
   try {
     await waitForServer(url, serverStatus);
   } catch (error) {
@@ -113,7 +117,9 @@ function ensureServerPortAvailable(options: LauncherOptions): void {
     if (error instanceof Deno.errors.AddrInUse) {
       throw new Error(
         `Port ${options.port} is already in use on ${options.hostname}. ` +
-          `Stop the process using it, or start Nodebook with --port ${options.port + 1}.`,
+          `Stop the process using it, or start Nodebook with --port ${
+            options.port + 1
+          }.`,
       );
     }
     throw error;

@@ -65,6 +65,8 @@ Deno.test("parseStartupOptions accepts packaged runtime helper paths", () => {
       "/app/python_document_loader.py",
       "--ui-dist",
       "/app/ui/dist",
+      "--auth-token",
+      "secret-token",
     ]),
     {
       documentPath: "analysis.py",
@@ -73,6 +75,7 @@ Deno.test("parseStartupOptions accepts packaged runtime helper paths", () => {
       pythonRunnerPath: "/app/runner.py",
       pythonDocumentLoaderPath: "/app/python_document_loader.py",
       uiDistPath: "/app/ui/dist",
+      authToken: "secret-token",
       port: defaultPort,
       hostname: defaultHostname,
     },
