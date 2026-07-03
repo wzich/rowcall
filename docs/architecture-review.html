@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nodebook Architecture Review — July 2026</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f6f2;
+        --panel: #ffffff;
+        --panel-soft: #fbfaf7;
+        --ink: #1d252c;
+        --muted: #5e6974;
+        --line: #d9d4c9;
+        --line-strong: #b8afa2;
+        --accent: #166c67;
+        --accent-2: #7b4f2f;
+        --accent-3: #405f8f;
+        --good: #2f7d50;
+        --warn: #a05b19;
+        --bad: #a12f2f;
+        --code-bg: #f0eee8;
+        --shadow: 0 18px 45px rgba(29, 37, 44, 0.08);
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgba(247, 246, 242, 0.94), rgba(247, 246, 242, 1)),
+          radial-gradient(circle at 18% 12%, rgba(22, 108, 103, 0.10), transparent 28%),
+          radial-gradient(circle at 82% 4%, rgba(64, 95, 143, 0.10), transparent 24%);
+        color: var(--ink);
+        font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 48px 24px 96px;
+      }
+
+      h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+      h2 {
+        font-size: 1.4rem;
+        margin-top: 3rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 2px solid var(--line);
+      }
+      h3 { font-size: 1.1rem; margin-top: 2rem; }
+
+      .subtitle { color: var(--muted); margin-top: 0; }
+
+      p, li { max-width: 76ch; }
+
+      code {
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 0.1em 0.35em;
+        font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.88em;
+      }
+
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+      pre code { background: none; padding: 0; }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        padding: 20px 24px;
+        margin: 20px 0;
+      }
+
+      .card h3 { margin-top: 0; }
+
+      .badge {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        padding: 3px 10px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+      .badge.now { background: rgba(161, 47, 47, 0.12); color: var(--bad); }
+      .badge.next { background: rgba(160, 91, 25, 0.14); color: var(--warn); }
+      .badge.later { background: rgba(64, 95, 143, 0.13); color: var(--accent-3); }
+      .badge.good { background: rgba(47, 125, 80, 0.13); color: var(--good); }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.92rem;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      th, td {
+        text-align: left;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th { background: var(--panel-soft); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+      tr:last-child td { border-bottom: none; }
+
+      .meta { color: var(--muted); font-size: 0.9rem; }
+      .field { color: var(--muted); font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Nodebook Architecture Review</h1>
+      <p class="subtitle">July 2026 · Reviewed at commit <code>336c09d</code> on <code>main</code></p>
+
+      <h2>TL;DR</h2>
+      <div class="card">
+        <p>
+          Nodebook's core architectural bet — <strong>Python files as the canonical document,
+          with a Python package that owns parsing, validation, planning, and execution</strong> —
+          is sound and well executed in <code>nodebook/</code>. The product boundaries described
+          in ADR&nbsp;0004 and the runtime contract are the right ones for both the open-source
+          local product and a future managed cloud.
+        </p>
+        <p>The main problems are transitional, not foundational:</p>
+        <ol>
+          <li>
+            <strong>A security hole to fix immediately:</strong> the local server executes
+            arbitrary Python from HTTP requests and answers cross-origin requests with
+            <code>Access-Control-Allow-Origin: *</code>. Any web page a user visits while
+            Nodebook is running can execute code on their machine.
+          </li>
+          <li>
+            <strong>The old runtime was never deleted.</strong> There are three separate
+            implementations that parse Nodebook Python documents and two separate execution
+            runtimes. Roughly 1,500 lines of legacy Python at the repo root duplicate the
+            <code>nodebook</code> package, and the Deno server rewrites Python source with
+            line-based string edits in TypeScript while an unused AST-aware rewriter sits in
+            <code>nodebook/document/rewrite.py</code>. Every behavior change currently has to be
+            made two or three times, and the paths are already drifting (caching, streaming
+            granularity).
+          </li>
+          <li>
+            <strong>No CI.</strong> There are good tests on both sides of the language boundary,
+            but nothing runs them automatically.
+          </li>
+        </ol>
+        <p>
+          Recommended sequence: lock down the server and add CI now (both are days, not weeks);
+          finish the runtime migration and delete the legacy paths next (this pays down the
+          single biggest ongoing tax); then invest in run/session modeling, execution isolation,
+          and a shared protocol schema as the on-ramp to cloud and multiplayer.
+        </p>
+      </div>
+
+      <h2>1. System Overview</h2>
+      <p>The repo contains five layers:</p>
+      <table>
+        <tr><th>Layer</th><th>Where</th><th>Role</th></tr>
+        <tr>
+          <td><strong>Python package</strong></td>
+          <td><code>nodebook/</code></td>
+          <td>
+            The product core. Authoring API (<code>@node</code>, <code>display</code>,
+            <code>depends_on</code>), AST document parser + validation + run planning
+            (<code>nodebook/document/</code>), stateless executor with value previews and copy
+            handlers (<code>nodebook/runtime/</code>), an NDJSON worker protocol
+            (<code>runtime/worker.py</code>), and the public headless CLI
+            (<code>nodebook validate|run</code>).
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Legacy Python scripts</strong></td>
+          <td><code>runner.py</code>, <code>python_document_loader.py</code> (repo root)</td>
+          <td>
+            Pre-split runtime. <code>runner.py</code> (1,055 lines) is a long-lived session
+            runner speaking a graph-JSON protocol, with the in-memory single-node cache and
+            per-node streaming. <code>python_document_loader.py</code> (494 lines) is a one-shot
+            document parser the server spawns per load/save. Both largely duplicate the package.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Deno/Hono server</strong></td>
+          <td><code>main.ts</code>, <code>executor.ts</code>, <code>python_worker_client.ts</code>, <code>python_document.ts</code>, <code>document.ts</code>, <code>graph.ts</code></td>
+          <td>
+            Browser-facing HTTP API: document load/save, graph inspection, three run endpoints
+            with optional SSE streaming, static UI serving. Manages Python subprocesses three
+            different ways and implements Python source rewriting in TypeScript.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>React UI</strong></td>
+          <td><code>app/ui/</code></td>
+          <td>
+            React Flow canvas, CodeMirror node editors, TanStack Query for server state, SSE
+            consumption for run progress, and client-side Python parsing via Lezer for output
+            inference.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>Launcher &amp; release</strong></td>
+          <td><code>beta_launcher.ts</code>, <code>release.ts</code>, <code>packaging/</code>, <code>site/</code></td>
+          <td>
+            Single-binary launcher (<code>deno compile</code>) that manages a venv under
+            <code>~/.nodebook</code>, plus Cloudflare Pages/R2 release pipeline and install site.
+          </td>
+        </tr>
+      </table>
+
+      <h3>Execution paths today</h3>
+      <p>The server reaches Python three different ways, which is the crux of most findings below:</p>
+      <pre><code>Browser ──HTTP/SSE──▶ Deno server (main.ts)
+                          │
+        ┌─────────────────┼──────────────────────┐
+        ▼                 ▼                      ▼
+  python_document_    runner.py             nodebook.runtime.worker
+  loader.py           (legacy session)      (new NDJSON worker)
+  (one-shot spawn     run-node w/ cache,    source-backed run-graph /
+  per load/save)      per-node streaming    run-to-node, validate, inspect</code></pre>
+
+      <h2>2. What Is Working Well</h2>
+      <div class="card">
+        <ul>
+          <li>
+            <strong>The document format decision.</strong> <span class="badge good">Keep</span>
+            Real <code>.py</code> files with <code>@node(id=..., outputs=[...])</code>, stable
+            opaque IDs separate from human-readable function names, UI-only
+            <code>.nodebook.json</code> sidecars, and a strict-but-explained validation surface.
+            This is exactly right for the "humans and agents both edit it" goal, and
+            <code>AGENTS.md</code> + the headless CLI make the agent workflow first-class.
+          </li>
+          <li>
+            <strong>The <code>nodebook</code> package layering.</strong> <code>document/</code>
+            (parse → validate → plan) is cleanly separated from <code>runtime/</code>
+            (execute → preview → protocol), models are typed dataclasses, and the CLI and worker
+            are thin shells over the same functions. This is the right kernel to grow.
+          </li>
+          <li>
+            <strong>Optimistic concurrency already exists.</strong> Documents carry a
+            SHA-256 <code>revision</code>; saves are rejected with <code>stale_document</code>
+            when the file changed on disk. This is a genuinely good foundation for both external
+            (agent) edits and, later, multiplayer reconciliation.
+          </li>
+          <li>
+            <strong>Protocol hygiene in the worker.</strong> Runtime telemetry is NDJSON on
+            stdout with user stdout/stderr redirected during node execution and even during
+            preview/copy calls, so a hostile <code>__repr__</code> can't corrupt the protocol.
+            Someone thought about the failure modes here.
+          </li>
+          <li>
+            <strong>Reproducibility rules.</strong> Rejecting explicit root inputs on
+            source-backed runs (rather than silently ignoring them) keeps "the document is the
+            program" true, which is what makes agent workflows trustworthy.
+          </li>
+          <li>
+            <strong>Test coverage habits.</strong> Both sides of the language boundary have real
+            tests (Deno tests for document rewriting/streaming/launcher, pytest for
+            parser/rewrite/executor/worker/CLI), including protocol-level worker tests.
+          </li>
+        </ul>
+      </div>
+
+      <h2>3. Findings and Recommendations</h2>
+      <p class="meta">
+        Priorities: <span class="badge now">Now</span> = before more beta users;
+        <span class="badge next">Next</span> = the next milestone of engineering work;
+        <span class="badge later">Later</span> = schedule deliberately, mostly pre-cloud.
+      </p>
+
+      <div class="card">
+        <h3>3.1 Local server is exposed to drive-by code execution <span class="badge now">Now</span></h3>
+        <p><span class="field">What:</span>
+          <code>main.ts</code> adds <code>Access-Control-Allow-Origin: *</code> to every response
+          and answers all preflights permissively, while <code>/run-graph</code>,
+          <code>/run-to-node</code>, and <code>/run-node</code> accept arbitrary Python
+          <code>source</code> (or a graph containing code) and execute it. Binding to
+          <code>127.0.0.1</code> does not help: any web page open in the user's browser can
+          <code>fetch("http://127.0.0.1:8000/run-graph", ...)</code>, the wildcard CORS headers
+          make the preflight succeed, and the payload runs with the user's full local
+          privileges. <code>PUT /document</code> similarly allows any site to overwrite the
+          user's file.
+        </p>
+        <p><span class="field">Change:</span>
+          Remove the wildcard CORS middleware entirely — the UI is served same-origin, so it
+          needs no CORS at all (during <code>vite dev</code>, use a dev-server proxy instead).
+          Additionally validate the <code>Host</code>/<code>Origin</code> headers against the
+          configured hostname to block DNS-rebinding, and consider a per-session bearer token
+          that the launcher embeds in the opened URL — that also cleanly answers "how do
+          non-browser agents authenticate" for the future cloud version.
+        </p>
+        <p><span class="field">Impact:</span>
+          Closes a real remote-code-execution vector for every beta tester. Cost is small
+          (the middleware is ~15 lines; the token adds a bit of launcher/UI plumbing).
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.2 Finish the runtime migration; delete the legacy paths <span class="badge next">Next</span></h3>
+        <p><span class="field">What:</span>
+          Three implementations currently understand "what is a Nodebook document":
+          <code>nodebook/document/parser.py</code> (canonical),
+          <code>python_document_loader.py</code> (spawned by the server for every load, save,
+          and render), and the validation embedded in <code>runner.py</code>. Two runtimes
+          execute nodes: <code>runner.py</code> (single-node runs, owns the only cache and the
+          only per-node streaming) and <code>nodebook/runtime/</code> (graph and run-to-node).
+          <code>runner.py</code>'s preview/copy/telemetry half is a near line-for-line duplicate
+          of <code>nodebook/runtime/previews.py</code>. The docs themselves acknowledge this is
+          mid-migration ("single-node execution remains on the legacy session runner until the
+          worker grows cache-aware single-node execution").
+        </p>
+        <p><span class="field">Change:</span> Complete the migration in three steps, each shippable:</p>
+        <ol>
+          <li>
+            Add <code>load_document</code> / <code>save_document</code> / <code>render_source</code>
+            operations to the NDJSON worker and route the server's document endpoints through the
+            existing <code>PythonWorkerClient</code>. Delete <code>python_document_loader.py</code>.
+            (Also removes 2–4 process spawns per save.)
+          </li>
+          <li>
+            Emit per-node events (<code>node_started</code> / <code>node_completed</code> /
+            <code>node_failed</code>) from <code>execute_plan</code> in the worker, restoring the
+            streaming granularity the legacy runner has and the new path lost.
+          </li>
+          <li>
+            Move the cache-key/session-cache logic from <code>runner.py</code> into
+            <code>RuntimeSession</code> (the class already reserves the seam — it has an unused
+            <code>cache</code> dict), implement source-backed cached single-node runs, switch
+            <code>/run-node</code> over, and delete <code>runner.py</code> plus the
+            <code>PythonRuntimeSession</code> half of <code>executor.ts</code> and the duplicated
+            <code>AsyncEventQueue</code>.
+          </li>
+        </ol>
+        <p><span class="field">Impact:</span>
+          Removes ~1,500 lines of duplicated Python and several hundred of duplicated TypeScript;
+          eliminates a whole class of drift bugs (preview behavior, validation, streaming shape
+          differing by run type); makes the single-node cache available to CLI/agents later; and
+          shrinks the release surface (<code>compileIncludes</code> drops two files). This is the
+          highest-leverage engineering investment in the repo and should precede any feature that
+          touches execution (caching UX, reactive runs, cancellation).
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.3 Move Python source rewriting out of TypeScript <span class="badge next">Next</span></h3>
+        <p><span class="field">What:</span>
+          When the canvas saves, the server rewrites the user's Python file using line-based
+          string edits in <code>python_document.ts</code> (~1,200 lines: body replacement, node
+          deletion, graph-block regeneration), guided by line ranges reported by the loader, then
+          re-parses the result via a temp file to check it. Meanwhile
+          <code>nodebook/document/rewrite.py</code> implements AST-informed rewrites
+          (<code>update_node_body</code>, <code>update_node_outputs</code>,
+          <code>add_edge</code>, <code>remove_edge</code>) with its own tests — and nothing in
+          the server uses it.
+        </p>
+        <p><span class="field">Change:</span>
+          Make the Python package the sole owner of source rewriting. Expose rewrite operations
+          through the worker protocol (natural to do together with 3.2 step 1) and reduce
+          <code>python_document.ts</code> to a thin protocol client. Either extend
+          <code>rewrite.py</code> to cover the structural operations the TS code handles today,
+          or port the TS logic into Python — but end with one implementation.
+        </p>
+        <p><span class="field">Impact:</span>
+          Rewriting user-authored Python is the most delicate operation in the product — it can
+          destroy work. One AST-aware implementation, colocated with the parser that defines
+          validity and testable with pytest against real documents, is far safer than two
+          implementations in two languages. It also matters strategically: in the cloud version
+          the rewrite must happen server-side anyway, and "agents edit the file / UI edits the
+          file" converge on the same code path.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.4 Add CI <span class="badge now">Now</span></h3>
+        <p><span class="field">What:</span>
+          There is no <code>.github/workflows</code> (or any other CI config). Tests exist in
+          three suites (root Deno tests, <code>tests/</code> pytest, <code>app/ui</code> tests)
+          but nothing runs them on push/PR, there is no repo-wide typecheck task
+          (<code>beta:check</code> covers two entrypoints), and no single command runs everything.
+        </p>
+        <p><span class="field">Change:</span>
+          Add a <code>deno task test</code> / <code>deno task check</code> umbrella and a CI
+          workflow running: <code>deno fmt --check</code>, <code>deno lint</code>,
+          <code>deno check</code> over all entrypoints, <code>deno test</code>,
+          <code>pytest</code>, UI typecheck + build. Optionally a scheduled job that exercises
+          <code>release:build</code> so packaging breakage is caught before release day.
+        </p>
+        <p><span class="field">Impact:</span>
+          Cheap (a day) and it directly protects the refactors recommended above. Consolidating
+          two runtimes without CI would be needlessly risky.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.5 Separate fast worker operations from long runs; add cancellation <span class="badge next">Next</span></h3>
+        <p><span class="field">What:</span>
+          The server holds one <code>PythonWorkerClient</code>, and its operations are strictly
+          serialized (<code>operationChain</code>). A long graph run therefore blocks document
+          validation, inspection, and — after 3.2 — document load/save. Worse, user code executes
+          inside the same process as the protocol loop: an infinite loop wedges the worker with
+          no way to cancel (the API has no cancel operation; killing the process is the only
+          remedy and the client only does that on shutdown), and <code>os._exit()</code> or a
+          segfaulting C extension kills the protocol mid-run.
+        </p>
+        <p><span class="field">Change:</span>
+          Two-tier worker model: keep one long-lived worker for cheap, pure operations
+          (parse/validate/inspect/plan/rewrite), and execute runs in a child process the worker
+          forks per run (or a small pool). Add <code>cancel_run</code> to the protocol — with
+          process-per-run it's just SIGTERM/SIGKILL — plus optional per-run timeouts.
+        </p>
+        <p><span class="field">Impact:</span>
+          The editor stays responsive during runs; users can stop a runaway node (table stakes
+          for a notebook tool — Jupyter has interrupt); crashes are contained to the run. This is
+          also the stepping stone to the "explicit isolation modes" the runtime contract already
+          anticipates, and to per-user execution sandboxes in the cloud. Do it after 3.2 so it's
+          built once, on the surviving runtime.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.6 Introduce a document-session model in the server <span class="badge later">Later</span></h3>
+        <p><span class="field">What:</span>
+          The server is built around one module-global <code>activeDocumentPath</code> and
+          implicit singleton state (one worker, one legacy session, no run registry). The UI
+          enforces "one run at a time" but the API does not (the TODO in <code>main.ts</code>
+          notes this). Concurrent saves have no mutual exclusion beyond the revision check.
+        </p>
+        <p><span class="field">Change:</span>
+          Introduce an explicit <code>DocumentSession</code> object owning: the document path,
+          the worker handle(s), the run registry (IDs, status, cancellation), and the
+          session cache. Route handlers resolve a session rather than touching globals. Keep it
+          single-session initially — the point is the shape, not multi-document support.
+        </p>
+        <p><span class="field">Impact:</span>
+          This is the seam that multiplayer, multi-document, and cloud all hang off: "who is
+          editing what, and what is running" becomes addressable state. Doing it early is cheap
+          insurance; doing it after cloud features exist is a rewrite. Sequence it after 3.2/3.5
+          so you build sessions around the final runtime shape.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.7 Single-source the cross-language protocol types <span class="badge later">Later</span></h3>
+        <p><span class="field">What:</span>
+          The contract between Deno and Python lives in three loosely coupled places:
+          <code>types.ts</code> (hand-written TS types), ad-hoc dict literals in Python
+          (<code>build_response</code>, worker events), and <code>PythonWorkerEvent</code> typed
+          as <code>[key: string]: unknown</code> with hand-rolled terminal-event lists. The UI
+          additionally re-declares document types in <code>app/ui/src/graph/documentTypes.ts</code>
+          while also importing from <code>../../../types.ts</code>.
+        </p>
+        <p><span class="field">Change:</span>
+          Define the protocol once — JSON Schema files (or TypeSpec) checked into the repo,
+          generating TS types and Python <code>TypedDict</code>s/dataclasses — and validate
+          worker events against it in tests. The <code>protocolVersion</code> field already
+          exists; give it teeth with an explicit compatibility check on both ends.
+        </p>
+        <p><span class="field">Impact:</span>
+          Today drift is caught by integration tests, sometimes. In the cloud version, client
+          and server versions will skew across deploys, and a machine-checked, versioned protocol
+          becomes load-bearing. Doing this during 3.2 (when event shapes are already changing) is
+          the cheapest moment.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.8 Split the two UI monoliths <span class="badge later">Later</span></h3>
+        <p><span class="field">What:</span>
+          <code>App.tsx</code> (1,807 lines) mixes document editing state, name generation,
+          save orchestration, output inference (including the Lezer Python parsing), theme, and
+          layout. <code>InspectorPanel.tsx</code> (2,252 lines) is a similar grab-bag. The
+          API/query layers underneath (<code>api/</code>, <code>query/</code>) are actually
+          well-factored — the problem is concentrated in these two files.
+        </p>
+        <p><span class="field">Change:</span>
+          Extract cohesive modules along the seams that already exist: a
+          <code>useDocumentEditing</code> hook (editable document, revisions, save lifecycle),
+          an <code>outputInference.ts</code> module (the Lezer code is already pure functions),
+          node-naming utilities, and Inspector sub-panels per concern (code editor, run results,
+          validation, globals).
+        </p>
+        <p><span class="field">Impact:</span>
+          Mostly velocity and reviewability — worth doing opportunistically as these files are
+          touched rather than as a big-bang refactor. It becomes more pressing before
+          multiplayer, which will need presence/remote-edit state threaded through exactly the
+          state management that is currently entangled in <code>App.tsx</code>.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>3.9 Smaller observations <span class="badge later">Opportunistic</span></h3>
+        <ul>
+          <li>
+            <strong>Duplicated infrastructure in the server:</strong> <code>AsyncEventQueue</code>
+            and the spawn/acquire/shutdown subprocess-session machinery exist twice
+            (<code>executor.ts</code> and <code>python_worker_client.ts</code>). Falls out for
+            free with 3.2 step 3.
+          </li>
+          <li>
+            <strong>Release config duplication:</strong> the <code>compileIncludes</code> list is
+            maintained in both <code>deno.json</code> (<code>beta:compile</code>) and
+            <code>release.ts</code>; they will drift. Generate one from the other.
+          </li>
+          <li>
+            <strong>Client-authoritative code on <code>/run-node</code>:</strong> the browser
+            sends the full graph JSON (including code) for single-node runs, so what executes can
+            diverge from what's on disk in ways the user can't see. Resolved by making
+            <code>/run-node</code> source-backed in 3.2 step 3.
+          </li>
+          <li>
+            <strong><code>nodebook.egg-info/</code> is committed</strong> (build metadata tracked
+            in git even though a later commit added ignore rules). <code>git rm -r --cached</code>
+            it.
+          </li>
+          <li>
+            <strong>File watching is still an open item</strong> (ADR 0004 notes it). For the
+            agent-editing story this matters more than usual: an agent edits <code>graph.py</code>
+            while the canvas is open, and today the UI only notices on save-conflict. A simple
+            mtime/revision poll surfaced as a "document changed — reload" banner would close most
+            of the gap cheaply; proper watch + reconcile can come later.
+          </li>
+          <li>
+            <strong>The UI infers outputs with a third Python parser (Lezer).</strong> Acceptable
+            for keystroke-latency hints, but treat it as advisory only and keep the Python parser
+            authoritative; consider eventually asking the worker to confirm inference on
+            save/blur so the two can't silently disagree.
+          </li>
+        </ul>
+      </div>
+
+      <h2>4. Cloud &amp; Multiplayer Readiness</h2>
+      <div class="card">
+        <p>
+          Nothing here argues for building cloud features now, but several current decisions
+          determine how painful cloud will be later. Assessment against that future:
+        </p>
+        <ul>
+          <li>
+            <strong>Already aligned:</strong> Python-file-as-truth plus content-hash revisions is
+            a strong base for sync and conflict detection. The parse/plan/execute kernel being a
+            pure Python package means the cloud runtime can be the same code in a container. The
+            explicit-outputs/copied-inputs node contract is exactly what makes per-node caching,
+            distributed execution, and "branch from a shared node" tractable later.
+          </li>
+          <li>
+            <strong>Needs the seams recommended above:</strong> multiplayer needs a document
+            session (3.6), a run registry with cancellation (3.5), a versioned protocol (3.7),
+            and an auth story (the token from 3.1 is the embryo of it). None of these need cloud
+            infrastructure today — they need the local architecture to stop assuming "one global
+            document, one anonymous user, one implicit run."
+          </li>
+          <li>
+            <strong>One design question to settle before multiplayer work starts:</strong> the
+            unit of collaborative editing. The current save model is whole-document
+            (render + revision check), which forces last-writer-wins at file granularity.
+            The natural unit for Nodebook is probably the node (body edits) plus the graph
+            structure (add/remove node/edge) — which is exactly the operation vocabulary
+            <code>rewrite.py</code> already defines. Consolidating rewriting into those
+            operations (3.3) quietly becomes your operational-transform vocabulary later; that's
+            a strong reason to prefer operation-shaped rewrite APIs over "replace the whole
+            source" when doing 3.3.
+          </li>
+        </ul>
+      </div>
+
+      <h2>5. Prioritized Roadmap</h2>
+      <table>
+        <tr><th>Priority</th><th>Item</th><th>Effort</th><th>Why this order</th></tr>
+        <tr>
+          <td><span class="badge now">Now</span></td>
+          <td>3.1 Remove wildcard CORS, add Host/Origin checks (+ session token)</td>
+          <td>Small</td>
+          <td>Live RCE exposure for every beta tester.</td>
+        </tr>
+        <tr>
+          <td><span class="badge now">Now</span></td>
+          <td>3.4 CI + umbrella test/check tasks</td>
+          <td>Small</td>
+          <td>Protects everything below.</td>
+        </tr>
+        <tr>
+          <td><span class="badge next">Next</span></td>
+          <td>3.2 Retire <code>runner.py</code> + <code>python_document_loader.py</code>; worker gains document ops, per-node streaming, cached single-node runs</td>
+          <td>Large</td>
+          <td>Biggest ongoing tax; blocks clean work on caching, cancellation, sessions.</td>
+        </tr>
+        <tr>
+          <td><span class="badge next">Next</span></td>
+          <td>3.3 Python owns source rewriting (operation-shaped API)</td>
+          <td>Medium</td>
+          <td>Highest-risk code path deduplicated; doubles as future collab vocabulary. Do with 3.2.</td>
+        </tr>
+        <tr>
+          <td><span class="badge next">Next</span></td>
+          <td>3.5 Fast-ops worker vs run processes; <code>cancel_run</code>; timeouts</td>
+          <td>Medium</td>
+          <td>UX table stakes (stop button, responsive editor); builds on the consolidated runtime.</td>
+        </tr>
+        <tr>
+          <td><span class="badge later">Later</span></td>
+          <td>3.6 Document session model in the server</td>
+          <td>Medium</td>
+          <td>The seam cloud/multiplayer hangs off; cheap now, a rewrite later.</td>
+        </tr>
+        <tr>
+          <td><span class="badge later">Later</span></td>
+          <td>3.7 Schema-generated protocol types + version checks</td>
+          <td>Medium</td>
+          <td>Cheapest during 3.2 while event shapes are already moving.</td>
+        </tr>
+        <tr>
+          <td><span class="badge later">Later</span></td>
+          <td>3.8 Split <code>App.tsx</code> / <code>InspectorPanel.tsx</code>; 3.9 smaller items; file-change detection banner</td>
+          <td>Ongoing</td>
+          <td>Opportunistic, prioritizing file-change detection for the agent-editing story.</td>
+        </tr>
+      </table>
+
+      <h2>6. Assumptions Made in This Review</h2>
+      <div class="card">
+        <ul>
+          <li>
+            The beta audience is individual practitioners running locally; hence "Now" weights
+            local security and release safety over scalability.
+          </li>
+          <li>
+            The migration direction stated in ADR 0004 and the runtime contract (Python package
+            as the canonical runtime, legacy paths temporary) is still intended. If instead the
+            legacy runner is meant to live on, findings 3.2/3.3 change from "finish and delete"
+            to "define the drift boundary" — but I'd argue strongly for finish-and-delete.
+          </li>
+          <li>
+            TypeScript-language documents (mentioned in product scope) are far enough out that
+            the runtime abstraction shouldn't be generalized for them yet; the worker protocol
+            (3.7) is the layer to keep language-neutral when the time comes.
+          </li>
+        </ul>
+      </div>
+
+      <p class="meta">
+        Prepared by Claude Code · Sources: repo at <code>336c09d</code>, docs
+        (<code>01-product-scope.md</code>, <code>02-runtime-contract.md</code>,
+        <code>03-headless-cli.md</code>, ADRs), and direct code review of the server, Python
+        package, legacy scripts, UI, and launcher.
+      </p>
+    </main>
+  </body>
+</html>

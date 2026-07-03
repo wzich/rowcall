@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "@std/assert";
 import {
   loadPythonDocument,
+  renderPythonDocumentSource,
   savePythonDocument,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
@@ -250,6 +251,41 @@ Deno.test("loadPythonDocument preserves custom return nodes", async () => {
       'return {"x": 0}',
     ].join("\n"),
   );
+});
+
+Deno.test("renderPythonDocumentSource preserves literal return-only nodes", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/literal_return.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_literal", outputs=["x"])',
+      "def make_x():",
+      '    return {"x": 1}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(loaded.document.nodes[0].customReturn, true);
+  assertEquals(loaded.document.nodes[0].editable, false);
+
+  const rendered = await renderPythonDocumentSource(
+    documentPath,
+    loaded.document,
+  );
+  if (!rendered.ok) {
+    throw new Error(rendered.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(rendered.source, await Deno.readTextFile(documentPath));
 });
 
 Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {

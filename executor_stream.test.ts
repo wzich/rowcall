@@ -307,6 +307,77 @@ sourceRuntimeTest(
   },
 );
 
+sourceRuntimeTest(
+  "streamSourceRunToNode yields node_started before a sleeping node completes",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const documentPath = `${directory}/sleep_source.py`;
+    const source = [
+      "from nodebook import node",
+      "import time",
+      "",
+      '@node(id="a", outputs=["x"])',
+      "def a():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+      '@node(id="slow", outputs=["y"])',
+      "def slow(x):",
+      "    time.sleep(1)",
+      "    y = x + 1",
+      '    return {"y": y}',
+      "",
+      "slow.depends_on(a)",
+      "",
+    ].join("\n");
+    await Deno.writeTextFile(documentPath, source);
+
+    const iterator = streamSourceRunToNode(
+      "source-run-sleep",
+      source,
+      documentPath,
+      "slow",
+    )[Symbol.asyncIterator]();
+    const startedAt = performance.now();
+
+    const runStarted = await iterator.next();
+    const runPlan = await iterator.next();
+    const firstStarted = await iterator.next();
+    const firstCompleted = await iterator.next();
+    const slowStarted = await iterator.next();
+
+    assertEquals(runStarted.value?.type, "run_started");
+    assertEquals(runPlan.value?.type, "run_plan");
+    assertObjectMatch(firstStarted.value, {
+      type: "node_started",
+      nodeId: "a",
+    });
+    assertObjectMatch(firstCompleted.value, {
+      type: "node_completed",
+      nodeId: "a",
+    });
+    assertObjectMatch(slowStarted.value, {
+      type: "node_started",
+      nodeId: "slow",
+    });
+    const slowStartedElapsedMs = performance.now() - startedAt;
+    if (slowStartedElapsedMs > 750) {
+      throw new Error(
+        `Expected slow node_started before sleep completed, got it after ${slowStartedElapsedMs}ms`,
+      );
+    }
+
+    const slowCompleted = await iterator.next();
+    const runCompleted = await iterator.next();
+    assertObjectMatch(slowCompleted.value, {
+      type: "node_completed",
+      nodeId: "slow",
+    });
+    assertEquals(runCompleted.value?.type, "run_completed");
+    assertEquals((await iterator.next()).done, true);
+  },
+);
+
 runtimeTest(
   "streamRunGraph emits progress events and final response",
   async () => {

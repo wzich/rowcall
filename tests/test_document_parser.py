@@ -123,6 +123,25 @@ def show_value():
         self.assertEqual(result.issues[0].kind, "unsupported_python")
         self.assertEqual(result.issues[0].message, "from nodebook imports may not use aliases")
 
+    def test_literal_return_dict_is_custom_return_not_generated_body(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="show", outputs=["x"])
+def show_value():
+    return {"x": 1}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/literal_return.py"))
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.document)
+        assert result.document is not None
+        node = result.document.nodes[0]
+        self.assertTrue(node.custom_return)
+        self.assertFalse(node.editable)
+        self.assertEqual(node.display_code, 'return {"x": 1}')
+
     def test_rejects_unsupported_from_nodebook_import_names(self) -> None:
         source = """
 from nodebook import NodebookNodeError, node
