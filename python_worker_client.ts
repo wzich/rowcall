@@ -1,4 +1,7 @@
-import { resolvePythonCommand } from "./runtime_config.ts";
+import {
+  getPythonCommandEnvironment,
+  resolvePythonCommand,
+} from "./runtime_config.ts";
 import type { NodebookDocumentV1 } from "./document.ts";
 import type { ExecutionResponse, ValidationIssue } from "./types.ts";
 
@@ -294,6 +297,7 @@ export class PythonWorkerClient {
       stdin: "piped",
       stdout: "piped",
       stderr: "piped",
+      env: getPythonCommandEnvironment(),
     });
 
     this.child = command.spawn();

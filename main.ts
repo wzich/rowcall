@@ -32,7 +32,7 @@ import {
   streamSourceRunSingleNode,
   streamSourceRunToNode,
 } from "./executor.ts";
-import { configurePythonCommand } from "./runtime_config.ts";
+import { configurePythonRuntime } from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
@@ -76,7 +76,13 @@ export async function startNodebookServer(
   options: NodebookServerOptions = {},
 ): Promise<void> {
   const startupOptions = getStartupOptions(args);
-  configurePythonCommand(startupOptions.pythonCommand);
+  configurePythonRuntime({
+    command: startupOptions.pythonCommand,
+    pythonPathEntries: startupOptions.nodebookPythonPackagePath
+      ? [startupOptions.nodebookPythonPackagePath]
+      : [],
+    runtimeMode: startupOptions.runtimeMode,
+  });
   uiDistPath = options.uiDistPath ?? startupOptions.uiDistPath ??
     "app/ui/dist";
   serverSecurity = {

@@ -35,6 +35,7 @@ Deno.test("parseBetaCommand maps launch args", () => {
       documentPath: "analysis.py",
       openBrowser: false,
       pythonCommand: "/env/bin/python",
+      managedEnv: false,
       port: 8123,
       hostname: "localhost",
     },
@@ -43,6 +44,15 @@ Deno.test("parseBetaCommand maps launch args", () => {
     kind: "launch",
     documentPath: "analysis.py",
     openBrowser: true,
+    managedEnv: false,
+    port: 8000,
+    hostname: "127.0.0.1",
+  });
+  assertEquals(parseBetaCommand(["open", "--managed-env", "analysis.py"]), {
+    kind: "launch",
+    documentPath: "analysis.py",
+    openBrowser: true,
+    managedEnv: true,
     port: 8000,
     hostname: "127.0.0.1",
   });
@@ -56,12 +66,20 @@ Deno.test("parseBetaCommand maps headless run and validate commands", () => {
       cliCommand: "run",
       args: ["analysis.py"],
       pythonCommand: "/env/bin/python",
+      managedEnv: false,
     },
   );
+  assertEquals(parseBetaCommand(["run", "--managed-env", "analysis.py"]), {
+    kind: "headless",
+    cliCommand: "run",
+    args: ["analysis.py"],
+    managedEnv: true,
+  });
   assertEquals(parseBetaCommand(["validate", "analysis.py"]), {
     kind: "headless",
     cliCommand: "validate",
     args: ["analysis.py"],
+    managedEnv: false,
   });
 });
 
@@ -69,6 +87,12 @@ Deno.test("parseBetaCommand maps doctor/reset/update commands", () => {
   assertEquals(parseBetaCommand(["doctor", "--updates"]), {
     kind: "doctor",
     checkUpdates: true,
+    managedEnv: false,
+  });
+  assertEquals(parseBetaCommand(["doctor", "--managed-env"]), {
+    kind: "doctor",
+    checkUpdates: false,
+    managedEnv: true,
   });
   assertEquals(parseBetaCommand(["reset-env"]), { kind: "reset-env" });
   assertEquals(parseBetaCommand(["update"]), { kind: "update" });
@@ -79,16 +103,19 @@ Deno.test("parseBetaCommand maps new and example commands", () => {
     kind: "new",
     targetPath: "my-work",
     openBrowser: false,
+    managedEnv: false,
   });
   assertEquals(parseBetaCommand(["new", "my-work", "--open"]), {
     kind: "new",
     targetPath: "my-work",
     openBrowser: true,
+    managedEnv: false,
   });
   assertEquals(parseBetaCommand(["example", "sample"]), {
     kind: "example",
     targetPath: "sample",
     openBrowser: false,
+    managedEnv: false,
   });
 });
 
@@ -134,6 +161,17 @@ Deno.test("parseBetaCommand rejects invalid launch args", () => {
     () => parseBetaCommand(["analysis.py", "extra.py"]),
     Error,
     "Expected exactly one",
+  );
+  assertThrows(
+    () =>
+      parseBetaCommand([
+        "analysis.py",
+        "--python",
+        "/env/bin/python",
+        "--managed-env",
+      ]),
+    Error,
+    "--python cannot be combined with --managed-env",
   );
 });
 

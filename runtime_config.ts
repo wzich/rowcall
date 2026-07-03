@@ -9,16 +9,31 @@ export type PythonEnvironmentInfo = {
   executable: string;
   version: string;
   implementation: string;
+  runtimeMode: PythonRuntimeMode;
   condaPrefix?: string;
   virtualEnv?: string;
   nodebookImport: PythonImportStatus;
 };
 
+export type PythonRuntimeMode = "user" | "managed";
+
 let configuredPythonCommand: string | undefined;
+let configuredPythonPathEntries: string[] = [];
+let configuredRuntimeMode: PythonRuntimeMode = "user";
 export const localVirtualEnvDirectory = ".venv";
 
 export function configurePythonCommand(command: string | undefined): void {
   configuredPythonCommand = command && command.length > 0 ? command : undefined;
+}
+
+export function configurePythonRuntime(options: {
+  command?: string;
+  pythonPathEntries?: string[];
+  runtimeMode?: PythonRuntimeMode;
+}): void {
+  configurePythonCommand(options.command);
+  configuredPythonPathEntries = options.pythonPathEntries ?? [];
+  configuredRuntimeMode = options.runtimeMode ?? "user";
 }
 
 export async function resolvePythonCommand(): Promise<string> {
@@ -42,6 +57,19 @@ export async function resolvePythonCommand(): Promise<string> {
   return "python3";
 }
 
+export function getActiveEnvironmentPythonCandidates(): string[] {
+  const candidates: string[] = [];
+  const virtualEnv = Deno.env.get("VIRTUAL_ENV");
+  const condaPrefix = Deno.env.get("CONDA_PREFIX");
+  if (virtualEnv) {
+    candidates.push(...getEnvironmentPythonCandidates(virtualEnv));
+  }
+  if (condaPrefix) {
+    candidates.push(...getEnvironmentPythonCandidates(condaPrefix));
+  }
+  return candidates;
+}
+
 export function getLocalVirtualEnvPythonCandidates(
   cwd = ".",
 ): string[] {
@@ -52,6 +80,17 @@ export function getLocalVirtualEnvPythonCandidates(
     `${prefix}/bin/python`,
     `${prefix}/Scripts/python.exe`,
   ];
+}
+
+export function getPythonCommandEnvironment(): Record<string, string> {
+  if (configuredPythonPathEntries.length === 0) return {};
+  const existingPythonPath = Deno.env.get("PYTHONPATH");
+  return {
+    PYTHONPATH: [
+      ...configuredPythonPathEntries,
+      ...(existingPythonPath ? [existingPythonPath] : []),
+    ].join(Deno.build.os === "windows" ? ";" : ":"),
+  };
 }
 
 export async function getPythonEnvironmentInfo(): Promise<
@@ -81,6 +120,7 @@ export async function getPythonEnvironmentInfo(): Promise<
     ],
     stdout: "piped",
     stderr: "piped",
+    env: getPythonCommandEnvironment(),
   });
   const output = await probe.output();
 
@@ -118,6 +158,7 @@ export async function getPythonEnvironmentInfo(): Promise<
     executable: parsed.executable,
     version: parsed.version,
     implementation: parsed.implementation,
+    runtimeMode: configuredRuntimeMode,
     ...(typeof parsed.condaPrefix === "string" && parsed.condaPrefix.length > 0
       ? { condaPrefix: parsed.condaPrefix }
       : {}),
@@ -134,6 +175,13 @@ export async function getPythonEnvironmentInfo(): Promise<
         : {}),
     },
   };
+}
+
+function getEnvironmentPythonCandidates(prefix: string): string[] {
+  return [
+    `${prefix}/bin/python`,
+    `${prefix}/Scripts/python.exe`,
+  ];
 }
 
 async function probePythonCommand(

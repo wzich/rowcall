@@ -2,8 +2,9 @@
 
 Nodebook documents can be validated and run without opening the canvas editor.
 The `nodebook` launcher is the beta automation surface for humans, agents, and
-scripts. It routes headless commands through the managed Python environment
-under `~/.nodebook/venvs/default`.
+scripts. By default, it routes headless commands through your active Python
+environment; pass `--managed-env` to use Nodebook's starter environment under
+`~/.nodebook/venvs/default`.
 
 The Python module CLI remains the underlying runtime contract:
 `python3 -m nodebook` and `deno task cli` are useful for development and local
@@ -143,18 +144,36 @@ the Python document remains the complete source of truth for a run.
 
 ## Python Environment Troubleshooting
 
-The beta launcher runs documents with its managed venv:
+The beta launcher runs documents with your active Python environment by default.
+Activate Conda or a virtualenv before running `nodebook`, or pass a specific
+interpreter:
+
+```sh
+nodebook run --python "$CONDA_PREFIX/bin/python" my-work --json
+```
+
+Nodebook temporarily adds its bundled runtime package to that Python process so
+documents can import `nodebook` without installing Nodebook into your
+environment.
+
+If you do not want to configure packages yourself, use the managed starter env:
+
+```sh
+nodebook run --managed-env my-work --json
+```
+
+The managed venv lives at:
 
 ```text
 ~/.nodebook/venvs/default
 ```
 
-On first use, or after `nodebook reset-env`, it selects `python3` then `python`
-and requires Python 3.10 or newer. Pass `--python /path/to/python` to choose a
-specific interpreter for environment creation.
+On first managed-env use, or after `nodebook reset-env`, it selects `python3`
+then `python` and requires Python 3.10 or newer.
 
-Use `nodebook doctor` to inspect the selected Python, managed venv, installed
-package status, pandas/polars availability, and log path.
+Use `nodebook doctor` to inspect the selected user Python runtime. Use
+`nodebook doctor --managed-env` to inspect the managed venv, installed package
+status, pandas/polars availability, and log path.
 
 The lower-level Python module CLI runs with the interpreter used to launch it.
 It does not auto-detect Conda, virtualenv, or other interpreters.

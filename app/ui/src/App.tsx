@@ -857,14 +857,18 @@ export default function App() {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-600 dark:text-zinc-400">
-            {documentPath}
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className="hidden max-w-[34vw] truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline"
+            title={documentPath}
+          >
+            {compactDocumentPath(documentPath)}
           </span>
           <PythonRuntimeBadge
             isLoading={pythonRuntimeQuery.isLoading}
             error={pythonRuntimeQuery.error}
             python={pythonRuntimeQuery.data?.python ?? null}
+            documentPath={documentPath}
           />
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
@@ -939,7 +943,6 @@ export default function App() {
       )}
       {documentQuery.isSuccess && (
         <PreflightPanel
-          documentPath={documentPath}
           python={pythonRuntimeQuery.data?.python ?? null}
           pythonError={pythonRuntimeQuery.error}
           isPythonLoading={pythonRuntimeQuery.isLoading}
@@ -1083,93 +1086,183 @@ function ShortcutHintPanel() {
   );
 }
 
+type PythonRuntime = Awaited<ReturnType<typeof loadPythonRuntime>>["python"];
+
+function compactDocumentPath(path: string): string {
+  const parts = path.split(/[\\/]+/u).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  }
+  return path;
+}
+
+function runtimeSummaryLabel(python: PythonRuntime): string {
+  return `${runtimeEnvironmentLabel(python)} - Python ${python.version}`;
+}
+
+function runtimeModeLabel(python: PythonRuntime): string {
+  return python.runtimeMode === "managed"
+    ? "Managed environment"
+    : "User environment";
+}
+
+function runtimeEnvironmentLabel(python: PythonRuntime): string {
+  if (python.runtimeMode === "managed") return "Managed env";
+  if (python.condaPrefix) return `Conda ${environmentName(python.condaPrefix)}`;
+  if (python.virtualEnv) return `Venv ${environmentName(python.virtualEnv)}`;
+  return "System Python";
+}
+
+function environmentName(path: string): string {
+  return path.split(/[\\/]+/u).filter(Boolean).at(-1) ?? path;
+}
+
 function PythonRuntimeBadge({
   python,
   isLoading,
   error,
+  documentPath,
 }: {
-  python: Awaited<ReturnType<typeof loadPythonRuntime>>["python"] | null;
+  python: PythonRuntime | null;
   isLoading: boolean;
   error: Error | null;
+  documentPath: string;
 }) {
   if (isLoading) {
-    return (
-      <div className="hidden max-w-xs rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 md:block">
-        Python: checking...
-      </div>
-    );
+    return <RuntimeChip label="Python checking..." tone="neutral" />;
   }
 
   if (error) {
     return (
-      <div
-        className="hidden max-w-xs rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 md:block"
+      <RuntimeChip
+        label="Python unavailable"
+        tone="warning"
         title={error.message}
-      >
-        Python: unavailable
-      </div>
+      />
     );
   }
 
   if (!python) return null;
 
-  const label = `${python.implementation} ${python.version}`;
+  const runtimeLabel = runtimeSummaryLabel(python);
+  const title = [
+    `Runtime: ${runtimeModeLabel(python)}`,
+    `Python: ${python.executable}`,
+    `Document: ${documentPath}`,
+  ].join("\n");
 
   return (
-    <div
-      className="hidden rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 md:block"
-      title={`${label}\n${python.executable}`}
-    >
-      <span className="font-medium text-zinc-700">Python</span>{" "}
-      <span>{python.version}</span>
-    </div>
+    <details className="group relative hidden md:block">
+      <summary
+        className="flex cursor-pointer list-none items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 [&::-webkit-details-marker]:hidden"
+        title={title}
+      >
+        <span>{runtimeLabel}</span>
+      </summary>
+      <div className="absolute right-0 z-30 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded border border-zinc-200 bg-white p-3 text-xs text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+        <div className="mb-2 flex items-center justify-between gap-3 border-b border-zinc-200 pb-2 dark:border-zinc-700">
+          <span className="font-semibold">Runtime Details</span>
+          <span className="text-zinc-500 dark:text-zinc-400">
+            {runtimeModeLabel(python)}
+          </span>
+        </div>
+        <RuntimeDetail label="Document" value={documentPath} />
+        <RuntimeDetail label="Python" value={python.executable} />
+        <RuntimeDetail label="Version" value={python.version} />
+        {python.condaPrefix && (
+          <RuntimeDetail label="Conda" value={python.condaPrefix} />
+        )}
+        {python.virtualEnv && (
+          <RuntimeDetail label="Venv" value={python.virtualEnv} />
+        )}
+        <RuntimeDetail
+          label="nodebook"
+          value={python.nodebookImport.ok
+            ? python.nodebookImport.path ?? "importable"
+            : python.nodebookImport.error ?? "not importable"}
+          tone={python.nodebookImport.ok ? "default" : "warning"}
+        />
+      </div>
+    </details>
   );
 }
 
 function PreflightPanel({
-  documentPath,
   python,
   pythonError,
   isPythonLoading,
 }: {
-  documentPath: string;
-  python: Awaited<ReturnType<typeof loadPythonRuntime>>["python"] | null;
+  python: PythonRuntime | null;
   pythonError: Error | null;
   isPythonLoading: boolean;
 }) {
+  if (
+    isPythonLoading || (!pythonError && (!python || python.nodebookImport.ok))
+  ) {
+    return null;
+  }
+
   return (
-    <section className="border-b border-zinc-200 bg-zinc-50 px-5 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+    <section className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-        <PreflightItem label="Document" value={documentPath} />
-        {isPythonLoading
-          ? <PreflightItem label="Python" value="checking..." />
-          : pythonError
+        {pythonError
           ? <PreflightItem label="Python" value="unavailable" tone="warning" />
           : python
           ? (
-            <>
-              <PreflightItem
-                label="Python"
-                value={`${python.version} at ${python.executable}`}
-              />
-              {(python.condaPrefix || python.virtualEnv) && (
-                <PreflightItem
-                  label={python.condaPrefix ? "Conda" : "Venv"}
-                  value={python.condaPrefix ?? python.virtualEnv ?? ""}
-                />
-              )}
-              <PreflightItem
-                label="nodebook"
-                value={python.nodebookImport.ok
-                  ? python.nodebookImport.path ?? "importable"
-                  : python.nodebookImport.error ?? "not importable"}
-                tone={python.nodebookImport.ok ? "default" : "warning"}
-              />
-            </>
+            <PreflightItem
+              label="nodebook"
+              value={python.nodebookImport.error ?? "not importable"}
+              tone="warning"
+            />
           )
           : null}
       </div>
     </section>
+  );
+}
+
+function RuntimeChip({
+  label,
+  tone,
+  title,
+}: {
+  label: string;
+  tone: "neutral" | "warning";
+  title?: string;
+}) {
+  const className = tone === "warning"
+    ? "hidden rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 md:block"
+    : "hidden rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-500 md:block dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+  return (
+    <div className={className} title={title}>
+      {label}
+    </div>
+  );
+}
+
+function RuntimeDetail({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "warning";
+}) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 py-1">
+      <span className="font-medium text-zinc-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <span
+        className={[
+          "min-w-0 break-all font-mono",
+          tone === "warning" ? "text-amber-700 dark:text-amber-200" : "",
+        ].join(" ")}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
 
