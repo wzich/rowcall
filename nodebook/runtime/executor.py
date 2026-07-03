@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
+import json
 import os
 import sys
 import traceback
@@ -22,6 +24,9 @@ from nodebook.document import (
 )
 
 from .previews import copy_for_node_input, install_default_copy_handlers, preview_value
+
+
+NodeEventCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,23 @@ def run_source(
     target: str | None = None,
     trace: bool = False,
 ) -> dict[str, Any]:
+    return execute_source(source, document_path, target=target, trace=trace)
+
+
+def execute_source(
+    source: str,
+    document_path: str | Path,
+    target: str | None = None,
+    trace: bool = False,
+    *,
+    run_type: str | None = None,
+    cache: dict[str, Any] | None = None,
+    cache_mode: str = "refresh",
+    root_inputs: dict[str, Any] | None = None,
+    on_node_event: NodeEventCallback | None = None,
+) -> dict[str, Any]:
     path = Path(document_path).expanduser().resolve()
+    response_run_type = run_type or ("run_to_node" if target else "run_graph")
     install_default_copy_handlers()
 
     with document_execution_context(path):
@@ -51,7 +72,7 @@ def run_source(
         if not parse_result.ok or parse_result.document is None:
             return build_response(
                 ok=False,
-                run_type="run_to_node" if target else "run_graph",
+                run_type=response_run_type,
                 target_node_id=target,
                 final_node_ids=[],
                 executed_node_ids=[],
@@ -70,7 +91,7 @@ def run_source(
         except ValueError as exc:
             return build_response(
                 ok=False,
-                run_type="run_to_node" if target else "run_graph",
+                run_type=response_run_type,
                 target_node_id=target,
                 final_node_ids=[],
                 executed_node_ids=[],
@@ -79,7 +100,17 @@ def run_source(
                 error={"kind": "planning_error", "message": str(exc)},
             )
 
-        return execute_plan(document, plan, target_node_id=target_node_id, trace_enabled=trace)
+        return execute_plan(
+            document,
+            plan,
+            target_node_id=target_node_id,
+            trace_enabled=trace,
+            run_type=run_type,
+            cache=cache,
+            cache_mode=cache_mode,
+            root_inputs=root_inputs,
+            on_node_event=on_node_event,
+        )
 
 
 def build_plan(document: ExecutableDocument, target: str | None) -> tuple[RunPlan, str | None]:
@@ -100,6 +131,103 @@ def resolve_target_node_id(document: ExecutableDocument, target: str) -> str:
     if len(matches) > 1:
         raise ValueError(f"Target function name {target!r} is ambiguous")
     raise ValueError(f"Failed to find node with ID or function name {target}")
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def hash_cache_key(parts: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(parts).encode("utf-8")).hexdigest()
+
+
+def node_signature(node: DocumentNode) -> dict[str, Any]:
+    return {
+        "id": node.id,
+        "code": node.runtime_code,
+        "outputs": list(node.outputs),
+    }
+
+
+def expected_cache_keys(
+    nodes_by_id: dict[str, DocumentNode],
+    plan: RunPlan,
+    root_inputs: dict[str, Any],
+    globals_code: str,
+) -> dict[str, str]:
+    keys: dict[str, str] = {}
+    globals_key = hash_cache_key({"globalsCode": globals_code})
+    input_key = hash_cache_key({"rootInputs": root_inputs})
+
+    for step in plan.steps:
+        node_id = step.node_id
+        keys[node_id] = hash_cache_key(
+            {
+                "node": node_signature(nodes_by_id[node_id]),
+                "globals": globals_key,
+                "rootInputs": input_key if not step.depends_on else None,
+                "upstream": [
+                    {"nodeId": dependency, "key": keys[dependency]}
+                    for dependency in step.depends_on
+                ],
+            }
+        )
+
+    return keys
+
+
+def validate_cached_upstream(
+    cache: dict[str, Any],
+    plan: RunPlan,
+    target_node_id: str,
+    expected_keys: dict[str, str],
+) -> str | None:
+    target_step = next((step for step in plan.steps if step.node_id == target_node_id), None)
+    if target_step is None:
+        return f"Target node {target_node_id} is not in the run plan"
+
+    for step in plan.steps:
+        node_id = step.node_id
+        if node_id == target_node_id:
+            break
+
+        cached = cache.get(node_id)
+        if cached is None:
+            return (
+                f"Upstream cache is missing for node {node_id}. "
+                "Run to this node first to refresh upstream outputs."
+            )
+        if cached.get("key") != expected_keys[node_id]:
+            return (
+                f"Upstream cache is stale for node {node_id}. "
+                "Run to this node first to refresh upstream outputs."
+            )
+
+    return None
+
+
+def make_cache_error_response(
+    run_type: str,
+    target_node_id: str | None,
+    final_node_ids: list[str],
+    trace: list[dict[str, Any]] | None,
+    message: str,
+    node_id: str | None = None,
+) -> dict[str, Any]:
+    return build_response(
+        ok=False,
+        run_type=run_type,
+        target_node_id=target_node_id,
+        final_node_ids=final_node_ids,
+        executed_node_ids=[],
+        results_by_node={},
+        trace=trace,
+        error={
+            "kind": "cache_miss",
+            "message": message,
+            **({"nodeId": node_id} if node_id else {}),
+        },
+    )
 
 
 @contextlib.contextmanager
@@ -123,13 +251,66 @@ def execute_plan(
     *,
     target_node_id: str | None,
     trace_enabled: bool,
+    run_type: str | None = None,
+    cache: dict[str, Any] | None = None,
+    cache_mode: str = "refresh",
+    root_inputs: dict[str, Any] | None = None,
+    on_node_event: NodeEventCallback | None = None,
 ) -> dict[str, Any]:
-    run_type = "run_to_node" if target_node_id else "run_graph"
+    response_run_type = run_type or ("run_to_node" if target_node_id else "run_graph")
     nodes_by_id = {node.id: node for node in document.nodes}
     trace: list[dict[str, Any]] | None = [] if trace_enabled else None
     results_by_node: dict[str, dict[str, Any]] = {}
     outputs_by_node: dict[str, dict[str, Any]] = {}
     executed_node_ids: list[str] = []
+    root_inputs = {} if root_inputs is None else dict(root_inputs)
+    steps_to_execute = plan.steps
+    cache_keys: dict[str, str] | None = None
+
+    if cache is not None:
+        try:
+            cache_keys = expected_cache_keys(nodes_by_id, plan, root_inputs, document.globals_code)
+        except (TypeError, ValueError) as exc:
+            return make_cache_error_response(
+                response_run_type,
+                target_node_id,
+                list(plan.target_node_ids),
+                trace,
+                f"Failed to compute runtime cache keys: {exc}",
+                target_node_id,
+            )
+
+    if cache_mode == "single_node":
+        if cache is None:
+            return make_cache_error_response(
+                response_run_type,
+                target_node_id,
+                list(plan.target_node_ids),
+                trace,
+                "Run node requires a runtime session cache",
+                target_node_id,
+            )
+        if target_node_id is None:
+            return make_cache_error_response(
+                response_run_type,
+                target_node_id,
+                list(plan.target_node_ids),
+                trace,
+                "Run node requires a target node",
+            )
+        assert cache_keys is not None
+        cache_error = validate_cached_upstream(cache, plan, target_node_id, cache_keys)
+        if cache_error:
+            return make_cache_error_response(
+                response_run_type,
+                target_node_id,
+                list(plan.target_node_ids),
+                trace,
+                cache_error,
+                target_node_id,
+            )
+        steps_to_execute = tuple(step for step in plan.steps if step.node_id == target_node_id)
+
     globals_result = build_document_globals(document)
     if not globals_result["ok"]:
         error = {
@@ -140,7 +321,7 @@ def execute_plan(
         }
         return build_response(
             ok=False,
-            run_type=run_type,
+            run_type=response_run_type,
             target_node_id=target_node_id,
             final_node_ids=list(plan.target_node_ids),
             executed_node_ids=[],
@@ -150,17 +331,32 @@ def execute_plan(
         )
     globals_scope = globals_result["scope"]
 
-    for index, step in enumerate(plan.steps):
+    for index, step in enumerate(steps_to_execute):
         node_id = step.node_id
         node = nodes_by_id[node_id]
-        inputs, input_warnings = build_inputs_for_step(step.depends_on, outputs_by_node)
+        if on_node_event is not None:
+            on_node_event(
+                {
+                    "type": "node_started",
+                    "index": index,
+                    "nodeId": node_id,
+                    "dependsOn": list(step.depends_on),
+                }
+            )
+        if cache_mode == "single_node" and cache is not None:
+            inputs, input_warnings = build_cached_inputs_for_step(step.depends_on, cache, root_inputs)
+        else:
+            inputs, input_warnings = build_inputs_for_step(step.depends_on, outputs_by_node, root_inputs)
         result = execute_node(node, globals_scope, inputs, input_warnings, str(document.path))
         results_by_node[node_id] = result
         executed_node_ids.append(node_id)
 
         if result["ok"]:
-            outputs_by_node[node_id] = result["_rawOutputs"]
+            raw_outputs = result["_rawOutputs"]
+            outputs_by_node[node_id] = raw_outputs
             del result["_rawOutputs"]
+            if cache is not None and cache_keys is not None:
+                cache[node_id] = {"key": cache_keys[node_id], "outputs": raw_outputs}
             append_trace(
                 trace,
                 index=index,
@@ -169,6 +365,16 @@ def execute_plan(
                 inputs=inputs,
                 result=result,
             )
+            if on_node_event is not None:
+                on_node_event(
+                    {
+                        "type": "node_completed",
+                        "index": index,
+                        "nodeId": node_id,
+                        "dependsOn": list(step.depends_on),
+                        "result": result,
+                    }
+                )
             continue
 
         append_trace(
@@ -179,6 +385,16 @@ def execute_plan(
             inputs=inputs,
             result=result,
         )
+        if on_node_event is not None:
+            on_node_event(
+                {
+                    "type": "node_failed",
+                    "index": index,
+                    "nodeId": node_id,
+                    "dependsOn": list(step.depends_on),
+                    "result": result,
+                }
+            )
         error_details = result.get("errorDetails")
         error = {
             **(
@@ -198,7 +414,7 @@ def execute_plan(
         }
         return build_response(
             ok=False,
-            run_type=run_type,
+            run_type=response_run_type,
             target_node_id=target_node_id,
             final_node_ids=list(plan.target_node_ids),
             executed_node_ids=executed_node_ids,
@@ -209,7 +425,7 @@ def execute_plan(
 
     return build_response(
         ok=True,
-        run_type=run_type,
+        run_type=response_run_type,
         target_node_id=target_node_id,
         final_node_ids=list(plan.target_node_ids),
         executed_node_ids=executed_node_ids,
@@ -254,10 +470,37 @@ def build_document_globals(document: ExecutableDocument) -> dict[str, Any]:
 def build_inputs_for_step(
     depends_on: tuple[str, ...],
     outputs_by_node: dict[str, dict[str, Any]],
+    root_inputs: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    raw_inputs: dict[str, Any] = {}
-    for dependency in depends_on:
-        raw_inputs.update(outputs_by_node[dependency])
+    if not depends_on:
+        raw_inputs = dict(root_inputs or {})
+    else:
+        raw_inputs = {}
+        for dependency in depends_on:
+            raw_inputs.update(outputs_by_node[dependency])
+
+    scoped_inputs: dict[str, Any] = {}
+    warnings: list[str] = []
+    for name, value in raw_inputs.items():
+        copied, warning = copy_for_node_input(name, value)
+        scoped_inputs[name] = copied
+        if warning:
+            warnings.append(warning)
+
+    return scoped_inputs, warnings
+
+
+def build_cached_inputs_for_step(
+    depends_on: tuple[str, ...],
+    cache: dict[str, Any],
+    root_inputs: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    if not depends_on:
+        raw_inputs = dict(root_inputs)
+    else:
+        raw_inputs: dict[str, Any] = {}
+        for dependency in depends_on:
+            raw_inputs.update(cache[dependency]["outputs"])
 
     scoped_inputs: dict[str, Any] = {}
     warnings: list[str] = []

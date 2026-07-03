@@ -205,9 +205,8 @@ deno task ui:dev
 
 The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document,
 inspection, and execution requests to the API at `http://127.0.0.1:8000/`.
-Full-graph and run-to-node execution go through the Python runtime worker.
-Single-node iterative runs currently use the legacy session runner until the
-Python worker grows cache-aware single-node execution.
+Document parsing and execution go through the Python runtime worker, including
+cache-aware single-node iterative runs.
 
 ## Build And Serve The UI
 
@@ -232,8 +231,7 @@ deno task beta:compile
 ```
 
 The compiled binary is written to `dist/nodebook`. It embeds the built UI, the
-Python package, `runner.py`, `python_document_loader.py`, and
-`requirements-alpha.txt`.
+Python package, and `requirements-alpha.txt`.
 
 For release hosting, publish platform-specific binaries such as:
 

@@ -10,7 +10,7 @@
     "start": "deno run --allow-read --allow-write --allow-net --allow-run start.ts",
     "beta": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env beta_launcher.ts",
     "beta:check": "deno check beta_launcher.ts main.ts",
-    "beta:compile": "deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include runner.py --include python_document_loader.py --include nodebook --include app/ui/dist --output dist/nodebook beta_launcher.ts",
+    "beta:compile": "deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include nodebook --include app/ui/dist --output dist/nodebook beta_launcher.ts",
     "release:build": "deno run --allow-read --allow-write --allow-run --allow-env release.ts build",
     "release:site": "deno run --allow-read --allow-write --allow-env release.ts site",
     "release:deploy:assets": "deno run --allow-read --allow-run --allow-env release.ts deploy-assets",

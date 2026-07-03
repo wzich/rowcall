@@ -9,8 +9,6 @@ export type BetaPaths = {
   bundledDir: string;
   bundledPythonPackageDir: string;
   bundledRequirementsPath: string;
-  bundledRunnerPath: string;
-  bundledDocumentLoaderPath: string;
   uiDistPath: string;
 };
 
@@ -28,8 +26,6 @@ export function getBetaPaths(home = getHomeDirectory()): BetaPaths {
     bundledDir,
     bundledPythonPackageDir: `${bundledDir}/python-package`,
     bundledRequirementsPath: `${bundledDir}/requirements-alpha.txt`,
-    bundledRunnerPath: `${bundledDir}/runner.py`,
-    bundledDocumentLoaderPath: `${bundledDir}/python_document_loader.py`,
     uiDistPath: `${bundledDir}/app/ui/dist`,
   };
 }

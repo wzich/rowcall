@@ -92,6 +92,24 @@ class DocumentNode:
             "editable": self.editable,
         }
 
+    def to_app_dict(self, globals_code: str = "") -> dict[str, Any]:
+        runtime_code = (
+            f"{globals_code}\n\n{self.runtime_code}"
+            if globals_code
+            else self.runtime_code
+        )
+        return {
+            "id": self.id,
+            "functionName": self.function_name,
+            "code": self.display_code,
+            "runtimeCode": runtime_code,
+            "outputs": list(self.outputs),
+            "parameters": list(self.parameters),
+            "customReturn": self.custom_return,
+            "editable": self.editable,
+            "sourceRange": self.source_range.to_dict(),
+        }
+
 
 @dataclass(frozen=True)
 class DocumentEdge:
@@ -138,6 +156,19 @@ class ExecutableDocument:
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
             "issues": [issue.to_dict() for issue in self.issues],
+        }
+
+    def to_app_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "revision": self.revision,
+            "globalsCode": self.globals_code,
+            "nodes": [node.to_app_dict(self.globals_code) for node in self.nodes],
+            "edges": [
+                {"fromNode": edge.from_node, "toNode": edge.to_node}
+                for edge in self.edges
+            ],
+            "readOnly": False,
         }
 
 

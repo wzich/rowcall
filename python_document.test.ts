@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "@std/assert";
 import {
   loadPythonDocument,
+  renderPythonDocumentSource,
   savePythonDocument,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
@@ -8,6 +9,8 @@ import { toRuntimeGraph } from "./document.ts";
 import {
   clearRuntimeSessionCache,
   runGraph,
+  runSourceSingleNode,
+  runSourceToNode,
   shutdownRuntimeSession,
 } from "./executor.ts";
 
@@ -39,7 +42,7 @@ Deno.test("loadPythonDocument decodes function-shaped node document", async () =
   assertExists(decoded.document.nodes[1].runtimeCode);
 });
 
-Deno.test("Python document runtime code executes through existing graph runner", async () => {
+Deno.test("Python document runtime code executes through worker runtime", async () => {
   const decoded = await loadPythonDocument("examples/hello_world.py");
   if (!decoded.ok) {
     throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
@@ -51,6 +54,27 @@ Deno.test("Python document runtime code executes through existing graph runner",
     assertEquals(response.ok, true);
     assertEquals(
       response.finalOutputsByNode.n_shout.message.jsonValue,
+      "HELLO!",
+    );
+  } finally {
+    await shutdownRuntimeSession();
+  }
+});
+
+Deno.test("Python document source-backed single node reuses source-backed cache", async () => {
+  const path = "examples/hello_world.py";
+  const source = await Deno.readTextFile(path);
+
+  await clearRuntimeSessionCache();
+  try {
+    const seed = await runSourceToNode(source, path, "n_shout");
+    const single = await runSourceSingleNode(source, path, "n_shout");
+
+    assertEquals(seed.ok, true);
+    assertEquals(single.ok, true);
+    assertEquals(single.executedNodeIds, ["n_shout"]);
+    assertEquals(
+      single.finalOutputsByNode.n_shout.message.jsonValue,
       "HELLO!",
     );
   } finally {
@@ -127,7 +151,7 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
       '    return {"trips": trips}',
       "",
       '@node(id="n_prepare", outputs=["prepared"])',
-      "def prepare_trips(trips_raw):",
+      "def prepare_trips(trips):",
       "    prepared = trips + 1",
       '    return {"prepared": prepared}',
       "",
@@ -227,6 +251,41 @@ Deno.test("loadPythonDocument preserves custom return nodes", async () => {
       'return {"x": 0}',
     ].join("\n"),
   );
+});
+
+Deno.test("renderPythonDocumentSource preserves literal return-only nodes", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/literal_return.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_literal", outputs=["x"])',
+      "def make_x():",
+      '    return {"x": 1}',
+      "",
+    ].join("\n"),
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(loaded.document.nodes[0].customReturn, true);
+  assertEquals(loaded.document.nodes[0].editable, false);
+
+  const rendered = await renderPythonDocumentSource(
+    documentPath,
+    loaded.document,
+  );
+  if (!rendered.ok) {
+    throw new Error(rendered.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(rendered.source, await Deno.readTextFile(documentPath));
 });
 
 Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {

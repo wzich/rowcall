@@ -56,11 +56,9 @@ async function runExecution(
     body: JSON.stringify({
       graph,
       nodeId,
-      ...(path === "/run-to-node" && document !== undefined
-        ? { document }
-        : {}),
+      ...(document !== undefined ? { document } : {}),
       inputs,
-      ...(path === "/run-to-node" && source !== undefined ? { source } : {}),
+      ...(source !== undefined ? { source } : {}),
       trace,
     }),
     signal,

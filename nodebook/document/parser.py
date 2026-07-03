@@ -562,12 +562,14 @@ def _has_standard_generated_return(function_def: ast.FunctionDef, outputs: tuple
         return False
 
     keys: list[str] = []
-    for key in final_statement.value.keys:
+    values: list[str] = []
+    for key, value in zip(final_statement.value.keys, final_statement.value.values):
         text = _literal_string(key) if key is not None else None
-        if text is None:
+        if text is None or not isinstance(value, ast.Name):
             return False
         keys.append(text)
-    return tuple(keys) == outputs
+        values.append(value.id)
+    return tuple(keys) == outputs and tuple(values) == outputs
 
 
 def _build_runtime_code(

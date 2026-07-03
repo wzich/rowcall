@@ -1,5 +1,5 @@
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
-import { Play, Plus } from "lucide-react";
+import { LoaderCircle, Play, Plus } from "lucide-react";
 import type { MouseEvent } from "react";
 import type {
   NodeRunVisualStatus,
@@ -98,15 +98,24 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
                 />
               </button>
             )}
-            <span
-              className={[
-                "h-2.5 w-2.5 shrink-0 rounded-full",
-                data.runStatus === "running" ? "animate-pulse" : "",
-                status.dot,
-              ].join(" ")}
-              title={status.label}
-              aria-label={status.label}
-            />
+            {data.runStatus === "running"
+              ? (
+                <LoaderCircle
+                  aria-label={status.label}
+                  className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600 dark:text-blue-400"
+                  strokeWidth={2.5}
+                />
+              )
+              : (
+                <span
+                  className={[
+                    "h-2.5 w-2.5 shrink-0 rounded-full",
+                    status.dot,
+                  ].join(" ")}
+                  title={status.label}
+                  aria-label={status.label}
+                />
+              )}
           </div>
         </div>
       </div>

@@ -729,11 +729,6 @@ async function ensureBundledAssets(paths: BetaPaths): Promise<void> {
     bundledSource("requirements-alpha.txt"),
     paths.bundledRequirementsPath,
   );
-  await copyIfExists(bundledSource("runner.py"), paths.bundledRunnerPath);
-  await copyIfExists(
-    bundledSource("python_document_loader.py"),
-    paths.bundledDocumentLoaderPath,
-  );
   await copyDirectoryIfExists(
     bundledSource("nodebook"),
     `${paths.bundledPythonPackageDir}/nodebook`,
@@ -804,10 +799,6 @@ async function launchServer(
     authToken,
     "--python",
     getVenvPythonPath(paths.venvDir),
-    "--runner",
-    paths.bundledRunnerPath,
-    "--loader",
-    paths.bundledDocumentLoaderPath,
     "--ui-dist",
     paths.uiDistPath,
   ];
