@@ -5,28 +5,46 @@ import {
   getBetaPaths,
   getVenvPythonPath,
 } from "./beta_paths.ts";
+import { getActiveEnvironmentPythonCandidates } from "./runtime_config.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { nodebookVersion } from "./version.ts";
 
 export type BetaCommand =
   | { kind: "help"; topic?: string }
   | { kind: "version" }
-  | { kind: "doctor"; checkUpdates: boolean; pythonCommand?: string }
+  | {
+    kind: "doctor";
+    checkUpdates: boolean;
+    pythonCommand?: string;
+    managedEnv: boolean;
+  }
   | { kind: "reset-env" }
   | { kind: "update" }
-  | { kind: "new"; targetPath: string; openBrowser: boolean }
-  | { kind: "example"; targetPath: string; openBrowser: boolean }
+  | {
+    kind: "new";
+    targetPath: string;
+    openBrowser: boolean;
+    managedEnv: boolean;
+  }
+  | {
+    kind: "example";
+    targetPath: string;
+    openBrowser: boolean;
+    managedEnv: boolean;
+  }
   | {
     kind: "headless";
     cliCommand: "run" | "validate";
     args: string[];
     pythonCommand?: string;
+    managedEnv: boolean;
   }
   | {
     kind: "launch";
     documentPath: string;
     openBrowser: boolean;
     pythonCommand?: string;
+    managedEnv: boolean;
     port: number;
     hostname: string;
   }
@@ -38,6 +56,11 @@ export type BetaCommand =
 
 type RunCommandOptions = {
   paths?: BetaPaths;
+};
+
+type RuntimeSelection = {
+  mode: "user" | "managed";
+  pythonCommand?: string;
 };
 
 type CommandResult = {
@@ -148,6 +171,7 @@ Usage:
 
 Options:
   --python <path>                  Use a specific Python 3.10+ interpreter
+  --managed-env                    Use Nodebook's managed Python environment
   --port <port>                    Start the UI server on a custom port
   --hostname <host>                Bind the UI server to a custom host
   --no-open                        Do not open the browser after starting
@@ -163,6 +187,9 @@ Try:
   nodebook example my-example
   nodebook run my-example --json
   nodebook help format
+
+By default Nodebook uses your active Python environment. Pass --managed-env
+to use Nodebook's starter environment.
 `;
 
 const formatHelpText = `Nodebook Python Document Format
@@ -190,7 +217,7 @@ Function parameters consume upstream outputs by name. Run nodebook validate
 `;
 
 const runHelpText = `Usage:
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
 
@@ -201,7 +228,7 @@ Examples:
 `;
 
 const validateHelpText = `Usage:
-  nodebook validate <folder-or-document.py> [--json]
+  nodebook validate <folder-or-document.py> [--json] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
 
@@ -211,7 +238,7 @@ Examples:
 `;
 
 const newHelpText = `Usage:
-  nodebook new <folder-or-document.py> [--open]
+  nodebook new <folder-or-document.py> [--open] [--managed-env]
 
 If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
 creates graph.py inside the folder path.
@@ -223,7 +250,7 @@ Examples:
 `;
 
 const openHelpText = `Usage:
-  nodebook open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>]
+  nodebook open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder. The path must already exist.
 
@@ -233,15 +260,15 @@ Examples:
 `;
 
 const exampleHelpText = `Usage:
-  nodebook example <folder> [--open]
+  nodebook example <folder> [--open] [--managed-env]
 
 Creates a sample Nodebook project with graph.py and data/orders.csv.
 `;
 
 const doctorHelpText = `Usage:
-  nodebook doctor [--updates] [--python <path>]
+  nodebook doctor [--updates] [--python <path>] [--managed-env]
 
-Inspects the local Nodebook install, managed Python environment, dependency
+Inspects the local Nodebook install, selected Python environment, dependency
 availability, and log path.
 `;
 
@@ -289,13 +316,15 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "doctor" };
     }
     const parsed = parseArgs(args.slice(1), {
-      boolean: ["updates"],
+      boolean: ["updates", "managed-env"],
       string: ["python"],
       unknown: rejectUnknownOption,
     });
+    rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     return {
       kind: "doctor",
       checkUpdates: Boolean(parsed.updates),
+      managedEnv: Boolean(parsed["managed-env"]),
       ...(typeof parsed.python === "string"
         ? { pythonCommand: parsed.python }
         : {}),
@@ -327,7 +356,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "new" };
     }
     const parsed = parseArgs(args.slice(1), {
-      boolean: ["open"],
+      boolean: ["open", "managed-env"],
       unknown: rejectUnknownOption,
     });
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
@@ -337,6 +366,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       kind: "new",
       targetPath: parsed._[0],
       openBrowser: Boolean(parsed.open),
+      managedEnv: Boolean(parsed["managed-env"]),
     };
   }
 
@@ -345,7 +375,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "example" };
     }
     const parsed = parseArgs(args.slice(1), {
-      boolean: ["open"],
+      boolean: ["open", "managed-env"],
       unknown: rejectUnknownOption,
     });
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
@@ -355,6 +385,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       kind: "example",
       targetPath: parsed._[0],
       openBrowser: Boolean(parsed.open),
+      managedEnv: Boolean(parsed["managed-env"]),
     };
   }
 
@@ -362,13 +393,16 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     if (args.includes("--help") || args.includes("-h")) {
       return { kind: "help", topic: args[0] };
     }
-    const { pythonCommand, forwardedArgs } = stripGlobalPythonOption(
-      args.slice(1),
-    );
+    const { pythonCommand, managedEnv, forwardedArgs } =
+      stripGlobalRuntimeOptions(
+        args.slice(1),
+      );
+    rejectPythonWithManagedEnv(pythonCommand, managedEnv);
     return {
       kind: "headless",
       cliCommand: args[0],
       args: forwardedArgs,
+      managedEnv,
       ...(pythonCommand ? { pythonCommand } : {}),
     };
   }
@@ -382,10 +416,11 @@ export function parseBetaCommand(args: string[]): BetaCommand {
   }
 
   const parsed = parseArgs(openArgs, {
-    boolean: ["no-open"],
+    boolean: ["no-open", "managed-env"],
     string: ["python", "port", "hostname"],
     unknown: rejectUnknownOption,
   });
+  rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
   if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
     throw new Error("Expected exactly one folder or .py document path.");
   }
@@ -394,6 +429,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     kind: "launch",
     documentPath: parsed._[0],
     openBrowser: !parsed["no-open"],
+    managedEnv: Boolean(parsed["managed-env"]),
     ...(typeof parsed.python === "string"
       ? { pythonCommand: parsed.python }
       : {}),
@@ -436,13 +472,19 @@ export async function runBetaCommand(
       const documentPath = await createNewDocument(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
       await appendLog(paths, `nodebook ${command.kind}`);
-      await ensureManagedEnvironment(paths);
+      const runtime = await resolveRuntimeSelection(paths, {
+        mode: command.managedEnv ? "managed" : "user",
+      });
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(defaultHostname, defaultPort);
       return await launchServer({
         kind: "launch",
         documentPath,
         openBrowser: true,
+        managedEnv: command.managedEnv,
+        ...(runtime.pythonCommand
+          ? { pythonCommand: runtime.pythonCommand }
+          : {}),
         port: defaultPort,
         hostname: defaultHostname,
       }, paths);
@@ -451,41 +493,57 @@ export async function runBetaCommand(
       const documentPath = await createExampleProject(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
       await appendLog(paths, `nodebook ${command.kind}`);
-      await ensureManagedEnvironment(paths);
+      const runtime = await resolveRuntimeSelection(paths, {
+        mode: command.managedEnv ? "managed" : "user",
+      });
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(defaultHostname, defaultPort);
       return await launchServer({
         kind: "launch",
         documentPath,
         openBrowser: true,
+        managedEnv: command.managedEnv,
+        ...(runtime.pythonCommand
+          ? { pythonCommand: runtime.pythonCommand }
+          : {}),
         port: defaultPort,
         hostname: defaultHostname,
       }, paths);
     }
     case "headless": {
       await appendLog(paths, `nodebook ${command.kind}`);
-      const python = await ensureManagedEnvironment(
-        paths,
-        command.pythonCommand,
-      );
-      const status = await runChild(python, [
+      const runtime = await resolveRuntimeSelection(paths, {
+        mode: command.managedEnv ? "managed" : "user",
+        pythonCommand: command.pythonCommand,
+      });
+      const status = await runChild(runtime.pythonCommand, [
         "-m",
         "nodebook",
         command.cliCommand,
         ...command.args,
-      ]);
+      ], runtime.mode === "user" ? pythonRuntimeEnv(paths) : undefined);
       return { code: status.code };
     }
-    case "launch":
+    case "launch": {
       await appendLog(paths, `nodebook ${command.kind}`);
       command = {
         ...command,
         documentPath: await resolveExistingDocumentPath(command.documentPath),
       };
-      await ensureManagedEnvironment(paths, command.pythonCommand);
+      const runtime = await resolveRuntimeSelection(paths, {
+        mode: command.managedEnv ? "managed" : "user",
+        pythonCommand: command.pythonCommand,
+      });
+      command = {
+        ...command,
+        ...(runtime.pythonCommand
+          ? { pythonCommand: runtime.pythonCommand }
+          : {}),
+      };
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(command.hostname, command.port);
       return await launchServer(command, paths);
+    }
     case "server":
       await startNodebookServer(command.args, {
         ...(command.uiDistPath ? { uiDistPath: command.uiDistPath } : {}),
@@ -666,6 +724,43 @@ export async function ensureManagedEnvironment(
   return venvPython;
 }
 
+async function resolveRuntimeSelection(
+  paths: BetaPaths,
+  selection: RuntimeSelection,
+): Promise<RuntimeSelection & { pythonCommand: string }> {
+  if (selection.mode === "managed") {
+    return {
+      mode: "managed",
+      pythonCommand: await ensureManagedEnvironment(paths),
+    };
+  }
+
+  await ensureBundledAssets(paths);
+  const pythonCommand = selection.pythonCommand ??
+    await findCompatibleUserPython();
+  if (!await isCompatiblePython(pythonCommand)) {
+    throw new Error(
+      `Selected Python must be Python 3.10 or newer: ${pythonCommand}`,
+    );
+  }
+  if (
+    !await commandWorks(
+      pythonCommand,
+      ["-c", "import nodebook.runtime.worker"],
+      pythonRuntimeEnv(paths),
+    )
+  ) {
+    throw new Error(
+      `Selected Python could not start Nodebook: ${pythonCommand}\n\n` +
+        "Try --managed-env to use Nodebook's starter environment, or pass a different Python with --python.",
+    );
+  }
+  return {
+    mode: "user",
+    pythonCommand,
+  };
+}
+
 export async function resetManagedEnvironment(paths: BetaPaths): Promise<void> {
   await Deno.remove(paths.venvDir, { recursive: true }).catch((error) => {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
@@ -744,18 +839,39 @@ async function printDoctor(
   command: Extract<BetaCommand, { kind: "doctor" }>,
   paths: BetaPaths,
 ): Promise<void> {
-  const detectedPython = command.pythonCommand ??
-    await findCompatiblePython().catch(() => "");
-  const venvPython = getVenvPythonPath(paths.venvDir);
-  const venvExists = await commandWorks(venvPython, ["--version"]);
-  const nodebookImport = venvExists
-    ? await commandWorks(venvPython, ["-c", "import nodebook"])
+  const runtime = command.managedEnv
+    ? await inspectManagedRuntime(paths)
+    : await resolveRuntimeSelection(paths, {
+      mode: "user",
+      pythonCommand: command.pythonCommand,
+    }).catch((error) => ({
+      mode: "user" as const,
+      pythonCommand: "",
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  const runtimeEnv = runtime.mode === "user"
+    ? pythonRuntimeEnv(paths)
+    : undefined;
+  const nodebookImport = runtime.pythonCommand
+    ? await commandWorks(
+      runtime.pythonCommand,
+      ["-c", "import nodebook"],
+      runtimeEnv,
+    )
     : false;
-  const pandasImport = venvExists
-    ? await commandWorks(venvPython, ["-c", "import pandas"])
+  const pandasImport = runtime.pythonCommand
+    ? await commandWorks(
+      runtime.pythonCommand,
+      ["-c", "import pandas"],
+      runtimeEnv,
+    )
     : false;
-  const polarsImport = venvExists
-    ? await commandWorks(venvPython, ["-c", "import polars"])
+  const polarsImport = runtime.pythonCommand
+    ? await commandWorks(
+      runtime.pythonCommand,
+      ["-c", "import polars"],
+      runtimeEnv,
+    )
     : false;
 
   console.info(`Nodebook ${nodebookVersion}`);
@@ -767,8 +883,11 @@ async function printDoctor(
       pathContainsLocalBin(paths.home) ? "ok" : "missing"
     }`,
   );
-  console.info(`Python 3.10+: ${detectedPython || "not found"}`);
-  console.info(`Venv Python: ${venvExists ? venvPython : "missing"}`);
+  console.info(`Runtime mode: ${runtime.mode}`);
+  console.info(`Runtime Python: ${runtime.pythonCommand || "not found"}`);
+  if ("error" in runtime) {
+    console.info(`Runtime error: ${runtime.error}`);
+  }
   console.info(`nodebook package: ${nodebookImport ? "ok" : "missing"}`);
   console.info(`pandas: ${pandasImport ? "ok" : "missing"}`);
   console.info(`polars: ${polarsImport ? "ok" : "missing"}`);
@@ -776,10 +895,29 @@ async function printDoctor(
     console.info("Update checks are not implemented yet.");
   }
 
-  if (!venvExists || !nodebookImport || !pandasImport || !polarsImport) {
+  if (
+    command.managedEnv && (!nodebookImport || !pandasImport || !polarsImport)
+  ) {
     console.info("");
     console.info("Fix: nodebook reset-env");
+  } else if (!command.managedEnv && !runtime.pythonCommand) {
+    console.info("");
+    console.info("Fix: nodebook doctor --managed-env");
   }
+}
+
+async function inspectManagedRuntime(
+  paths: BetaPaths,
+): Promise<{ mode: "managed"; pythonCommand: string; error?: string }> {
+  const venvPython = getVenvPythonPath(paths.venvDir);
+  if (await commandWorks(venvPython, ["--version"])) {
+    return { mode: "managed", pythonCommand: venvPython };
+  }
+  return {
+    mode: "managed",
+    pythonCommand: "",
+    error: "Managed environment is missing.",
+  };
 }
 
 async function launchServer(
@@ -798,10 +936,18 @@ async function launchServer(
     "--auth-token",
     authToken,
     "--python",
-    getVenvPythonPath(paths.venvDir),
+    command.pythonCommand ?? getVenvPythonPath(paths.venvDir),
+    "--runtime-mode",
+    command.managedEnv ? "managed" : "user",
     "--ui-dist",
     paths.uiDistPath,
   ];
+  if (!command.managedEnv) {
+    serverArgs.push(
+      "--nodebook-python-package",
+      paths.bundledPythonPackageDir,
+    );
+  }
   const invocation = buildLauncherInvocation(serverArgs);
   const server = new Deno.Command(invocation.command, {
     args: invocation.args,
@@ -861,14 +1007,20 @@ function isDenoExecutable(execPath: string): boolean {
   return executableName === "deno" || executableName === "deno.exe";
 }
 
-function stripGlobalPythonOption(args: string[]): {
+function stripGlobalRuntimeOptions(args: string[]): {
   pythonCommand?: string;
+  managedEnv: boolean;
   forwardedArgs: string[];
 } {
   const forwardedArgs: string[] = [];
   let pythonCommand: string | undefined;
+  let managedEnv = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    if (arg === "--managed-env") {
+      managedEnv = true;
+      continue;
+    }
     if (arg === "--python") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) {
@@ -882,8 +1034,18 @@ function stripGlobalPythonOption(args: string[]): {
   }
   return {
     ...(pythonCommand ? { pythonCommand } : {}),
+    managedEnv,
     forwardedArgs,
   };
+}
+
+function rejectPythonWithManagedEnv(
+  pythonCommand: unknown,
+  managedEnv: unknown,
+): void {
+  if (pythonCommand && managedEnv) {
+    throw new Error("--python cannot be combined with --managed-env");
+  }
 }
 
 function parsePortOption(value: unknown): number {
@@ -912,6 +1074,23 @@ async function findCompatiblePython(): Promise<string> {
   throw new Error("Could not find Python 3.10 or newer.");
 }
 
+async function findCompatibleUserPython(): Promise<string> {
+  for (
+    const command of [
+      ...getActiveEnvironmentPythonCandidates(),
+      "python3",
+      "python",
+    ]
+  ) {
+    if (await isCompatiblePython(command)) {
+      return command;
+    }
+  }
+  throw new Error(
+    "Could not find Python 3.10 or newer. Pass --managed-env to use Nodebook's starter environment, or pass --python /path/to/python.",
+  );
+}
+
 async function isCompatiblePython(command: string): Promise<boolean> {
   return await commandWorks(command, [
     "-c",
@@ -919,17 +1098,32 @@ async function isCompatiblePython(command: string): Promise<boolean> {
   ]);
 }
 
-async function commandWorks(command: string, args: string[]): Promise<boolean> {
+async function commandWorks(
+  command: string,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<boolean> {
   try {
     const output = await new Deno.Command(command, {
       args,
       stdout: "null",
       stderr: "null",
+      ...(env ? { env } : {}),
     }).output();
     return output.success;
   } catch {
     return false;
   }
+}
+
+function pythonRuntimeEnv(paths: BetaPaths): Record<string, string> {
+  const existingPythonPath = Deno.env.get("PYTHONPATH");
+  return {
+    PYTHONPATH: [
+      paths.bundledPythonPackageDir,
+      ...(existingPythonPath ? [existingPythonPath] : []),
+    ].join(Deno.build.os === "windows" ? ";" : ":"),
+  };
 }
 
 async function runChecked(command: string, args: string[]): Promise<void> {
@@ -960,12 +1154,14 @@ async function forwardSetupOutput(output: Deno.CommandOutput): Promise<void> {
 async function runChild(
   command: string,
   args: string[],
+  env?: Record<string, string>,
 ): Promise<Deno.CommandStatus> {
   return await new Deno.Command(command, {
     args,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
+    ...(env ? { env } : {}),
   }).spawn().status;
 }
 

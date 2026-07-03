@@ -8,8 +8,9 @@ editing and managing those documents.
 ## Beta Tester Start
 
 Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
-must already be installed; Nodebook creates its own managed virtual environment
-for the local runtime and example dependencies.
+must already be installed. By default Nodebook uses your active Python
+environment and temporarily adds its own runtime package for the Nodebook
+process.
 
 ```sh
 curl -fsSL https://nodebook.rodeo/install.sh | sh
@@ -68,7 +69,22 @@ nodebook new graph.py
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
 
-### Managed Environment
+### Python Environments
+
+By default, Nodebook uses the Python environment you launch it from. Activate
+Conda or a virtualenv before running `nodebook`, or pass a specific interpreter:
+
+```sh
+nodebook open --python "$CONDA_PREFIX/bin/python" my-work
+```
+
+If you do not want to configure packages yourself, use Nodebook's managed
+starter environment:
+
+```sh
+nodebook open --managed-env my-work
+nodebook run --managed-env my-work --json
+```
 
 The beta launcher stores its managed files under:
 
@@ -78,15 +94,21 @@ The beta launcher stores its managed files under:
 ~/.nodebook/logs/nodebook.log
 ```
 
-On first run, or after `nodebook reset-env`, the launcher uses `python3` then
-`python` to find Python 3.10 or newer, creates the managed venv, installs the
-bundled `nodebook` Python package, and installs `requirements-alpha.txt`
-dependencies such as pandas and polars.
+On first managed-env use, or after `nodebook reset-env`, the launcher uses
+`python3` then `python` to find Python 3.10 or newer, creates the managed venv,
+installs the bundled `nodebook` Python package, and installs
+`requirements-alpha.txt` dependencies such as pandas and polars.
 
-Inspect a local install:
+Inspect the default user Python runtime:
 
 ```sh
 nodebook doctor
+```
+
+Inspect the managed starter environment:
+
+```sh
+nodebook doctor --managed-env
 ```
 
 Recreate only the managed venv:
@@ -115,9 +137,9 @@ previews:
 nodebook run my-work --json --trace
 ```
 
-The launcher delegates headless commands to the Python CLI inside the managed
-venv. During development, `python3 -m nodebook` and `deno task cli` are still
-useful local wrappers:
+The launcher delegates headless commands to the selected Python runtime. During
+development, `python3 -m nodebook` and `deno task cli` are still useful local
+wrappers:
 
 ```sh
 python3 -m nodebook run my-work --json --trace
@@ -129,12 +151,6 @@ configuration should enter through Python code in the document so runs remain
 reproducible from the file itself.
 
 See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
-
-To choose a specific Python interpreter for environment creation:
-
-```sh
-nodebook open --python "$CONDA_PREFIX/bin/python" my-work
-```
 
 ## Run Locally For Development
 

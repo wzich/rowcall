@@ -7,6 +7,7 @@ export type PythonRuntimeInfo = {
   executable: string;
   version: string;
   implementation: string;
+  runtimeMode: "user" | "managed";
   condaPrefix?: string;
   virtualEnv?: string;
   nodebookImport: {

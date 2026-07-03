@@ -61,6 +61,10 @@ Deno.test("parseStartupOptions accepts packaged server paths", () => {
       "/env/bin/python",
       "--ui-dist",
       "/app/ui/dist",
+      "--nodebook-python-package",
+      "/app/python-package",
+      "--runtime-mode",
+      "user",
       "--auth-token",
       "secret-token",
     ]),
@@ -68,6 +72,8 @@ Deno.test("parseStartupOptions accepts packaged server paths", () => {
       documentPath: "analysis.py",
       create: false,
       pythonCommand: "/env/bin/python",
+      nodebookPythonPackagePath: "/app/python-package",
+      runtimeMode: "user",
       uiDistPath: "/app/ui/dist",
       authToken: "secret-token",
       port: defaultPort,
@@ -91,5 +97,10 @@ Deno.test("parseStartupOptions rejects invalid startup args", () => {
     () => parseStartupOptions(["--port", "99999"]),
     Error,
     "Invalid --port value",
+  );
+  assertThrows(
+    () => parseStartupOptions(["--runtime-mode", "cloud", "analysis.py"]),
+    Error,
+    "Invalid --runtime-mode value",
   );
 });

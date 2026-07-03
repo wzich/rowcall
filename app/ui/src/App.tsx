@@ -1113,7 +1113,10 @@ function PythonRuntimeBadge({
 
   if (!python) return null;
 
-  const label = `${python.implementation} ${python.version}`;
+  const runtimeLabel = python.runtimeMode === "managed"
+    ? "managed env"
+    : "user env";
+  const label = `${python.implementation} ${python.version} (${runtimeLabel})`;
 
   return (
     <div
@@ -1121,7 +1124,7 @@ function PythonRuntimeBadge({
       title={`${label}\n${python.executable}`}
     >
       <span className="font-medium text-zinc-700">Python</span>{" "}
-      <span>{python.version}</span>
+      <span>{python.version} - {runtimeLabel}</span>
     </div>
   );
 }
@@ -1150,7 +1153,9 @@ function PreflightPanel({
             <>
               <PreflightItem
                 label="Python"
-                value={`${python.version} at ${python.executable}`}
+                value={`${python.version} - ${
+                  python.runtimeMode === "managed" ? "managed env" : "user env"
+                } at ${python.executable}`}
               />
               {(python.condaPrefix || python.virtualEnv) && (
                 <PreflightItem

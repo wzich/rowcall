@@ -2,6 +2,8 @@ export type StartupOptions = {
   documentPath: string;
   create: boolean;
   pythonCommand?: string;
+  nodebookPythonPackagePath?: string;
+  runtimeMode?: "user" | "managed";
   uiDistPath?: string;
   authToken?: string;
   port: number;
@@ -16,6 +18,8 @@ export function parseStartupOptions(args: string[]): StartupOptions {
   let documentPath: string | undefined;
   let create = false;
   let pythonCommand: string | undefined;
+  let nodebookPythonPackagePath: string | undefined;
+  let runtimeMode: "user" | "managed" | undefined;
   let uiDistPath: string | undefined;
   let authToken: string | undefined;
   let port = defaultPort;
@@ -41,6 +45,24 @@ export function parseStartupOptions(args: string[]): StartupOptions {
 
     if (arg === "--python") {
       pythonCommand = readFlagValue(args, index, "--python");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--nodebook-python-package") {
+      nodebookPythonPackagePath = readFlagValue(
+        args,
+        index,
+        "--nodebook-python-package",
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--runtime-mode") {
+      runtimeMode = parseRuntimeMode(
+        readFlagValue(args, index, "--runtime-mode"),
+      );
       index += 1;
       continue;
     }
@@ -91,11 +113,18 @@ export function parseStartupOptions(args: string[]): StartupOptions {
     documentPath: resolvedDocumentPath,
     create,
     ...(pythonCommand ? { pythonCommand } : {}),
+    ...(nodebookPythonPackagePath ? { nodebookPythonPackagePath } : {}),
+    ...(runtimeMode ? { runtimeMode } : {}),
     ...(uiDistPath ? { uiDistPath } : {}),
     ...(authToken ? { authToken } : {}),
     port,
     hostname,
   };
+}
+
+function parseRuntimeMode(value: string): "user" | "managed" {
+  if (value === "user" || value === "managed") return value;
+  throw new Error(`Invalid --runtime-mode value: ${value}`);
 }
 
 function readFlagValue(
