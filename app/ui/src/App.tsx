@@ -789,7 +789,9 @@ export default function App() {
     runNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
+      document: editableDocument ?? undefined,
       inputs: {},
+      source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
       signal: abortController.signal,

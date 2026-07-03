@@ -12,14 +12,12 @@ import {
   getPythonEnvironmentInfo,
   type PythonEnvironmentInfo,
   resolvePythonCommand,
-  resolvePythonRunnerPath,
 } from "./runtime_config.ts";
 
 import {
   buildDownstreamAdjacency,
   buildUpstreamAdjacency,
   collectRequiredNodeIds,
-  getSinkNodes,
 } from "./graph.ts";
 import {
   PythonWorkerClient,
@@ -27,7 +25,7 @@ import {
 } from "./python_worker_client.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 
-type RunnerNodeEvent = {
+type WorkerNodeEvent = {
   type: "node_started" | "node_completed" | "node_failed";
   index: number;
   nodeId: string;
@@ -35,287 +33,16 @@ type RunnerNodeEvent = {
   result?: NodeRunResult;
 };
 
-type RunnerFinalEvent = {
+type WorkerFinalEvent = {
   type: "run_completed" | "run_failed";
   response: ExecutionResponse;
 };
 
-type RunnerCacheClearedEvent = {
-  type: "session_cache_cleared";
-  ok: boolean;
-};
-
-type RunnerEvent = RunnerNodeEvent | RunnerFinalEvent;
-type SessionEvent = RunnerEvent | RunnerCacheClearedEvent;
-
-class AsyncEventQueue<T> implements AsyncIterable<T> {
-  private values: T[] = [];
-  private waiting:
-    | {
-      resolve: (value: IteratorResult<T>) => void;
-      reject: (error: unknown) => void;
-    }
-    | null = null;
-  private closed = false;
-  private error: unknown = null;
-
-  push(value: T): void {
-    if (this.closed) return;
-    if (this.waiting) {
-      const waiting = this.waiting;
-      this.waiting = null;
-      waiting.resolve({ value, done: false });
-      return;
-    }
-    this.values.push(value);
-  }
-
-  close(): void {
-    this.closed = true;
-    if (this.waiting) {
-      const waiting = this.waiting;
-      this.waiting = null;
-      waiting.resolve({ value: undefined, done: true });
-    }
-  }
-
-  fail(error: unknown): void {
-    this.error = error;
-    this.closed = true;
-    if (this.waiting) {
-      const waiting = this.waiting;
-      this.waiting = null;
-      waiting.reject(error);
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: () => {
-        if (this.values.length > 0) {
-          return Promise.resolve({ value: this.values.shift()!, done: false });
-        }
-        if (this.error) {
-          return Promise.reject(this.error);
-        }
-        if (this.closed) {
-          return Promise.resolve({ value: undefined, done: true });
-        }
-        return new Promise<IteratorResult<T>>((resolve, reject) => {
-          this.waiting = { resolve, reject };
-        });
-      },
-    };
-  }
-}
-
-class PythonRuntimeSession {
-  private child: Deno.ChildProcess | null = null;
-  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  private activeQueue: AsyncEventQueue<SessionEvent> | null = null;
-  private stdoutDone: Promise<void> | null = null;
-  private stderrDone: Promise<void> | null = null;
-  private stderrText = "";
-  private operationChain: Promise<void> = Promise.resolve();
-  private readonly encoder = new TextEncoder();
-
-  async *run(payload: Record<string, unknown>): AsyncGenerator<RunnerEvent> {
-    const release = await this.acquire();
-
-    try {
-      const queue = await this.startOperation(payload);
-      for await (const event of queue) {
-        if (event.type === "session_cache_cleared") {
-          continue;
-        }
-        yield event;
-      }
-    } finally {
-      release();
-    }
-  }
-
-  async clearCache(): Promise<void> {
-    const release = await this.acquire();
-
-    try {
-      const queue = await this.startOperation({ command: "clear_cache" });
-      for await (const event of queue) {
-        if (event.type === "session_cache_cleared") return;
-      }
-      throw new Error("runner.py session ended before clearing cache");
-    } finally {
-      release();
-    }
-  }
-
-  async shutdown(): Promise<void> {
-    const release = await this.acquire();
-    try {
-      if (this.activeQueue) {
-        this.activeQueue.fail(new Error("runner.py session was shut down"));
-        this.activeQueue = null;
-      }
-
-      const child = this.child;
-      const writer = this.writer;
-      this.child = null;
-      this.writer = null;
-
-      if (writer) {
-        await writer.close().catch(() => {});
-      }
-      if (child) {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // Process may already have exited after stdin closed.
-        }
-        await child.status.catch(() => {});
-      }
-
-      await Promise.allSettled([
-        this.stdoutDone ?? Promise.resolve(),
-        this.stderrDone ?? Promise.resolve(),
-      ]);
-      this.stdoutDone = null;
-      this.stderrDone = null;
-      this.stderrText = "";
-    } finally {
-      release();
-    }
-  }
-
-  private async acquire(): Promise<() => void> {
-    const previous = this.operationChain;
-    let release!: () => void;
-    this.operationChain = previous.then(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
-    await previous;
-    return release;
-  }
-
-  private async startOperation(
-    payload: Record<string, unknown>,
-  ): Promise<AsyncEventQueue<SessionEvent>> {
-    await this.ensureStarted();
-    if (!this.writer) {
-      throw new Error("runner.py session stdin is unavailable");
-    }
-    if (this.activeQueue) {
-      throw new Error("runner.py session already has an active operation");
-    }
-
-    const queue = new AsyncEventQueue<SessionEvent>();
-    this.activeQueue = queue;
-    await this.writer.write(
-      this.encoder.encode(`${JSON.stringify(payload)}\n`),
-    );
-    return queue;
-  }
-
-  private async ensureStarted(): Promise<void> {
-    if (this.child && this.writer) return;
-
-    const command = new Deno.Command(await resolvePythonCommand(), {
-      args: [resolvePythonRunnerPath(), "--session"],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    });
-
-    this.child = command.spawn();
-    this.writer = this.child.stdin.getWriter();
-    this.stderrText = "";
-    this.stdoutDone = this.readStdout(this.child.stdout);
-    this.stderrDone = this.readStderr(this.child.stderr);
-  }
-
-  private async readStdout(stream: ReadableStream<Uint8Array>): Promise<void> {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          this.handleLine(line);
-        }
-
-        if (done) break;
-      }
-
-      if (buffer.trim().length > 0) {
-        this.handleLine(buffer);
-      }
-
-      this.failActiveOperation(
-        new Error(
-          `runner.py session ended unexpectedly. stderr: ${this.stderrText}`,
-        ),
-      );
-      this.child = null;
-      this.writer = null;
-    } catch (error) {
-      this.failActiveOperation(error);
-      this.child = null;
-      this.writer = null;
-    }
-  }
-
-  private async readStderr(stream: ReadableStream<Uint8Array>): Promise<void> {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-
-    while (true) {
-      const { value, done } = await reader.read();
-      this.stderrText += decoder.decode(value, { stream: !done });
-      if (this.stderrText.length > 8_000) {
-        this.stderrText = this.stderrText.slice(-8_000);
-      }
-      if (done) break;
-    }
-  }
-
-  private handleLine(line: string): void {
-    if (line.trim().length === 0) return;
-    if (!this.activeQueue) {
-      throw new Error(`runner.py emitted an event without an active operation`);
-    }
-
-    const event = JSON.parse(line) as SessionEvent;
-    this.activeQueue.push(event);
-
-    if (
-      event.type === "run_completed" || event.type === "run_failed" ||
-      event.type === "session_cache_cleared"
-    ) {
-      this.activeQueue.close();
-      this.activeQueue = null;
-    }
-  }
-
-  private failActiveOperation(error: unknown): void {
-    if (!this.activeQueue) return;
-    this.activeQueue.fail(error);
-    this.activeQueue = null;
-  }
-}
+type WorkerRunEvent = WorkerNodeEvent | WorkerFinalEvent;
 
 export { getPythonEnvironmentInfo, resolvePythonCommand };
 export type { PythonEnvironmentInfo };
 
-const runtimeSession = new PythonRuntimeSession();
 const sourceRuntimeWorker = new PythonWorkerClient();
 
 export function buildRunPlan(graph: Graph, targetNodeId: string): RunPlan {
@@ -391,15 +118,7 @@ export async function runPythonNode(
   inputs: Record<string, unknown>,
 ): Promise<NodeRunResult> {
   const graph: Graph = { nodes: [node], edges: [] };
-  const response = await executeRunPlan(
-    graph,
-    { targetNodeIds: [node.id], steps: [{ nodeId: node.id, dependsOn: [] }] },
-    inputs,
-    false,
-    "run_node",
-    node.id,
-    "refresh",
-  );
+  const response = await executeGraphRun(graph, "run_node", node.id, inputs);
 
   return response.resultsByNode[node.id];
 }
@@ -410,16 +129,7 @@ export async function runToNode(
   inputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): Promise<ExecutionResponse> {
-  const runPlan = buildRunPlan(graph, nodeId);
-  return await executeRunPlan(
-    graph,
-    runPlan,
-    inputs,
-    trace,
-    "run_to_node",
-    nodeId,
-    "refresh",
-  );
+  return await executeGraphRun(graph, "run_to_node", nodeId, inputs, trace);
 }
 
 export async function runSourceToNode(
@@ -441,6 +151,25 @@ export async function runSourceToNode(
   );
 }
 
+export async function runSourceSingleNode(
+  source: string,
+  documentPath: string,
+  nodeId: string,
+  inputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): Promise<ExecutionResponse> {
+  if (hasExplicitRunInputs(inputs)) {
+    return sourceBackedInputsNotSupportedResponse("run_node", nodeId, trace);
+  }
+  return await executeSourceRun(
+    source,
+    documentPath,
+    "run_node",
+    nodeId,
+    trace,
+  );
+}
+
 export async function* streamRunToNode(
   runId: string,
   graph: Graph,
@@ -448,16 +177,13 @@ export async function* streamRunToNode(
   inputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): AsyncGenerator<ExecutionStreamEvent> {
-  const runPlan = buildRunPlan(graph, nodeId);
-  yield* streamRunPlanExecution(
+  yield* streamGraphRun(
     runId,
     graph,
-    runPlan,
-    inputs,
-    trace,
     "run_to_node",
     nodeId,
-    "refresh",
+    inputs,
+    trace,
   );
 }
 
@@ -478,8 +204,6 @@ export async function* streamSourceRunToNode(
     );
     return;
   }
-  // The Phase 5 worker emits coarse run events only. Node-level streaming stays
-  // on the legacy graph runner until the worker protocol grows those events.
   yield* streamSourceRun(
     runId,
     source,
@@ -490,22 +214,44 @@ export async function* streamSourceRunToNode(
   );
 }
 
+export async function* streamSourceRunSingleNode(
+  runId: string,
+  source: string,
+  documentPath: string,
+  nodeId: string,
+  inputs: Record<string, unknown> = {},
+  trace: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  if (hasExplicitRunInputs(inputs)) {
+    yield* streamSourceBackedInputsNotSupported(
+      runId,
+      "run_node",
+      nodeId,
+      trace,
+    );
+    return;
+  }
+  yield* streamSourceRun(
+    runId,
+    source,
+    documentPath,
+    "run_node",
+    nodeId,
+    trace,
+  );
+}
+
 export async function runGraph(
   graph: Graph,
   userInputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): Promise<ExecutionResponse> {
-  const sinks = getSinkNodes(graph);
-  const runPlan = buildRunPlanForTargets(graph, [...sinks]);
-
-  return await executeRunPlan(
+  return await executeGraphRun(
     graph,
-    runPlan,
-    userInputs,
-    trace,
     "run_graph",
     undefined,
-    "refresh",
+    userInputs,
+    trace,
   );
 }
 
@@ -537,18 +283,13 @@ export async function* streamRunGraph(
   userInputs: Record<string, unknown> = {},
   trace: boolean = false,
 ): AsyncGenerator<ExecutionStreamEvent> {
-  const sinks = getSinkNodes(graph);
-  const runPlan = buildRunPlanForTargets(graph, [...sinks]);
-
-  yield* streamRunPlanExecution(
+  yield* streamGraphRun(
     runId,
     graph,
-    runPlan,
-    userInputs,
-    trace,
     "run_graph",
     undefined,
-    "refresh",
+    userInputs,
+    trace,
   );
 }
 
@@ -568,8 +309,6 @@ export async function* streamSourceRunGraph(
     );
     return;
   }
-  // The Phase 5 worker emits coarse run events only. Node-level streaming stays
-  // on the legacy graph runner until the worker protocol grows those events.
   yield* streamSourceRun(
     runId,
     source,
@@ -586,16 +325,12 @@ export async function runSingleNode(
   inputs: Record<string, unknown> = {},
   traceEnabled = false,
 ): Promise<ExecutionResponse> {
-  const runPlan = buildRunPlan(graph, nodeId);
-
-  return await executeRunPlan(
+  return await executeGraphRun(
     graph,
-    runPlan,
-    inputs,
-    traceEnabled,
     "run_node",
     nodeId,
-    "single_node",
+    inputs,
+    traceEnabled,
   );
 }
 
@@ -606,22 +341,18 @@ export async function* streamRunSingleNode(
   inputs: Record<string, unknown> = {},
   traceEnabled = false,
 ): AsyncGenerator<ExecutionStreamEvent> {
-  const runPlan = buildRunPlan(graph, nodeId);
-
-  yield* streamRunPlanExecution(
+  yield* streamGraphRun(
     runId,
     graph,
-    runPlan,
-    inputs,
-    traceEnabled,
     "run_node",
     nodeId,
-    "single_node",
+    inputs,
+    traceEnabled,
   );
 }
 
 export async function clearRuntimeSessionCache(): Promise<void> {
-  await runtimeSession.clearCache();
+  await clearSourceRuntimeSessionCache();
 }
 
 export async function clearSourceRuntimeSessionCache(): Promise<void> {
@@ -636,7 +367,7 @@ export async function clearSourceRuntimeSessionCache(): Promise<void> {
 }
 
 export async function shutdownRuntimeSession(): Promise<void> {
-  await runtimeSession.shutdown();
+  await shutdownSourceRuntimeSession();
 }
 
 export async function shutdownSourceRuntimeSession(): Promise<void> {
@@ -663,163 +394,42 @@ export function printNodeRunResult(result: NodeRunResult): void {
   }
 }
 
-async function executeRunPlan(
+async function executeGraphRun(
   graph: Graph,
-  runPlan: RunPlan,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined = undefined,
   userInputs: Record<string, unknown> = {},
   traceEnabled: boolean = false,
-  runType: ExecutionRunType,
-  targetNodeId: string | undefined = undefined,
-  cacheMode: "refresh" | "single_node" = "refresh",
 ): Promise<ExecutionResponse> {
-  let finalResponse: ExecutionResponse | null = null;
-
-  for await (
-    const event of streamPythonRunPlan(
-      graph,
-      runPlan,
-      userInputs,
-      traceEnabled,
-      runType,
-      targetNodeId,
-      cacheMode,
-    )
-  ) {
-    if (event.type === "run_completed" || event.type === "run_failed") {
-      finalResponse = event.response;
-    }
-  }
-
-  if (!finalResponse) {
-    throw new Error("runner.py ended before sending a final run event");
-  }
-
-  return finalResponse;
-}
-
-async function* streamRunPlanExecution(
-  runId: string,
-  graph: Graph,
-  runPlan: RunPlan,
-  userInputs: Record<string, unknown>,
-  traceEnabled: boolean,
-  runType: ExecutionRunType,
-  targetNodeId: string | undefined = undefined,
-  cacheMode: "refresh" | "single_node" = "refresh",
-): AsyncGenerator<ExecutionStreamEvent> {
-  yield {
-    type: "run_started",
-    runId,
+  const source = renderGraphAsPythonSource(graph, userInputs);
+  return await executeWorkerRun(
+    source,
+    graphDocumentPath(),
     runType,
     targetNodeId,
-  };
-  yield {
-    type: "run_plan",
-    runId,
-    runType,
-    targetNodeId,
-    plan: cacheMode === "single_node" && targetNodeId
-      ? displayRunSingleNodePlan(runPlan, targetNodeId)
-      : runPlan,
-  };
-
-  for await (
-    const event of streamPythonRunPlan(
-      graph,
-      runPlan,
-      userInputs,
-      traceEnabled,
-      runType,
-      targetNodeId,
-      cacheMode,
-    )
-  ) {
-    if (event.type === "node_started") {
-      yield {
-        type: "node_started",
-        runId,
-        runType,
-        targetNodeId,
-        index: event.index,
-        nodeId: event.nodeId,
-        dependsOn: event.dependsOn,
-      };
-      continue;
-    }
-
-    if (event.type === "node_completed" || event.type === "node_failed") {
-      yield {
-        type: event.type,
-        runId,
-        runType,
-        targetNodeId,
-        index: event.index,
-        nodeId: event.nodeId,
-        dependsOn: event.dependsOn,
-        result: event.result!,
-      };
-      continue;
-    }
-
-    const finalEvent = event as RunnerFinalEvent;
-    yield {
-      type: finalEvent.type,
-      runId,
-      runType,
-      targetNodeId,
-      response: finalEvent.response,
-    };
-  }
+    traceEnabled,
+    userInputs,
+  );
 }
 
-function displayRunSingleNodePlan(
-  runPlan: RunPlan,
-  targetNodeId: string,
-): RunPlan {
-  const targetStep = runPlan.steps.find((step) => step.nodeId === targetNodeId);
-  return {
-    targetNodeIds: [targetNodeId],
-    steps: targetStep ? [targetStep] : [],
-  };
-}
-
-async function* streamPythonRunPlan(
-  graph: Graph,
-  runPlan: RunPlan,
-  userInputs: Record<string, unknown>,
-  traceEnabled: boolean,
-  runType: ExecutionRunType,
-  targetNodeId: string | undefined,
-  cacheMode: "refresh" | "single_node",
-): AsyncGenerator<RunnerEvent> {
-  yield* runtimeSession.run({
-    command: "run",
-    nodes: graph.nodes,
-    plan: runPlan,
-    inputs: userInputs,
-    trace: traceEnabled,
-    runType,
-    targetNodeId,
-    cacheMode,
-  });
-}
-
-async function executeSourceRun(
+async function executeWorkerRun(
   source: string,
   documentPath: string,
-  runType: "run_graph" | "run_to_node",
+  runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
+  inputs: Record<string, unknown> = {},
 ): Promise<ExecutionResponse> {
   let finalResponse: ExecutionResponse | null = null;
 
   for await (
-    const event of streamSourceWorkerRun(
+    const event of streamWorkerRunEvents(
       source,
       documentPath,
       runType,
       targetNodeId,
       traceEnabled,
+      inputs,
     )
   ) {
     if (event.type === "run_completed" || event.type === "run_failed") {
@@ -834,8 +444,43 @@ async function executeSourceRun(
   return finalResponse;
 }
 
+async function* streamGraphRun(
+  runId: string,
+  graph: Graph,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined = undefined,
+  userInputs: Record<string, unknown> = {},
+  traceEnabled: boolean = false,
+): AsyncGenerator<ExecutionStreamEvent> {
+  yield* streamWorkerRun(
+    runId,
+    renderGraphAsPythonSource(graph, userInputs),
+    graphDocumentPath(),
+    runType,
+    targetNodeId,
+    traceEnabled,
+    userInputs,
+  );
+}
+
+async function executeSourceRun(
+  source: string,
+  documentPath: string,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+): Promise<ExecutionResponse> {
+  return await executeWorkerRun(
+    source,
+    documentPath,
+    runType,
+    targetNodeId,
+    traceEnabled,
+  );
+}
+
 function sourceBackedInputsNotSupportedResponse(
-  runType: "run_graph" | "run_to_node",
+  runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
 ): ExecutionResponse {
@@ -858,7 +503,7 @@ function sourceBackedInputsNotSupportedResponse(
 
 async function* streamSourceBackedInputsNotSupported(
   runId: string,
-  runType: "run_graph" | "run_to_node",
+  runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
 ): AsyncGenerator<ExecutionStreamEvent> {
@@ -885,17 +530,37 @@ async function* streamSourceRun(
   runId: string,
   source: string,
   documentPath: string,
-  runType: "run_graph" | "run_to_node",
+  runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
 ): AsyncGenerator<ExecutionStreamEvent> {
+  yield* streamWorkerRun(
+    runId,
+    source,
+    documentPath,
+    runType,
+    targetNodeId,
+    traceEnabled,
+  );
+}
+
+async function* streamWorkerRun(
+  runId: string,
+  source: string,
+  documentPath: string,
+  runType: ExecutionRunType,
+  targetNodeId: string | undefined,
+  traceEnabled: boolean,
+  inputs: Record<string, unknown> = {},
+): AsyncGenerator<ExecutionStreamEvent> {
   for await (
-    const event of streamSourceWorkerRun(
+    const event of streamWorkerRunEvents(
       source,
       documentPath,
       runType,
       targetNodeId,
       traceEnabled,
+      inputs,
     )
   ) {
     if (event.type === "run_started") {
@@ -915,6 +580,33 @@ async function* streamSourceRun(
         runType,
         targetNodeId,
         plan: readWorkerRunPlan(event),
+      };
+      continue;
+    }
+
+    if (event.type === "node_started") {
+      yield {
+        type: "node_started",
+        runId,
+        runType,
+        targetNodeId,
+        index: readWorkerEventNumber(event, "index"),
+        nodeId: readWorkerEventString(event, "nodeId"),
+        dependsOn: readWorkerStringArray(event, "dependsOn"),
+      };
+      continue;
+    }
+
+    if (event.type === "node_completed" || event.type === "node_failed") {
+      yield {
+        type: event.type,
+        runId,
+        runType,
+        targetNodeId,
+        index: readWorkerEventNumber(event, "index"),
+        nodeId: readWorkerEventString(event, "nodeId"),
+        dependsOn: readWorkerStringArray(event, "dependsOn"),
+        result: readWorkerNodeResult(event),
       };
       continue;
     }
@@ -943,17 +635,19 @@ async function* streamSourceRun(
   }
 }
 
-async function* streamSourceWorkerRun(
+async function* streamWorkerRunEvents(
   source: string,
   documentPath: string,
-  runType: "run_graph" | "run_to_node",
+  runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
+  inputs: Record<string, unknown> = {},
 ): AsyncGenerator<PythonWorkerEvent> {
   const payload: Record<string, unknown> = {
     source,
     documentPath,
     trace: traceEnabled,
+    inputs,
   };
   if (targetNodeId) {
     payload.target = targetNodeId;
@@ -988,6 +682,40 @@ function readWorkerExecutionResponse(
   return response as ExecutionResponse;
 }
 
+function readWorkerNodeResult(event: PythonWorkerEvent): NodeRunResult {
+  const result = event["result"];
+  if (!isRecord(result)) {
+    throw new Error("Python worker node event did not include a node result");
+  }
+  return result as NodeRunResult;
+}
+
+function readWorkerEventNumber(
+  event: PythonWorkerEvent,
+  field: string,
+): number {
+  const value = event[field];
+  return typeof value === "number" ? value : 0;
+}
+
+function readWorkerEventString(
+  event: PythonWorkerEvent,
+  field: string,
+): string {
+  const value = event[field];
+  return typeof value === "string" ? value : "";
+}
+
+function readWorkerStringArray(
+  event: PythonWorkerEvent,
+  field: string,
+): string[] {
+  const value = event[field];
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : [];
+}
+
 function workerEventToExecutionFailure(
   event: PythonWorkerEvent,
   runType: ExecutionRunType,
@@ -1020,94 +748,229 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function* _streamOneShotPythonRunPlan(
+function renderGraphAsPythonSource(
   graph: Graph,
-  runPlan: RunPlan,
-  userInputs: Record<string, unknown>,
-  traceEnabled: boolean,
-  runType: ExecutionRunType,
-  targetNodeId: string | undefined,
-  cacheMode: "refresh" | "single_node",
-): AsyncGenerator<RunnerEvent> {
-  const command = new Deno.Command(await resolvePythonCommand(), {
-    args: [resolvePythonRunnerPath()],
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  });
-
-  const child = command.spawn();
-  const writer = child.stdin.getWriter();
-  await writer.write(
-    new TextEncoder().encode(
-      JSON.stringify({
-        nodes: graph.nodes,
-        plan: runPlan,
-        inputs: userInputs,
-        trace: traceEnabled,
-        runType,
-        targetNodeId,
-        cacheMode,
-      }),
+  rootInputs: Record<string, unknown> = {},
+): string {
+  const functionNames = uniqueFunctionNames(graph.nodes);
+  const functionParameters = functionParametersByNode(graph);
+  const rootInputsByNode = buildRootInputsByNode(graph, rootInputs);
+  const blocks = [
+    "from nodebook import node",
+    "",
+    ...graph.nodes.flatMap((node) =>
+      renderGraphNodeAsPythonBlock(
+        node,
+        functionNames.get(node.id) ?? safePythonIdentifier(node.id),
+        functionParameters.get(node.id) ?? [],
+        rootInputsByNode.get(node.id) ?? [],
+      )
     ),
+  ];
+  const edgeLines = graph.edges.flatMap((edge) => {
+    const upstream = functionNames.get(edge.fromNode);
+    const downstream = functionNames.get(edge.toNode);
+    return upstream && downstream
+      ? [`${downstream}.depends_on(${upstream})`]
+      : [];
+  });
+  if (edgeLines.length > 0) {
+    blocks.push("# NodeBook graph", ...edgeLines, "");
+  }
+  return blocks.join("\n");
+}
+
+function renderGraphNodeAsPythonBlock(
+  node: Node,
+  functionName: string,
+  parameters: string[],
+  rootInputs: string[],
+): string[] {
+  const renderedParameters = node.codeKind === "runtime" ? [] : parameters;
+  const rootInputAssignments = node.codeKind === "runtime"
+    ? []
+    : renderRootInputAssignments(rootInputs);
+  const returnLine = node.codeKind === "runtime"
+    ? renderGlobalsReturnLine(node.outputs)
+    : renderReturnLine(node.outputs);
+
+  return [
+    `@node(id=${JSON.stringify(node.id)}, outputs=${
+      renderStringList(node.outputs)
+    })`,
+    `def ${functionName}(${renderParameterList(renderedParameters)}):`,
+    ...rootInputAssignments,
+    ...indentPythonBody(node.code),
+    returnLine,
+    "",
+  ];
+}
+
+function functionParametersByNode(graph: Graph): Map<string, string[]> {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const parametersByNode = new Map(
+    graph.nodes.map((node) => [node.id, [] as string[]]),
   );
-  await writer.close();
 
-  const stderrPromise = collectText(child.stderr);
-  const reader = child.stdout.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let sawFinalEvent = false;
+  for (const edge of graph.edges) {
+    const upstream = nodesById.get(edge.fromNode);
+    if (!upstream || !nodesById.has(edge.toNode)) continue;
+    parametersByNode.get(edge.toNode)?.push(...upstream.outputs);
+  }
 
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line.trim().length === 0) continue;
-
-        const event = JSON.parse(line) as RunnerEvent;
-        if (event.type === "run_completed" || event.type === "run_failed") {
-          sawFinalEvent = true;
-        }
-        yield event;
-      }
-
-      if (done) break;
-    }
-
-    if (buffer.trim().length > 0) {
-      const event = JSON.parse(buffer) as RunnerEvent;
-      if (event.type === "run_completed" || event.type === "run_failed") {
-        sawFinalEvent = true;
-      }
-      yield event;
-    }
-  } catch (error) {
-    const stderrText = await stderrPromise;
-    throw new Error(
-      `runner.py produced invalid event output. stderr: ${stderrText}. error: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+  for (const node of graph.nodes) {
+    parametersByNode.set(
+      node.id,
+      uniqueValidPythonParameterNames(parametersByNode.get(node.id) ?? []),
     );
   }
 
-  const status = await child.status;
-  const stderrText = await stderrPromise;
-  if (!sawFinalEvent) {
-    throw new Error(
-      `runner.py ended before a final run event (exit code ${status.code}). stderr: ${stderrText}`,
-    );
-  }
+  return parametersByNode;
 }
 
-async function collectText(
-  stream: ReadableStream<Uint8Array>,
-): Promise<string> {
-  const response = new Response(stream);
-  return await response.text();
+function buildRootInputsByNode(
+  graph: Graph,
+  rootInputs: Record<string, unknown> = {},
+): Map<string, string[]> {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const hasUpstreamByNode = new Map(
+    graph.nodes.map((node) => [node.id, false]),
+  );
+
+  for (const edge of graph.edges) {
+    if (!nodesById.has(edge.fromNode) || !nodesById.has(edge.toNode)) continue;
+    hasUpstreamByNode.set(edge.toNode, true);
+  }
+
+  const rootInputNames = uniqueValidPythonParameterNames(
+    Object.keys(rootInputs),
+  );
+  return new Map(
+    graph.nodes.map((node) => [
+      node.id,
+      hasUpstreamByNode.get(node.id) ? [] : rootInputNames,
+    ]),
+  );
 }
+
+function uniqueFunctionNames(nodes: Node[]): Map<string, string> {
+  const counts = new Map<string, number>();
+  const result = new Map<string, string>();
+  for (const node of nodes) {
+    const baseName = safePythonIdentifier(node.id);
+    const count = counts.get(baseName) ?? 0;
+    counts.set(baseName, count + 1);
+    result.set(node.id, count === 0 ? baseName : `${baseName}_${count + 1}`);
+  }
+  return result;
+}
+
+function uniqueValidPythonParameterNames(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!isValidPythonIdentifier(value) || PYTHON_KEYWORDS.has(value)) {
+      continue;
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function safePythonIdentifier(value: string): string {
+  const normalized = value.replaceAll(/[^A-Za-z0-9_]/g, "_");
+  const prefixed = /^[A-Za-z_]/.test(normalized)
+    ? normalized
+    : `node_${normalized}`;
+  return PYTHON_KEYWORDS.has(prefixed) ? `node_${prefixed}` : prefixed;
+}
+
+function isValidPythonIdentifier(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+function indentPythonBody(code: string): string[] {
+  const lines = code.replace(/\r\n/g, "\n").split("\n");
+  const body = lines.length === 1 && lines[0].trim().length === 0
+    ? ["pass"]
+    : lines;
+  return body.map((line) => line.length === 0 ? "" : `    ${line}`);
+}
+
+function renderReturnLine(outputs: string[]): string {
+  if (outputs.length === 0) {
+    return "    return {}";
+  }
+  const entries = outputs.map((output) =>
+    `${JSON.stringify(output)}: ${output}`
+  );
+  return `    return {${entries.join(", ")}}`;
+}
+
+function renderRootInputAssignments(inputs: string[]): string[] {
+  return inputs.map((input) =>
+    `    ${input} = globals()[${JSON.stringify(input)}]`
+  );
+}
+
+function renderGlobalsReturnLine(outputs: string[]): string {
+  if (outputs.length === 0) {
+    return "    return {}";
+  }
+  const entries = outputs.map((output) =>
+    `${JSON.stringify(output)}: globals()[${JSON.stringify(output)}]`
+  );
+  return `    return {${entries.join(", ")}}`;
+}
+
+function renderParameterList(values: string[]): string {
+  return values.join(", ");
+}
+
+function renderStringList(values: string[]): string {
+  return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
+}
+
+function graphDocumentPath(): string {
+  return `${Deno.cwd()}/.nodebook_runtime_graph.py`;
+}
+
+const PYTHON_KEYWORDS = new Set([
+  "False",
+  "None",
+  "True",
+  "and",
+  "as",
+  "assert",
+  "async",
+  "await",
+  "break",
+  "class",
+  "continue",
+  "def",
+  "del",
+  "elif",
+  "else",
+  "except",
+  "finally",
+  "for",
+  "from",
+  "global",
+  "if",
+  "import",
+  "in",
+  "is",
+  "lambda",
+  "nonlocal",
+  "not",
+  "or",
+  "pass",
+  "raise",
+  "return",
+  "try",
+  "while",
+  "with",
+  "yield",
+]);

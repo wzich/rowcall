@@ -9,8 +9,10 @@ import {
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   resolvePythonCommand,
+  runGraph,
   runSourceGraph,
   runSourceToNode,
+  runToNode,
   shutdownRuntimeSession,
   shutdownSourceRuntimeSession,
   streamRunGraph,
@@ -215,6 +217,8 @@ sourceRuntimeTest(
     assertEquals(events.map((event) => event.type), [
       "run_started",
       "run_plan",
+      "node_started",
+      "node_completed",
       "run_completed",
     ]);
     assertObjectMatch(events[1], {
@@ -241,7 +245,7 @@ sourceRuntimeTest(
 );
 
 sourceRuntimeTest(
-  "streamSourceRunToNode emits coarse worker events for target runs",
+  "streamSourceRunToNode emits per-node worker events for target runs",
   async () => {
     const directory = await Deno.makeTempDir();
     const documentPath = `${directory}/target_source.py`;
@@ -268,6 +272,10 @@ sourceRuntimeTest(
     assertEquals(events.map((event) => event.type), [
       "run_started",
       "run_plan",
+      "node_started",
+      "node_completed",
+      "node_started",
+      "node_completed",
       "run_completed",
     ]);
     assertObjectMatch(events[1], {
@@ -355,6 +363,96 @@ runtimeTest(
         },
       },
     });
+  },
+);
+
+runtimeTest(
+  "runGraph handles downstream input and output with the same name",
+  async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code: "x = 1",
+          outputs: ["x"],
+        },
+        {
+          id: "b",
+          code: "x = x + 1",
+          outputs: ["x"],
+        },
+      ],
+      edges: [{ fromNode: "a", toNode: "b" }],
+    };
+
+    const response = await runGraph(graph, {}, true);
+
+    assertEquals(response.ok, true);
+    assertEquals(response.executedNodeIds, ["a", "b"]);
+    assertEquals(response.finalOutputsByNode.b.x.jsonValue, 2);
+    assertExists(response.trace);
+    assertEquals(response.trace[1].inputs.x.jsonValue, 1);
+    assertEquals(response.trace[1].outputs.x.jsonValue, 2);
+  },
+);
+
+runtimeTest(
+  "runGraph handles root input and output with the same name",
+  async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "root",
+          code: "x = x + 1",
+          outputs: ["x"],
+        },
+      ],
+      edges: [],
+    };
+
+    const response = await runGraph(graph, { x: 1 }, true);
+
+    assertEquals(response.ok, true);
+    assertEquals(response.executedNodeIds, ["root"]);
+    assertEquals(response.finalOutputsByNode.root.x.jsonValue, 2);
+    assertExists(response.trace);
+    assertEquals(response.trace[0].inputs.x.jsonValue, 1);
+    assertEquals(response.trace[0].outputs.x.jsonValue, 2);
+  },
+);
+
+runtimeTest(
+  "runToNode handles downstream input and output with the same name",
+  async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code: "x = 1",
+          outputs: ["x"],
+        },
+        {
+          id: "b",
+          code: "x = x + 1",
+          outputs: ["x"],
+        },
+        {
+          id: "c",
+          code: "y = x + 10",
+          outputs: ["y"],
+        },
+      ],
+      edges: [
+        { fromNode: "a", toNode: "b" },
+        { fromNode: "b", toNode: "c" },
+      ],
+    };
+
+    const response = await runToNode(graph, "b");
+
+    assertEquals(response.ok, true);
+    assertEquals(response.executedNodeIds, ["a", "b"]);
+    assertEquals(response.finalOutputsByNode.b.x.jsonValue, 2);
   },
 );
 
@@ -736,6 +834,47 @@ runtimeTest(
 );
 
 runtimeTest(
+  "streamRunSingleNode handles cached input and output with the same name",
+  async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code: "x = 1",
+          outputs: ["x"],
+        },
+        {
+          id: "single",
+          code: "x = x + 1",
+          outputs: ["x"],
+        },
+      ],
+      edges: [{ fromNode: "a", toNode: "single" }],
+    };
+
+    await collectEvents(streamRunToNode("run-same-name-seed", graph, "single"));
+
+    const events = await collectEvents(
+      streamRunSingleNode("run-same-name-single", graph, "single"),
+    );
+    const finalEvent = events.at(-1);
+    assertExists(finalEvent);
+
+    assertObjectMatch(finalEvent, {
+      type: "run_completed",
+      response: {
+        ok: true,
+        runType: "run_node",
+        executedNodeIds: ["single"],
+        finalOutputsByNode: {
+          single: { x: { jsonValue: 2 } },
+        },
+      },
+    });
+  },
+);
+
+runtimeTest(
   "streamRunSingleNode rejects transitively stale upstream cache",
   async () => {
     await clearRuntimeSessionCache();
@@ -900,7 +1039,7 @@ runtimeTest(
         ok: true,
         finalOutputsByNode: {
           a: {
-            x: { name: "x", type: "builtins.Loud", repr: "Loud()" },
+            x: { name: "x", type: "builtins.a.<locals>.Loud", repr: "Loud()" },
           },
         },
       },

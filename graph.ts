@@ -292,6 +292,7 @@ function decodeNode(
 
   const id = record["id"];
   const code = record["code"];
+  const codeKind = record["codeKind"];
   const outputs = record["outputs"];
 
   let ok = true;
@@ -334,6 +335,18 @@ function decodeNode(
     ok = false;
   }
 
+  if (
+    codeKind !== undefined && codeKind !== "body" && codeKind !== "runtime"
+  ) {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node codeKind must be 'body' or 'runtime'",
+      field: "codeKind",
+      path: `nodes[${index}].codeKind`,
+    });
+    ok = false;
+  }
+
   if (!ok) {
     return null;
   }
@@ -341,6 +354,7 @@ function decodeNode(
   return {
     id: id as string,
     code: code as string,
+    ...(codeKind === "body" || codeKind === "runtime" ? { codeKind } : {}),
     outputs: outputs as string[],
   };
 }

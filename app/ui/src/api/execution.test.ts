@@ -76,7 +76,7 @@ Deno.test("runToNode sends optional document in the request body", async () => {
   assertEquals(requests[0].body.document, document);
 });
 
-Deno.test("runNode omits source from the request body", async () => {
+Deno.test("runNode sends optional source in the request body", async () => {
   const requests = await captureExecutionRequests(() =>
     runNode({
       graph,
@@ -87,10 +87,10 @@ Deno.test("runNode omits source from the request body", async () => {
 
   assertEquals(requests.length, 1);
   assertEquals(requests[0].path, "/run-node");
-  assertEquals("source" in requests[0].body, false);
+  assertEquals(requests[0].body.source, "from nodebook import node\n");
 });
 
-Deno.test("runNode omits document from the request body", async () => {
+Deno.test("runNode sends optional document in the request body", async () => {
   const requests = await captureExecutionRequests(() =>
     runNode({
       graph,
@@ -101,7 +101,7 @@ Deno.test("runNode omits document from the request body", async () => {
 
   assertEquals(requests.length, 1);
   assertEquals(requests[0].path, "/run-node");
-  assertEquals("document" in requests[0].body, false);
+  assertEquals(requests[0].body.document, document);
 });
 
 async function captureExecutionRequests(

@@ -41,6 +41,9 @@ export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
             customReturn,
           })
           : runtimeCode ?? code,
+        codeKind: shouldBuildRuntimeCode || typeof runtimeCode === "string"
+          ? "runtime"
+          : "body",
         runtimeCode,
         functionName,
         description,

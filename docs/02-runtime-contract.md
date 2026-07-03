@@ -106,13 +106,11 @@ current Python source or a validated editable document model that the server
 renders to Python source, then the Python runtime worker parses, validates,
 plans, and executes it with the active document path as file context.
 
-`Run single node` currently remains cache-backed through the legacy session
-runner. It is for iterative development: it executes only the selected Node,
-using copied outputs from valid cached upstream Nodes. If any required upstream
-cache entry is missing or transitively stale, `Run single node` fails with
-`cache_miss` instead of silently recomputing upstream Nodes. This behavior will
-move behind the Python runtime worker once the worker grows cache-aware
-single-node execution.
+`Run single node` is cache-backed through the Python runtime worker. It is for
+iterative development: it executes only the selected Node, using copied outputs
+from valid cached upstream Nodes. If any required upstream cache entry is
+missing or transitively stale, `Run single node` fails with `cache_miss` instead
+of silently recomputing upstream Nodes.
 
 Cache entries are valid only when the Node code, declared output names, explicit
 root inputs, and upstream cache keys still match. Failed executions are not
@@ -158,7 +156,7 @@ event: node_started
 data: {"type":"node_started","runId":"...","nodeId":"a","index":0}
 ```
 
-For cache-backed single-node and legacy graph APIs, the event sequence is:
+For worker-backed execution APIs, the event sequence is:
 
 - `run_started`
 - `run_plan`
@@ -171,15 +169,6 @@ to mark planned Nodes as queued before individual Nodes start running.
 
 The final `run_completed` or `run_failed` event contains the full
 `ExecutionResponse`, matching the non-streaming JSON response shape.
-
-For source-backed worker runs, the current streaming sequence is coarser:
-
-- `run_started`
-- `run_plan`
-- `run_completed` or `run_failed`
-
-The worker does not yet emit per-node streaming events. The final event still
-contains the full `ExecutionResponse`.
 
 In the current runtime, `stdout` and `stderr` are still node result artifacts.
 They are included in node results, not streamed as live chunks while Python code

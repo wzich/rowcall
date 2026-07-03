@@ -6,21 +6,9 @@ import {
 } from "./document.ts";
 import type { ValidationIssue } from "./types.ts";
 import {
-  resolvePythonCommand,
-  resolvePythonDocumentLoaderPath,
-} from "./runtime_config.ts";
-
-type PythonLoaderSuccess = {
-  ok: true;
-  document: NodebookDocumentV1;
-};
-
-type PythonLoaderFailure = {
-  ok: false;
-  issues: ValidationIssue[];
-};
-
-type PythonLoaderResult = PythonLoaderSuccess | PythonLoaderFailure;
+  PythonWorkerClient,
+  type PythonWorkerEvent,
+} from "./python_worker_client.ts";
 
 export type LoadPythonDocumentResult =
   | { ok: true; document: NodebookDocumentV1; issues: [] }
@@ -37,44 +25,88 @@ export type RenderPythonDocumentSourceResult =
 export async function loadPythonDocument(
   path: string,
 ): Promise<LoadPythonDocumentResult> {
-  const command = new Deno.Command(await resolvePythonCommand(), {
-    args: [resolvePythonDocumentLoaderPath(), path],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const output = await command.output();
-  const stdout = new TextDecoder().decode(output.stdout);
-  const stderr = new TextDecoder().decode(output.stderr);
-
-  if (!output.success) {
-    return {
-      ok: false,
-      issues: [{
-        kind: "invalid_python",
-        message: stderr.trim() || "Python document loader failed",
-      }],
-    };
-  }
-
-  let result: PythonLoaderResult;
+  const worker = new PythonWorkerClient();
   try {
-    result = JSON.parse(stdout) as PythonLoaderResult;
-  } catch {
+    const event = await worker.requestFinalEvent("load_document", {
+      documentPath: path,
+    });
+    if (event.type === "error") {
+      return {
+        ok: false,
+        issues: workerValidationIssues(
+          event,
+          "Python worker document load failed",
+        ),
+      };
+    }
+
+    if (event.type !== "load_document_completed") {
+      return {
+        ok: false,
+        issues: [{
+          kind: "invalid_python",
+          message:
+            `Python worker returned unexpected document event: ${event.type}`,
+        }],
+      };
+    }
+
+    if (event.ok === false) {
+      return {
+        ok: false,
+        issues: workerValidationIssues(
+          event,
+          "Python worker document load failed",
+        ),
+      };
+    }
+
+    if (!isNodebookDocument(event["document"])) {
+      return {
+        ok: false,
+        issues: [{
+          kind: "invalid_python",
+          message: "Python worker document load returned an invalid document",
+        }],
+      };
+    }
+
+    const documentWithSidecar = await applySidecarMetadata(
+      path,
+      event["document"],
+    );
+    return { ok: true, document: documentWithSidecar, issues: [] };
+  } catch (error) {
     return {
       ok: false,
       issues: [{
         kind: "invalid_python",
-        message: "Python document loader returned invalid JSON",
+        message: error instanceof Error ? error.message : String(error),
       }],
     };
+  } finally {
+    await worker.shutdown();
   }
+}
 
-  if (!result.ok) {
-    return { ok: false, issues: result.issues };
+function workerValidationIssues(
+  event: PythonWorkerEvent,
+  fallbackMessage: string,
+): ValidationIssue[] {
+  if (Array.isArray(event["issues"])) {
+    return event["issues"] as ValidationIssue[];
   }
+  return [{
+    kind: "invalid_python",
+    message: event.error?.message ?? fallbackMessage,
+  }];
+}
 
-  const documentWithSidecar = await applySidecarMetadata(path, result.document);
-  return { ok: true, document: documentWithSidecar, issues: [] };
+function isNodebookDocument(value: unknown): value is NodebookDocumentV1 {
+  const record = asRecord(value);
+  return typeof record?.["version"] === "number" &&
+    Array.isArray(record["nodes"]) &&
+    Array.isArray(record["edges"]);
 }
 
 export function sidecarPathForPythonDocument(path: string): string {

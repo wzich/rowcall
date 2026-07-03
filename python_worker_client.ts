@@ -1,13 +1,103 @@
 import { resolvePythonCommand } from "./runtime_config.ts";
+import type { NodebookDocumentV1 } from "./document.ts";
+import type { ExecutionResponse, ValidationIssue } from "./types.ts";
 
-export type PythonWorkerOperation =
-  | "validate_source"
-  | "inspect_source"
-  | "plan_run"
-  | "run_graph"
-  | "run_to_node"
-  | "clear_session_cache"
-  | "shutdown";
+export const pythonWorkerOperations = [
+  "validate_source",
+  "inspect_source",
+  "render_source",
+  "validate_candidate_source",
+  "plan_run",
+  "run_graph",
+  "run_to_node",
+  "run_node",
+  "load_document",
+  "clear_session_cache",
+  "shutdown",
+] as const;
+
+export type PythonWorkerOperation = typeof pythonWorkerOperations[number];
+
+export type PythonWorkerSourcePayload = {
+  source: string;
+  documentPath: string;
+};
+
+export type PythonWorkerSourceRunPayload = PythonWorkerSourcePayload & {
+  trace?: boolean;
+  inputs?: Record<string, unknown>;
+};
+
+export type PythonWorkerDocumentPayload = {
+  documentPath: string;
+};
+
+export type PythonWorkerPayloadByOperation = {
+  validate_source: PythonWorkerSourcePayload;
+  inspect_source: PythonWorkerSourcePayload;
+  render_source: PythonWorkerSourcePayload;
+  validate_candidate_source: PythonWorkerSourcePayload;
+  plan_run: PythonWorkerSourcePayload & { target?: string };
+  run_graph: PythonWorkerSourceRunPayload;
+  run_to_node: PythonWorkerSourceRunPayload & { target: string };
+  run_node: PythonWorkerSourceRunPayload & { target: string };
+  load_document: PythonWorkerDocumentPayload;
+  clear_session_cache: Record<string, never>;
+  shutdown: Record<string, never>;
+};
+
+export type PythonWorkerExecutionEvent = PythonWorkerEvent & {
+  type:
+    | "run_started"
+    | "run_plan"
+    | "node_started"
+    | "node_completed"
+    | "node_failed"
+    | "run_completed"
+    | "run_failed";
+  response?: ExecutionResponse;
+};
+
+export type PythonWorkerDocumentEvent = PythonWorkerEvent & {
+  type:
+    | "load_document_completed"
+    | "render_source_completed"
+    | "validate_candidate_source_completed";
+  document?: NodebookDocumentV1;
+  source?: string;
+  issues?: ValidationIssue[];
+};
+
+export const pythonWorkerTerminalEventTypes = [
+  "error",
+  "validate_source_completed",
+  "inspect_source_completed",
+  "render_source_completed",
+  "validate_candidate_source_completed",
+  "plan_run_completed",
+  "run_completed",
+  "run_failed",
+  "load_document_completed",
+  "session_cache_cleared",
+  "shutdown",
+] as const;
+
+export type PythonWorkerTerminalEventType =
+  typeof pythonWorkerTerminalEventTypes[number];
+
+export const pythonWorkerTerminalEventsByOperation = {
+  validate_source: ["validate_source_completed", "error"],
+  inspect_source: ["inspect_source_completed", "error"],
+  render_source: ["render_source_completed", "error"],
+  validate_candidate_source: ["validate_candidate_source_completed", "error"],
+  plan_run: ["plan_run_completed", "error"],
+  run_graph: ["run_completed", "run_failed", "error"],
+  run_to_node: ["run_completed", "run_failed", "error"],
+  run_node: ["run_completed", "run_failed", "error"],
+  load_document: ["load_document_completed", "error"],
+  clear_session_cache: ["session_cache_cleared", "error"],
+  shutdown: ["shutdown", "error"],
+} as const satisfies Record<PythonWorkerOperation, readonly string[]>;
 
 export type PythonWorkerEvent = {
   protocolVersion?: number;
@@ -290,14 +380,7 @@ export class PythonWorkerClient {
 }
 
 function isTerminalWorkerEvent(event: PythonWorkerEvent): boolean {
-  return [
-    "error",
-    "validate_source_completed",
-    "inspect_source_completed",
-    "plan_run_completed",
-    "run_completed",
-    "run_failed",
-    "session_cache_cleared",
-    "shutdown",
-  ].includes(event.type);
+  return pythonWorkerTerminalEventTypes.includes(
+    event.type as PythonWorkerTerminalEventType,
+  );
 }

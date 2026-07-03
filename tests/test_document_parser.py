@@ -58,6 +58,22 @@ format_text.depends_on(double)
         self.assertEqual(result.document.nodes[1].display_code, "y = x * 2")
         self.assertIn("GLOBAL = 2", result.document.globals_code)
 
+        app_document = result.document.to_app_dict()
+        self.assertEqual(app_document["version"], 1)
+        self.assertEqual(app_document["readOnly"], False)
+        self.assertEqual(app_document["globalsCode"], result.document.globals_code)
+        self.assertNotIn("path", app_document)
+        self.assertNotIn("issues", app_document)
+        self.assertEqual(
+            app_document["edges"],
+            [
+                {"fromNode": "load", "toNode": "double"},
+                {"fromNode": "double", "toNode": "format"},
+            ],
+        )
+        self.assertNotIn("functionSource", app_document["nodes"][0])
+        self.assertIn("GLOBAL = 2", app_document["nodes"][0]["runtimeCode"])
+
         target_plan = build_run_plan(result.document, "format")
         self.assertEqual(
             target_plan.to_dict(),

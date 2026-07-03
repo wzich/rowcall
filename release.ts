@@ -13,8 +13,6 @@ const compileIncludes = [
   "VERSION",
   "pyproject.toml",
   "requirements-alpha.txt",
-  "runner.py",
-  "python_document_loader.py",
   "nodebook",
   "app/ui/dist",
 ];

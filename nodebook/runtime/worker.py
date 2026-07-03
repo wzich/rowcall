@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, TextIO
 
 from .session import PROTOCOL_VERSION, RuntimeSession
@@ -34,7 +34,11 @@ def run_worker(
             continue
 
         try:
-            events, should_shutdown = handle_request(request, runtime_session)
+            events, should_shutdown = handle_request(
+                request,
+                runtime_session,
+                emit_event=lambda event: _write_event(output_stream, event),
+            )
         except Exception as exc:
             request_id = request.get("id") if isinstance(request, dict) else None
             events = [_error_event(request_id, "worker_error", str(exc))]
@@ -49,7 +53,11 @@ def run_worker(
     return 0
 
 
-def handle_request(request: Any, session: RuntimeSession) -> tuple[list[dict[str, Any]], bool]:
+def handle_request(
+    request: Any,
+    session: RuntimeSession,
+    emit_event: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
     if not isinstance(request, dict):
         return [_error_event(None, "invalid_request", "Worker requests must be JSON objects")], False
 
@@ -65,11 +73,15 @@ def handle_request(request: Any, session: RuntimeSession) -> tuple[list[dict[str
         return [_event("shutdown", request_id, {"ok": True})], True
 
     if operation not in {
+        "load_document",
         "validate_source",
         "inspect_source",
+        "render_source",
+        "validate_candidate_source",
         "plan_run",
         "run_graph",
         "run_to_node",
+        "run_node",
         "clear_session_cache",
     }:
         return [_error_event(request_id, "unknown_operation", f"Unknown operation: {operation}")], False
@@ -77,19 +89,38 @@ def handle_request(request: Any, session: RuntimeSession) -> tuple[list[dict[str
     if operation == "clear_session_cache":
         return [_event("session_cache_cleared", request_id, session.clear_session_cache())], False
 
-    source_error = _require_text(payload, "source")
     path_error = _require_text(payload, "documentPath")
-    if source_error or path_error:
-        return [_error_event(request_id, "invalid_request", source_error or path_error or "")], False
+    if path_error:
+        return [_error_event(request_id, "invalid_request", path_error)], False
+
+    document_path = payload["documentPath"]
+
+    if operation == "load_document":
+        return [_event("load_document_completed", request_id, session.load_document(document_path))], False
+
+    source_error = _require_text(payload, "source")
+    if source_error:
+        return [_error_event(request_id, "invalid_request", source_error)], False
 
     source = payload["source"]
-    document_path = payload["documentPath"]
 
     if operation == "validate_source":
         return [_event("validate_source_completed", request_id, session.validate_source(source, document_path))], False
 
     if operation == "inspect_source":
         return [_event("inspect_source_completed", request_id, session.inspect_source(source, document_path))], False
+
+    if operation == "render_source":
+        return [_event("render_source_completed", request_id, session.render_source(source, document_path))], False
+
+    if operation == "validate_candidate_source":
+        return [
+            _event(
+                "validate_candidate_source_completed",
+                request_id,
+                session.validate_candidate_source(source, document_path),
+            )
+        ], False
 
     if operation == "plan_run":
         target = payload.get("target")
@@ -98,13 +129,19 @@ def handle_request(request: Any, session: RuntimeSession) -> tuple[list[dict[str
         return [_event("plan_run_completed", request_id, session.plan_run(source, document_path, target=target))], False
 
     if operation == "run_graph":
-        return _run_events(request_id, "run_graph", source, document_path, None, payload, session), False
+        return _run_events(request_id, "run_graph", source, document_path, None, payload, session, emit_event), False
 
     if operation == "run_to_node":
         target = payload.get("target")
         if not isinstance(target, str) or not target:
             return [_error_event(request_id, "invalid_request", "Request field 'target' must be a non-empty string")], False
-        return _run_events(request_id, "run_to_node", source, document_path, target, payload, session), False
+        return _run_events(request_id, "run_to_node", source, document_path, target, payload, session, emit_event), False
+
+    if operation == "run_node":
+        target = payload.get("target")
+        if not isinstance(target, str) or not target:
+            return [_error_event(request_id, "invalid_request", "Request field 'target' must be a non-empty string")], False
+        return _run_events(request_id, "run_node", source, document_path, target, payload, session, emit_event), False
 
     raise AssertionError(f"Unhandled operation: {operation}")
 
@@ -117,20 +154,99 @@ def _run_events(
     target: str | None,
     payload: dict[str, Any],
     session: RuntimeSession,
+    emit_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     trace = bool(payload.get("trace", False))
+    inputs = payload.get("inputs", {})
+    if not isinstance(inputs, dict):
+        return [_error_event(request_id, "invalid_request", "Request field 'inputs' must be an object")]
+
     plan_result = session.plan_run(source, document_path, target=target)
-    run_result = (
-        session.run_to_node(source, document_path, target, trace=trace)
-        if target is not None
-        else session.run_graph(source, document_path, trace=trace)
-    )
+    if run_type == "run_node":
+        plan_result = _single_node_plan_result(plan_result, target)
+
+    events: list[dict[str, Any]] = []
+
+    def append_or_emit(event: dict[str, Any]) -> None:
+        if emit_event is None:
+            events.append(event)
+            return
+        emit_event(event)
+
+    append_or_emit(_event("run_started", request_id, {"runType": run_type, "target": target}))
+    append_or_emit(_event("run_plan", request_id, plan_result))
+
+    def append_node_event(event: dict[str, Any]) -> None:
+        append_or_emit(
+            _event(event["type"], request_id, {key: value for key, value in event.items() if key != "type"})
+        )
+
+    if run_type == "run_node":
+        assert target is not None
+        run_result = session.run_node(
+            source,
+            document_path,
+            target,
+            trace=trace,
+            inputs=inputs,
+            on_node_event=append_node_event,
+        )
+    elif target is not None:
+        run_result = session.run_to_node(
+            source,
+            document_path,
+            target,
+            trace=trace,
+            inputs=inputs,
+            on_node_event=append_node_event,
+        )
+    else:
+        run_result = session.run_graph(
+            source,
+            document_path,
+            trace=trace,
+            inputs=inputs,
+            on_node_event=append_node_event,
+        )
+
     final_type = "run_completed" if run_result.get("ok") else "run_failed"
-    return [
-        _event("run_started", request_id, {"runType": run_type, "target": target}),
-        _event("run_plan", request_id, plan_result),
-        _event(final_type, request_id, {"ok": bool(run_result.get("ok")), "response": run_result}),
-    ]
+    append_or_emit(
+        _event(final_type, request_id, {"ok": bool(run_result.get("ok")), "response": run_result})
+    )
+    return events
+
+
+def _single_node_plan_result(plan_result: dict[str, Any], target: str | None) -> dict[str, Any]:
+    if not plan_result.get("ok") or target is None:
+        return plan_result
+
+    plan = plan_result.get("plan")
+    if not isinstance(plan, dict):
+        return plan_result
+
+    steps = plan.get("steps")
+    if not isinstance(steps, list):
+        return plan_result
+
+    target_step = next(
+        (
+            step
+            for step in steps
+            if isinstance(step, dict) and step.get("nodeId") == plan_result.get("targetNodeId")
+        ),
+        None,
+    )
+    if target_step is None:
+        return plan_result
+
+    return {
+        **plan_result,
+        "plan": {
+            **plan,
+            "targetNodeIds": [plan_result["targetNodeId"]],
+            "steps": [target_step],
+        },
+    }
 
 
 def _require_text(payload: dict[str, Any], field: str) -> str | None:

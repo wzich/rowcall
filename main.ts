@@ -22,19 +22,17 @@ import {
   runGraph,
   runSingleNode,
   runSourceGraph,
+  runSourceSingleNode,
   runSourceToNode,
   runToNode,
   streamRunGraph,
   streamRunSingleNode,
   streamRunToNode,
   streamSourceRunGraph,
+  streamSourceRunSingleNode,
   streamSourceRunToNode,
 } from "./executor.ts";
-import {
-  configurePythonCommand,
-  configurePythonDocumentLoaderPath,
-  configurePythonRunnerPath,
-} from "./runtime_config.ts";
+import { configurePythonCommand } from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
@@ -56,7 +54,6 @@ def start():
 `;
 export type NodebookServerOptions = {
   uiDistPath?: string | URL;
-  pythonRunnerPath?: string;
   authToken?: string;
 };
 
@@ -80,10 +77,6 @@ export async function startNodebookServer(
 ): Promise<void> {
   const startupOptions = getStartupOptions(args);
   configurePythonCommand(startupOptions.pythonCommand);
-  configurePythonRunnerPath(
-    options.pythonRunnerPath ?? startupOptions.pythonRunnerPath,
-  );
-  configurePythonDocumentLoaderPath(startupOptions.pythonDocumentLoaderPath);
   uiDistPath = options.uiDistPath ?? startupOptions.uiDistPath ??
     "app/ui/dist";
   serverSecurity = {
@@ -719,40 +712,95 @@ app.put("/document", async (c) => {
 
 app.post("/run-node", async (c) => {
   const body = await c.req.json();
+  const hasSourceInput = hasRunRequestSource(body) ||
+    hasRunRequestDocument(body);
+  let graph: Graph | null = null;
 
-  const resolved = decodeAndValidateGraph(body.graph);
-  if (!resolved.ok) {
-    return c.json(
-      resolved,
-      422,
-    );
-  }
-  const graph = resolved.graph;
   const nodeId = body.nodeId;
-  const trace = body.trace;
 
-  try {
-    assertNodeExists(graph, nodeId);
-  } catch {
-    return c.json(nodeNotFoundError(nodeId), 422);
+  if (hasSourceInput) {
+    if (typeof nodeId !== "string") {
+      return c.json(
+        errorResponse({
+          kind: "invalid_request",
+          message: "Run-node requests require a string nodeId.",
+        }),
+        422,
+      );
+    }
+  } else {
+    const resolved = decodeAndValidateGraph(body.graph);
+    if (!resolved.ok) {
+      return c.json(
+        resolved,
+        422,
+      );
+    }
+    graph = resolved.graph;
+
+    try {
+      assertNodeExists(graph, nodeId);
+    } catch {
+      return c.json(nodeNotFoundError(nodeId), 422);
+    }
   }
 
   const inputs = body.inputs || {};
+  const trace = body.trace || false;
+  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+    return c.json(sourceBackedInputsError(), 422);
+  }
 
   // TODO: Add scoped API-level concurrency and resource controls once the
   // product has a runtime/session/document model. The UI keeps one active run
   // at a time for now, but direct API callers can still start concurrent runs.
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
+    if (!hasSourceInput && graph) {
+      return streamExecutionEvents(
+        runId,
+        "run_node",
+        streamRunSingleNode(runId, graph, nodeId, inputs, trace),
+        nodeId,
+      );
+    }
+
+    const sourceResult = await getRunRequestSource(body);
+    if (!sourceResult.ok) {
+      return c.json(sourceResult, 422);
+    }
     return streamExecutionEvents(
       runId,
       "run_node",
-      streamRunSingleNode(runId, graph, nodeId, inputs, trace),
+      streamSourceRunSingleNode(
+        runId,
+        sourceResult.source,
+        activeDocumentPath,
+        nodeId,
+        inputs,
+        trace,
+      ),
       nodeId,
     );
   }
 
-  const result = await runSingleNode(graph, nodeId, inputs, trace);
+  if (!hasSourceInput && graph) {
+    const result = await runSingleNode(graph, nodeId, inputs, trace);
+    return c.json(result);
+  }
+
+  const sourceResult = await getRunRequestSource(body);
+  if (!sourceResult.ok) {
+    return c.json(sourceResult, 422);
+  }
+  const result = await runSourceSingleNode(
+    sourceResult.source,
+    activeDocumentPath,
+    nodeId,
+    inputs,
+    trace,
+  );
+
   return c.json(result);
 });
 

@@ -146,14 +146,13 @@ The implemented split uses these boundaries:
 
 1. A small Python `nodebook` authoring API declares node functions and explicit
    `depends_on` edges.
-2. The Python document loader parses a `.py` file into an executable document
+2. The Python document package parses a `.py` file into an executable document
    with source, globals, nodes, edges, validation issues, and planning metadata.
 3. The Python runtime owns source-backed validation, graph planning, execution,
    value previews, stdout/stderr capture, display events, and CLI behavior.
 4. The Deno/Hono app server owns editing APIs, startup configuration, and the
-   browser-facing API. Full-graph and run-to-node execution call the Python
-   runtime worker. Cache-backed single-node execution remains on the legacy
-   session runner until the worker grows cache-aware single-node execution.
+   browser-facing API. Document operations and execution call the Python runtime
+   worker, including cache-backed single-node execution.
 5. Normal UI-authored node edits regenerate function bodies, parameters, output
    declarations, return dictionaries, and graph edges as Python source rewrites.
    Custom returns are preserved or flagged with specific validation errors.

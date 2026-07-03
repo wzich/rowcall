@@ -1,6 +1,7 @@
 export type Node = {
   id: string;
   code: string;
+  codeKind?: "body" | "runtime";
   outputs: string[];
 };
 

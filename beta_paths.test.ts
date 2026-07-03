@@ -14,9 +14,6 @@ Deno.test("getBetaPaths returns the beta data layout under the home directory", 
     bundledPythonPackageDir: "/Users/test/.nodebook/bundled/python-package",
     bundledRequirementsPath:
       "/Users/test/.nodebook/bundled/requirements-alpha.txt",
-    bundledRunnerPath: "/Users/test/.nodebook/bundled/runner.py",
-    bundledDocumentLoaderPath:
-      "/Users/test/.nodebook/bundled/python_document_loader.py",
     uiDistPath: "/Users/test/.nodebook/bundled/app/ui/dist",
   });
 });

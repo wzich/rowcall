@@ -179,6 +179,9 @@ export function toRuntimeGraph(document: NodebookDocumentV1): Graph {
             customReturn,
           })
           : runtimeCode ?? code,
+        codeKind: shouldBuildRuntimeCode || typeof runtimeCode === "string"
+          ? "runtime"
+          : "body",
         outputs,
       };
     }),
