@@ -784,8 +784,8 @@ export default function App() {
       return;
     }
 
-    markNodeExecutionRunning(nodeId, "run_node");
     const abortController = startRunAbortController();
+    markNodeExecutionRunning(nodeId, "run_node");
     runNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
@@ -805,8 +805,8 @@ export default function App() {
       return;
     }
 
-    markNodeExecutionRunning(nodeId, "run_to_node");
     const abortController = startRunAbortController();
+    markGraphExecutionRunning("run_to_node");
     runToNodeMutation.mutate({
       graph: editableGraph,
       nodeId,
@@ -826,8 +826,8 @@ export default function App() {
       return;
     }
 
-    markGraphExecutionRunning();
     const abortController = startRunAbortController();
+    markGraphExecutionRunning();
     runGraphMutation.mutate({
       graph: editableGraph,
       document: editableDocument ?? undefined,

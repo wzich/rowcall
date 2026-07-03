@@ -1,5 +1,5 @@
 import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
-import { LoaderCircle, Play, Plus } from "lucide-react";
+import { Play, Plus } from "lucide-react";
 import type { MouseEvent } from "react";
 import type {
   NodeRunVisualStatus,
@@ -43,6 +43,7 @@ const statusStyles: Record<
 
 export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const status = statusStyles[data.runStatus];
+  const isRunning = data.runStatus === "running";
   const runToNodeTitle = data.runToNodeDisabled
     ? "Run unavailable"
     : "Run upstream to this step";
@@ -54,8 +55,11 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   return (
     <article
       title={data.functionName ?? data.label}
+      data-node-id={id}
+      data-run-status={data.runStatus}
       className={[
         "relative",
+        "python-node-card",
         "w-[360px] rounded-md border bg-white shadow-sm dark:bg-zinc-900",
         selected
           ? "border-zinc-900 shadow-md dark:border-zinc-100"
@@ -98,24 +102,29 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
                 />
               </button>
             )}
-            {data.runStatus === "running"
-              ? (
-                <LoaderCircle
-                  aria-label={status.label}
-                  className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600 dark:text-blue-400"
-                  strokeWidth={2.5}
-                />
-              )
-              : (
-                <span
-                  className={[
-                    "h-2.5 w-2.5 shrink-0 rounded-full",
-                    status.dot,
-                  ].join(" ")}
-                  title={status.label}
-                  aria-label={status.label}
-                />
-              )}
+            <span
+              key={`${id}:${data.runStatus}`}
+              className="node-run-status-indicator"
+            >
+              {isRunning
+                ? (
+                  <span
+                    aria-label={status.label}
+                    title={status.label}
+                    className="node-run-spinner h-3.5 w-3.5 shrink-0 rounded-full border-2"
+                  />
+                )
+                : (
+                  <span
+                    className={[
+                      "h-2.5 w-2.5 shrink-0 rounded-full",
+                      status.dot,
+                    ].join(" ")}
+                    title={status.label}
+                    aria-label={status.label}
+                  />
+                )}
+            </span>
           </div>
         </div>
       </div>

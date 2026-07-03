@@ -39,9 +39,17 @@ export function useExecutionSession(selectedSourceValue: string) {
     setGraphExecutionState({ status: "running", runType });
   }
 
-  function markGraphExecutionRunning() {
-    setExecutionStateByNodeId({});
-    setGraphExecutionState({ status: "running", runType: "run_graph" });
+  function markGraphExecutionRunning(
+    runType: ExecutionResponse["runType"] = "run_graph",
+    options: { clearNodeExecutionState?: boolean } = {},
+  ) {
+    const clearNodeExecutionState = options.clearNodeExecutionState ??
+      runType === "run_graph";
+
+    if (clearNodeExecutionState) {
+      setExecutionStateByNodeId({});
+    }
+    setGraphExecutionState({ status: "running", runType });
   }
 
   function applyExecutionStreamEvent(
