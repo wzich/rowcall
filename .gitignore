@@ -2,6 +2,7 @@
 **/.venv/
 **/.vite/
 **/dist/
+tmp/
 .wrangler/
 .codex/
 **/*.egg-info/
