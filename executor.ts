@@ -904,9 +904,14 @@ function renderReturnLine(outputs: string[]): string {
     return "    return {}";
   }
   const entries = outputs.map((output) =>
-    `${JSON.stringify(output)}: ${output}`
+    `${JSON.stringify(output)}: ${renderBodyOutputLookup(output)}`
   );
   return `    return {${entries.join(", ")}}`;
+}
+
+function renderBodyOutputLookup(output: string): string {
+  const key = JSON.stringify(output);
+  return `locals()[${key}] if ${key} in locals() else globals()[${key}]`;
 }
 
 function renderRootInputAssignments(inputs: string[]): string[] {

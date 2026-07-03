@@ -493,6 +493,30 @@ runtimeTest(
 );
 
 runtimeTest(
+  "runGraph handles non-identifier output names",
+  async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          id: "a",
+          code: 'globals()["bad-name"] = 1',
+          outputs: ["bad-name"],
+        },
+      ],
+      edges: [],
+    };
+
+    const response = await runGraph(graph, {}, true);
+
+    assertEquals(response.ok, true);
+    assertEquals(response.executedNodeIds, ["a"]);
+    assertEquals(response.finalOutputsByNode.a["bad-name"].jsonValue, 1);
+    assertExists(response.trace);
+    assertEquals(response.trace[0].outputs["bad-name"].jsonValue, 1);
+  },
+);
+
+runtimeTest(
   "runToNode handles downstream input and output with the same name",
   async () => {
     const graph: Graph = {
