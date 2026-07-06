@@ -44,6 +44,11 @@ let serverSecurity: NodebookServerSecurity = {
   port: 8000,
   authToken: "",
 };
+// Padded SSE comments keep small fetch-stream chunks moving through browsers
+// and intermediaries while a long-running node is not producing real events.
+const executionStreamInitialPaddingBytes = 2048;
+const executionStreamHeartbeatPaddingBytes = 1024;
+const executionStreamHeartbeatIntervalMs = 750;
 const defaultNewDocumentSource = `from nodebook import node
 
 
@@ -437,6 +442,10 @@ function formatStreamEvent(event: ExecutionStreamEvent): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
+function formatStreamComment(comment: string, paddingBytes = 0): string {
+  return `: ${comment}${" ".repeat(paddingBytes)}\n\n`;
+}
+
 function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
   return {
     version: document.version,
@@ -533,21 +542,71 @@ function ensureTrailingSlash(url: URL): URL {
   return new URL(url.href.endsWith("/") ? url.href : `${url.href}/`);
 }
 
-function streamExecutionEvents(
+export function streamExecutionEvents(
   runId: string,
   runType: ExecutionStreamEvent["runType"],
   events: AsyncIterable<ExecutionStreamEvent>,
   targetNodeId?: string,
 ): Response {
   const encoder = new TextEncoder();
+  let canceled = false;
+  let iterator: AsyncIterator<ExecutionStreamEvent> | undefined;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      try {
-        for await (const event of events) {
-          controller.enqueue(encoder.encode(formatStreamEvent(event)));
+      const enqueueFrame = (frame: string) => {
+        if (!canceled) {
+          controller.enqueue(encoder.encode(frame));
         }
-        controller.close();
+      };
+
+      try {
+        enqueueFrame(
+          formatStreamComment(
+            "nodebook stream padding",
+            executionStreamInitialPaddingBytes,
+          ),
+        );
+
+        iterator = events[Symbol.asyncIterator]();
+        let nextEvent = waitForNextExecutionEvent(iterator);
+
+        while (!canceled) {
+          const heartbeat = waitForExecutionStreamHeartbeat();
+          const result = await Promise.race([
+            nextEvent,
+            heartbeat.promise,
+          ]);
+          heartbeat.cancel();
+
+          if (canceled) {
+            return;
+          }
+
+          if (result.kind === "heartbeat") {
+            enqueueFrame(
+              formatStreamComment(
+                "nodebook keep-alive",
+                executionStreamHeartbeatPaddingBytes,
+              ),
+            );
+            continue;
+          }
+
+          if (result.event.done) {
+            break;
+          }
+
+          enqueueFrame(formatStreamEvent(result.event.value));
+          nextEvent = waitForNextExecutionEvent(iterator);
+        }
+
+        if (!canceled) {
+          controller.close();
+        }
       } catch (error) {
+        if (canceled) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         const event: ExecutionStreamEvent = {
           type: "run_failed",
@@ -569,9 +628,13 @@ function streamExecutionEvents(
             },
           },
         };
-        controller.enqueue(encoder.encode(formatStreamEvent(event)));
+        enqueueFrame(formatStreamEvent(event));
         controller.close();
       }
+    },
+    async cancel() {
+      canceled = true;
+      await iterator?.return?.();
     },
   });
 
@@ -582,6 +645,34 @@ function streamExecutionEvents(
       "Connection": "keep-alive",
     },
   });
+}
+
+function waitForNextExecutionEvent(
+  iterator: AsyncIterator<ExecutionStreamEvent>,
+) {
+  return iterator.next().then((event) => ({
+    kind: "event" as const,
+    event,
+  }));
+}
+
+function waitForExecutionStreamHeartbeat() {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<{ kind: "heartbeat" }>((resolve) => {
+    timeoutId = setTimeout(
+      () => resolve({ kind: "heartbeat" }),
+      executionStreamHeartbeatIntervalMs,
+    );
+  });
+
+  return {
+    promise,
+    cancel() {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    },
+  };
 }
 
 app.post("/inspect", async (c) => {
