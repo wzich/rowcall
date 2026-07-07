@@ -1,6 +1,5 @@
 import { Hono } from "@hono/hono";
 import {
-  assertNodeExists,
   buildDownstreamAdjacency,
   buildUpstreamAdjacency,
   decodeGraph,
@@ -9,25 +8,22 @@ import {
   validateGraph,
 } from "./graph.ts";
 import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
-import { decodeNodebookDocument, type NodebookDocumentV1 } from "./document.ts";
 import {
+  decodeDocumentOperationsRequest,
+  type NodebookDocumentV1,
+} from "./document.ts";
+import {
+  applyPythonDocumentOperations,
   loadPythonDocument,
-  renderPythonDocumentSource,
-  savePythonDocument,
+  readPythonDocumentSource,
 } from "./python_document.ts";
 import {
   clearRuntimeSessionCache,
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
-  runGraph,
-  runSingleNode,
   runSourceGraph,
   runSourceSingleNode,
   runSourceToNode,
-  runToNode,
-  streamRunGraph,
-  streamRunSingleNode,
-  streamRunToNode,
   streamSourceRunGraph,
   streamSourceRunSingleNode,
   streamSourceRunToNode,
@@ -36,13 +32,13 @@ import { configurePythonRuntime } from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
 
-const app = new Hono();
+export const app = new Hono();
 let uiDistPath: string | URL = "app/ui/dist";
 let activeDocumentPath = "";
 let serverSecurity: NodebookServerSecurity = {
   hostname: "127.0.0.1",
   port: 8000,
-  authToken: "",
+  authToken: "secret-token",
 };
 // Padded SSE comments keep small fetch-stream chunks moving through browsers
 // and intermediaries while a long-running node is not producing real events.
@@ -57,6 +53,10 @@ def start():
     message = "hello"
     return {"message": message}
 `;
+
+export function setActiveDocumentPathForTests(path: string): void {
+  activeDocumentPath = path;
+}
 export type NodebookServerOptions = {
   uiDistPath?: string | URL;
   authToken?: string;
@@ -142,6 +142,7 @@ type ApiError = {
     | "runtime_inspection_error"
     | "document_decode_error"
     | "document_write_error"
+    | "stale_document"
     | "validation_error";
   message: string;
   issues?: ValidationIssue[];
@@ -166,15 +167,6 @@ function graphValidationError(issues: ValidationIssue[]): ApiErrorResponse {
     kind: "validation_error",
     message: "Graph validation failed",
     issues,
-  });
-}
-
-function nodeNotFoundError(nodeId: unknown): ApiErrorResponse {
-  const nodeIdString = String(nodeId);
-  return errorResponse({
-    kind: "node_not_found",
-    message: `Failed to find node ${nodeIdString} in provided graph.`,
-    nodeId: nodeIdString,
   });
 }
 
@@ -372,44 +364,17 @@ async function createNodebookDocument(path: string): Promise<void> {
 }
 
 async function readActiveDocumentSource(): Promise<string> {
-  return await Deno.readTextFile(activeDocumentPath);
+  return await readPythonDocumentSource(activeDocumentPath);
 }
 
 async function getRunRequestSource(
-  body: { source?: unknown; document?: unknown },
+  body: { source?: unknown },
 ): Promise<{ ok: true; source: string } | ApiErrorResponse> {
   if (typeof body.source === "string") {
     return { ok: true, source: body.source };
   }
 
-  if (body.document !== undefined) {
-    const decoded = decodeNodebookDocument(body.document);
-    if (!decoded.ok) {
-      return documentDecodeError(decoded.issues);
-    }
-
-    const rendered = await renderPythonDocumentSource(
-      activeDocumentPath,
-      decoded.document,
-    );
-    if (!rendered.ok) {
-      return documentDecodeError(rendered.issues);
-    }
-
-    return { ok: true, source: rendered.source };
-  }
-
   return { ok: true, source: await readActiveDocumentSource() };
-}
-
-function hasRunRequestSource(body: { source?: unknown }): body is {
-  source: string;
-} {
-  return typeof body.source === "string";
-}
-
-function hasRunRequestDocument(body: { document?: unknown }): boolean {
-  return body.document !== undefined;
 }
 
 function sourceBackedInputsError(): ApiErrorResponse {
@@ -418,6 +383,23 @@ function sourceBackedInputsError(): ApiErrorResponse {
     message:
       "Source-backed runs do not accept explicit inputs. Put root data in the Python document.",
   });
+}
+
+function graphPayloadWithoutSourceError(): ApiErrorResponse {
+  return errorResponse({
+    kind: "invalid_request",
+    message:
+      "Run routes are source-backed and do not accept graph payloads. Save document operations before running the active document.",
+  });
+}
+
+function hasGraphPayloadWithoutSource(body: unknown): boolean {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const request = body as Record<string, unknown>;
+  return "graph" in request && typeof request.source !== "string";
 }
 
 function getParentDirectory(path: string): string | undefined {
@@ -545,12 +527,19 @@ function ensureTrailingSlash(url: URL): URL {
 export function streamExecutionEvents(
   runId: string,
   runType: ExecutionStreamEvent["runType"],
-  events: AsyncIterable<ExecutionStreamEvent>,
+  events:
+    | AsyncIterable<ExecutionStreamEvent>
+    | ((signal: AbortSignal) => AsyncIterable<ExecutionStreamEvent>),
   targetNodeId?: string,
 ): Response {
   const encoder = new TextEncoder();
+  const abortController = new AbortController();
   let canceled = false;
   let iterator: AsyncIterator<ExecutionStreamEvent> | undefined;
+  let cancelStream!: () => void;
+  const canceledResult = new Promise<{ kind: "canceled" }>((resolve) => {
+    cancelStream = () => resolve({ kind: "canceled" });
+  });
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueueFrame = (frame: string) => {
@@ -567,7 +556,10 @@ export function streamExecutionEvents(
           ),
         );
 
-        iterator = events[Symbol.asyncIterator]();
+        const eventSource = typeof events === "function"
+          ? events(abortController.signal)
+          : events;
+        iterator = eventSource[Symbol.asyncIterator]();
         let nextEvent = waitForNextExecutionEvent(iterator);
 
         while (!canceled) {
@@ -575,10 +567,11 @@ export function streamExecutionEvents(
           const result = await Promise.race([
             nextEvent,
             heartbeat.promise,
+            canceledResult,
           ]);
           heartbeat.cancel();
 
-          if (canceled) {
+          if (canceled || result.kind === "canceled") {
             return;
           }
 
@@ -634,6 +627,8 @@ export function streamExecutionEvents(
     },
     async cancel() {
       canceled = true;
+      abortController.abort();
+      cancelStream();
       await iterator?.return?.();
     },
   });
@@ -755,7 +750,7 @@ app.get("/runtime/python", async (c) => {
   }
 });
 
-app.put("/document", async (c) => {
+app.post("/document/operations", async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -773,28 +768,54 @@ app.put("/document", async (c) => {
     );
   }
 
-  const decoded = decodeNodebookDocument(body);
+  const decoded = decodeDocumentOperationsRequest(body);
   if (!decoded.ok) {
     return c.json(documentDecodeError(decoded.issues), 422);
   }
 
   try {
-    const saved = await savePythonDocument(
+    const saved = await applyPythonDocumentOperations(
       activeDocumentPath,
-      decoded.document,
+      decoded.request.baseRevision,
+      decoded.request.operations,
+      decoded.request.clientBatchId,
     );
     if (!saved.ok) {
-      return c.json(documentDecodeError(saved.issues), 409);
+      const stale = saved.issues.some((issue) =>
+        issue.kind === "stale_document"
+      );
+      const writeFailed = saved.issues.some((issue) =>
+        issue.kind === "document_write_error"
+      );
+      return c.json(
+        errorResponse({
+          kind: stale
+            ? "stale_document"
+            : writeFailed
+            ? "document_write_error"
+            : "validation_error",
+          message: stale
+            ? "The Python document changed on disk after it was loaded. Reload before applying edits."
+            : writeFailed
+            ? "Unable to write Nodebook document."
+            : "Document operation validation failed",
+          issues: saved.issues,
+        }),
+        stale ? 409 : writeFailed ? 500 : 422,
+      );
     }
 
     return c.json({
       ok: true,
       document: formatDocument(saved.document),
       path: activeDocumentPath,
+      ...(decoded.request.clientBatchId
+        ? { clientBatchId: decoded.request.clientBatchId }
+        : {}),
     });
   } catch (error) {
     console.error(
-      `Failed to write Python Nodebook document at ${activeDocumentPath}:`,
+      `Failed to apply Python Nodebook document operations at ${activeDocumentPath}:`,
     );
     console.error(error);
     return c.json(
@@ -809,42 +830,25 @@ app.put("/document", async (c) => {
 
 app.post("/run-node", async (c) => {
   const body = await c.req.json();
-  const hasSourceInput = hasRunRequestSource(body) ||
-    hasRunRequestDocument(body);
-  let graph: Graph | null = null;
+  if (hasGraphPayloadWithoutSource(body)) {
+    return c.json(graphPayloadWithoutSourceError(), 422);
+  }
 
   const nodeId = body.nodeId;
 
-  if (hasSourceInput) {
-    if (typeof nodeId !== "string") {
-      return c.json(
-        errorResponse({
-          kind: "invalid_request",
-          message: "Run-node requests require a string nodeId.",
-        }),
-        422,
-      );
-    }
-  } else {
-    const resolved = decodeAndValidateGraph(body.graph);
-    if (!resolved.ok) {
-      return c.json(
-        resolved,
-        422,
-      );
-    }
-    graph = resolved.graph;
-
-    try {
-      assertNodeExists(graph, nodeId);
-    } catch {
-      return c.json(nodeNotFoundError(nodeId), 422);
-    }
+  if (typeof nodeId !== "string") {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "Run-node requests require a string nodeId.",
+      }),
+      422,
+    );
   }
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
-  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+  if (hasExplicitRunInputs(body.inputs)) {
     return c.json(sourceBackedInputsError(), 422);
   }
 
@@ -853,15 +857,6 @@ app.post("/run-node", async (c) => {
   // at a time for now, but direct API callers can still start concurrent runs.
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
-    if (!hasSourceInput && graph) {
-      return streamExecutionEvents(
-        runId,
-        "run_node",
-        streamRunSingleNode(runId, graph, nodeId, inputs, trace),
-        nodeId,
-      );
-    }
-
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
       return c.json(sourceResult, 422);
@@ -869,21 +864,18 @@ app.post("/run-node", async (c) => {
     return streamExecutionEvents(
       runId,
       "run_node",
-      streamSourceRunSingleNode(
-        runId,
-        sourceResult.source,
-        activeDocumentPath,
-        nodeId,
-        inputs,
-        trace,
-      ),
+      (signal) =>
+        streamSourceRunSingleNode(
+          runId,
+          sourceResult.source,
+          activeDocumentPath,
+          nodeId,
+          inputs,
+          trace,
+          signal,
+        ),
       nodeId,
     );
-  }
-
-  if (!hasSourceInput && graph) {
-    const result = await runSingleNode(graph, nodeId, inputs, trace);
-    return c.json(result);
   }
 
   const sourceResult = await getRunRequestSource(body);
@@ -903,56 +895,30 @@ app.post("/run-node", async (c) => {
 
 app.post("/run-to-node", async (c) => {
   const body = await c.req.json();
-  const hasSourceInput = hasRunRequestSource(body) ||
-    hasRunRequestDocument(body);
-  let graph: Graph | null = null;
+  if (hasGraphPayloadWithoutSource(body)) {
+    return c.json(graphPayloadWithoutSourceError(), 422);
+  }
 
   const nodeId = body.nodeId;
 
-  if (hasSourceInput) {
-    if (typeof nodeId !== "string") {
-      return c.json(
-        errorResponse({
-          kind: "invalid_request",
-          message: "Run-to-node requests require a string nodeId.",
-        }),
-        422,
-      );
-    }
-  } else {
-    const resolved = decodeAndValidateGraph(body.graph);
-    if (!resolved.ok) {
-      return c.json(
-        resolved,
-        422,
-      );
-    }
-    graph = resolved.graph;
-
-    try {
-      assertNodeExists(graph, nodeId);
-    } catch {
-      return c.json(nodeNotFoundError(nodeId), 422);
-    }
+  if (typeof nodeId !== "string") {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "Run-to-node requests require a string nodeId.",
+      }),
+      422,
+    );
   }
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
-  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+  if (hasExplicitRunInputs(body.inputs)) {
     return c.json(sourceBackedInputsError(), 422);
   }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
-    if (!hasSourceInput && graph) {
-      return streamExecutionEvents(
-        runId,
-        "run_to_node",
-        streamRunToNode(runId, graph, nodeId, inputs, trace),
-        nodeId,
-      );
-    }
-
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
       return c.json(sourceResult, 422);
@@ -960,21 +926,18 @@ app.post("/run-to-node", async (c) => {
     return streamExecutionEvents(
       runId,
       "run_to_node",
-      streamSourceRunToNode(
-        runId,
-        sourceResult.source,
-        activeDocumentPath,
-        nodeId,
-        inputs,
-        trace,
-      ),
+      (signal) =>
+        streamSourceRunToNode(
+          runId,
+          sourceResult.source,
+          activeDocumentPath,
+          nodeId,
+          inputs,
+          trace,
+          signal,
+        ),
       nodeId,
     );
-  }
-
-  if (!hasSourceInput && graph) {
-    const result = await runToNode(graph, nodeId, inputs, trace);
-    return c.json(result);
   }
 
   const sourceResult = await getRunRequestSource(body);
@@ -994,37 +957,18 @@ app.post("/run-to-node", async (c) => {
 
 app.post("/run-graph", async (c) => {
   const body = await c.req.json();
-  const hasSourceInput = hasRunRequestSource(body) ||
-    hasRunRequestDocument(body);
-  let graph: Graph | null = null;
-
-  if (!hasSourceInput) {
-    const resolved = decodeAndValidateGraph(body.graph);
-    if (!resolved.ok) {
-      return c.json(
-        resolved,
-        422,
-      );
-    }
-    graph = resolved.graph;
+  if (hasGraphPayloadWithoutSource(body)) {
+    return c.json(graphPayloadWithoutSourceError(), 422);
   }
 
   const inputs = body.inputs || {};
   const trace = body.trace || false;
-  if (hasSourceInput && hasExplicitRunInputs(body.inputs)) {
+  if (hasExplicitRunInputs(body.inputs)) {
     return c.json(sourceBackedInputsError(), 422);
   }
 
   if (wantsExecutionStream(c)) {
     const runId = crypto.randomUUID();
-    if (!hasSourceInput && graph) {
-      return streamExecutionEvents(
-        runId,
-        "run_graph",
-        streamRunGraph(runId, graph, inputs, trace),
-      );
-    }
-
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
       return c.json(sourceResult, 422);
@@ -1032,19 +976,16 @@ app.post("/run-graph", async (c) => {
     return streamExecutionEvents(
       runId,
       "run_graph",
-      streamSourceRunGraph(
-        runId,
-        sourceResult.source,
-        activeDocumentPath,
-        inputs,
-        trace,
-      ),
+      (signal) =>
+        streamSourceRunGraph(
+          runId,
+          sourceResult.source,
+          activeDocumentPath,
+          inputs,
+          trace,
+          signal,
+        ),
     );
-  }
-
-  if (!hasSourceInput && graph) {
-    const result = await runGraph(graph, inputs, trace);
-    return c.json(result);
   }
 
   const sourceResult = await getRunRequestSource(body);

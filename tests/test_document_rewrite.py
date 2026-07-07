@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from nodebook.document import add_edge, remove_edge, update_node_body, update_node_outputs
+from nodebook.document import (
+    add_edge,
+    apply_document_operations,
+    remove_edge,
+    update_node_body,
+    update_node_outputs,
+)
 
 
 DOCUMENT_PATH = Path("/tmp/rewrite.py")
@@ -66,6 +72,24 @@ def make_x():
         assert result.parse_result.document is not None
         self.assertEqual(result.parse_result.document.nodes[0].outputs, ("x", "y"))
 
+    def test_update_outputs_preserves_quoted_node_id_literal(self) -> None:
+        source = '''
+from nodebook import node
+
+@node(id='n"quote', outputs=["x"])
+def make_x():
+    x = 1
+    y = x + 1
+    return {"x": x}
+'''.lstrip()
+
+        result = update_node_outputs(source, DOCUMENT_PATH, 'n"quote', ("x", "y"))
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        self.assertIn('@node(id="n\\"quote", outputs=["x", "y"])', result.source)
+        assert result.parse_result.document is not None
+        self.assertEqual(result.parse_result.document.nodes[0].id, 'n"quote')
+
     def test_add_and_remove_edge_rewrite_depends_on_block(self) -> None:
         source = """
 from nodebook import node
@@ -114,17 +138,11 @@ double.depends_on(load)
             [("n_load", "n_double")],
         )
 
-        invalid_removed = remove_edge(added.source, DOCUMENT_PATH, "n_load", "n_double")
+        detached = remove_edge(added.source, DOCUMENT_PATH, "n_load", "n_double")
 
-        self.assertFalse(invalid_removed.ok)
-        self.assertIn(
-            {
-                "kind": "unsupported_python",
-                "message": "Node 'n_double' has parameters without direct upstream outputs: x",
-                "nodeId": "n_double",
-            },
-            [issue.to_dict() for issue in invalid_removed.issues],
-        )
+        self.assertTrue(detached.ok, [issue.to_dict() for issue in detached.issues])
+        self.assertIn("def double():", detached.source)
+        self.assertNotIn("double.depends_on(load)", detached.source)
 
     def test_reject_editing_custom_return_node(self) -> None:
         source = """
@@ -167,6 +185,538 @@ def make_x():
         self.assertIn("# Keep module setup.", result.source)
         self.assertIn('SETTINGS = {"scale": 2}', result.source)
         self.assertIn("def helper(value):", result.source)
+
+    def test_apply_operations_updates_body_and_outputs_atomically(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "update_node_body", "nodeId": "n_test", "bodyCode": "x = 2\ny = x + 1"},
+                {"type": "update_node_outputs", "nodeId": "n_test", "outputs": ["x", "y"]},
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('outputs=["x", "y"]', result.source)
+        self.assertIn('    return {"x": x, "y": y}', result.source)
+
+    def test_apply_operations_add_and_delete_node_removes_incident_edges(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="double", outputs=["y"])
+def double(x):
+    y = x * 2
+    return {"y": y}
+
+double.depends_on(load)
+""".lstrip()
+
+        added = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {
+                    "type": "add_node",
+                    "node": {
+                        "id": "format",
+                        "functionName": "format_text",
+                        "outputs": ["text"],
+                        "code": "text = str(y)",
+                        "position": {"x": 10, "y": 20},
+                    },
+                },
+                {"type": "add_edge", "fromNode": "double", "toNode": "format"},
+            ],
+        )
+        self.assertTrue(added.ok, [issue.to_dict() for issue in added.issues])
+        assert added.source is not None
+        self.assertIn("format_text.depends_on(double)", added.source)
+        self.assertEqual(added.sidecar_metadata, {"nodes": {"format": {"position": {"x": 10, "y": 20}}}})
+
+        deleted = apply_document_operations(
+            added.source,
+            DOCUMENT_PATH,
+            [{"type": "delete_node", "nodeId": "double"}],
+        )
+
+        self.assertTrue(deleted.ok, [issue.to_dict() for issue in deleted.issues])
+        assert deleted.source is not None
+        self.assertNotIn("def double", deleted.source)
+        self.assertNotIn("depends_on", deleted.source)
+        assert deleted.parse_result.document is not None
+        self.assertEqual([node.id for node in deleted.parse_result.document.nodes], ["load", "format"])
+        self.assertEqual(deleted.parse_result.document.edges, ())
+
+    def test_apply_operations_remove_edge_normalizes_downstream_signature(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="double", outputs=["y"])
+def double(x):
+    y = x * 2
+    return {"y": y}
+
+double.depends_on(load)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "remove_edge", "fromNode": "load", "toNode": "double"},
+                {"type": "update_node_body", "nodeId": "double", "code": "y = 2"},
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn("def double():", result.source)
+        self.assertNotIn("depends_on", result.source)
+
+    def test_apply_operations_output_change_normalizes_downstream_signature(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="double", outputs=["y"])
+def double(x):
+    y = x * 2
+    return {"y": y}
+
+double.depends_on(load)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "update_node_body", "nodeId": "load", "code": "value = 1"},
+                {"type": "update_node_outputs", "nodeId": "load", "outputs": ["value"]},
+                {"type": "update_node_body", "nodeId": "double", "code": "y = value * 2"},
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn("def double(value):", result.source)
+        self.assertIn('    return {"value": value}', result.source)
+
+    def test_apply_operations_add_edge_normalizes_downstream_signature(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="format", outputs=["text"])
+def format_text():
+    text = "ready"
+    return {"text": text}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "add_edge", "fromNode": "load", "toNode": "format"}],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn("def format_text(x):", result.source)
+        self.assertIn("format_text.depends_on(load)", result.source)
+
+    def test_apply_operations_cancels_inverse_edge_operations_before_validation(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="a", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+
+@node(id="b", outputs=["y"])
+def make_y(x):
+    y = x + 1
+    return {"y": y}
+
+make_y.depends_on(make_x)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "add_edge", "fromNode": "b", "toNode": "a"},
+                {"type": "remove_edge", "fromNode": "b", "toNode": "a"},
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        self.assertEqual(result.source, source)
+
+    def test_apply_operations_preserves_original_index_after_edge_coalescing(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="a", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+
+@node(id="b", outputs=["y"])
+def make_y(x):
+    y = x + 1
+    return {"y": y}
+
+make_y.depends_on(make_x)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "add_edge", "fromNode": "b", "toNode": "a"},
+                {"type": "remove_edge", "fromNode": "b", "toNode": "a"},
+                {"type": "update_node_body", "nodeId": "missing", "code": "x = 2"},
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            {
+                "kind": "missing_node_reference",
+                "message": "Node 'missing' was not found.",
+                "nodeId": "missing",
+                "operationIndex": 2,
+                "operationType": "update_node_body",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_add_node_to_bare_source_inserts_import(self) -> None:
+        result = apply_document_operations(
+            "",
+            DOCUMENT_PATH,
+            [{
+                "type": "add_node",
+                "node": {
+                    "id": "start",
+                    "functionName": "start",
+                    "outputs": ["message"],
+                    "code": "message = 'hello'",
+                },
+            }],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertEqual(
+            result.source,
+            "\n".join(
+                [
+                    "from nodebook import node",
+                    "",
+                    '@node(id="start", outputs=["message"])',
+                    "def start():",
+                    "    message = 'hello'",
+                    '    return {"message": message}',
+                ]
+            ),
+        )
+
+    def test_apply_operations_add_node_inserts_import_after_future_imports(self) -> None:
+        source = '''#!/usr/bin/env python3
+"""Module docs."""
+
+from __future__ import annotations
+
+VALUE = 1
+'''
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{
+                "type": "add_node",
+                "node": {
+                    "id": "start",
+                    "functionName": "start",
+                    "outputs": ["message"],
+                    "code": "message = str(VALUE)",
+                },
+            }],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn(
+            '''#!/usr/bin/env python3
+"""Module docs."""
+
+from __future__ import annotations
+
+from nodebook import node
+
+VALUE = 1
+''',
+            result.source,
+        )
+        compile(result.source, str(DOCUMENT_PATH), "exec")
+
+    def test_apply_operations_rejects_signature_change_for_custom_return_node(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="custom", outputs=["y"])
+def use_x(x):
+    if x > 0:
+        return {"y": x}
+    return {"y": 0}
+
+use_x.depends_on(load)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "remove_edge", "fromNode": "load", "toNode": "custom"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.source)
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": (
+                    "Custom-return node custom cannot have its input "
+                    "dependencies changed by graph operations."
+                ),
+                "nodeId": "custom",
+                "operationIndex": 0,
+                "operationType": "remove_edge",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_rejects_custom_return_downstream_edge_change(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="custom", outputs=["y"])
+def use_x(x):
+    if True:
+        return {"y": x}
+    return {"y": 0}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "add_edge", "fromNode": "load", "toNode": "custom"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": (
+                    "Custom-return node custom cannot have its input "
+                    "dependencies changed by graph operations."
+                ),
+                "nodeId": "custom",
+                "operationIndex": 0,
+                "operationType": "add_edge",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_rejects_custom_return_downstream_output_and_delete_changes(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="custom", outputs=["y"])
+def use_x(x):
+    if True:
+        return {"y": x}
+    return {"y": 0}
+
+use_x.depends_on(load)
+""".lstrip()
+
+        changed_outputs = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_outputs", "nodeId": "load", "outputs": ["x"]}],
+        )
+        deleted_upstream = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "delete_node", "nodeId": "load"}],
+        )
+
+        for result, operation_type in [
+            (changed_outputs, "update_node_outputs"),
+            (deleted_upstream, "delete_node"),
+        ]:
+            self.assertFalse(result.ok)
+            self.assertIn(
+                {
+                    "kind": "unsupported_python",
+                    "message": (
+                        "Custom-return node custom cannot have its input "
+                        "dependencies changed by graph operations."
+                    ),
+                    "nodeId": "custom",
+                    "operationIndex": 0,
+                    "operationType": operation_type,
+                },
+                [issue.to_dict() for issue in result.issues],
+            )
+
+    def test_apply_operations_rejects_rename_for_custom_return_node(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="custom", outputs=["y"])
+def use_x():
+    if True:
+        return {"y": 1}
+    return {"y": 0}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{
+                "type": "rename_node_function",
+                "nodeId": "custom",
+                "functionName": "renamed",
+            }],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.source)
+        self.assertIn(
+            {
+                "kind": "unsupported_python",
+                "message": (
+                    "Custom-return node custom cannot be renamed by Python "
+                    "source rewrite APIs."
+                ),
+                "nodeId": "custom",
+                "operationIndex": 0,
+                "operationType": "rename_node_function",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_returns_metadata_updates(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "move_node", "nodeId": "n_test", "position": {"x": 10, "y": 20}},
+                {"type": "update_node_title", "nodeId": "n_test", "title": "Make X"},
+                {"type": "update_node_description", "nodeId": "n_test", "description": "Builds x."},
+            ],
+            sidecar_metadata={
+                "nodes": [
+                    {"id": "n_other", "position": {"x": 1, "y": 2}},
+                    {"id": "n_test", "title": "Old"},
+                ]
+            },
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        self.assertEqual(
+            result.sidecar_metadata,
+            {
+                "nodes": {
+                    "n_other": {"position": {"x": 1, "y": 2}},
+                    "n_test": {"title": "Make X", "position": {"x": 10, "y": 20}, "description": "Builds x."},
+                }
+            },
+        )
+
+    def test_apply_operations_invalid_operation_reports_index_and_type_without_source(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "missing", "bodyCode": "x = 2"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.source)
+        self.assertIn(
+            {
+                "kind": "missing_node_reference",
+                "message": "Node 'missing' was not found.",
+                "nodeId": "missing",
+                "operationIndex": 0,
+                "operationType": "update_node_body",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
 
 
 if __name__ == "__main__":

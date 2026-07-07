@@ -2013,6 +2013,7 @@ export function InspectorPanel({
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
   const isGraphRunning = graphExecutionState?.status === "running";
+  const isNodeNameReadOnly = readOnly || !selectedNode?.editable;
   const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
   const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
   const isGraphActionDisabled = isGraphRunning;
@@ -2105,8 +2106,11 @@ export function InspectorPanel({
                   ].join(" ")}
                   value={nodeNameDraft}
                   placeholder={selectedNode.displayName}
-                  readOnly={readOnly}
+                  readOnly={isNodeNameReadOnly}
                   onChange={(event) => {
+                    if (isNodeNameReadOnly) {
+                      return;
+                    }
                     const nextName = event.currentTarget.value;
                     setNodeNameDraft(nextName);
                     const result = onNodeNameChange(selectedNode.id, nextName);

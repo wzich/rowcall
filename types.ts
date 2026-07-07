@@ -84,7 +84,9 @@ export type ValidationIssue = {
     | "duplicate_node_id"
     | "missing_node_reference"
     | "cycle"
+    | "document_write_error"
     | "conflicting_outputs"
+    | "invalid_operation"
     | "invalid_python"
     | "stale_document"
     | "duplicate_function_name"
@@ -95,6 +97,8 @@ export type ValidationIssue = {
   nodeId?: string;
   edgeIndex?: number;
   field?: string;
+  operationIndex?: number;
+  operationType?: string;
 };
 
 export type DecodeGraphResult =

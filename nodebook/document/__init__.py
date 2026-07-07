@@ -15,7 +15,15 @@ from .models import (
 )
 from .parser import load_document, parse_source
 from .planning import build_full_graph_plan, build_run_plan, build_run_plan_for_targets
-from .rewrite import RewriteResult, add_edge, remove_edge, update_node_body, update_node_outputs
+from .rewrite import (
+    OperationRewriteResult,
+    RewriteResult,
+    add_edge,
+    apply_document_operations,
+    remove_edge,
+    update_node_body,
+    update_node_outputs,
+)
 from .validation import (
     build_downstream_adjacency,
     build_upstream_adjacency,
@@ -29,6 +37,7 @@ __all__ = [
     "DocumentNode",
     "ExecutableDocument",
     "ParseResult",
+    "OperationRewriteResult",
     "RunPlan",
     "RunPlanStep",
     "RewriteResult",
@@ -36,6 +45,7 @@ __all__ = [
     "ValidationIssue",
     "ValidationResult",
     "add_edge",
+    "apply_document_operations",
     "build_downstream_adjacency",
     "build_full_graph_plan",
     "build_run_plan",

@@ -101,10 +101,12 @@ are not passed through Edges as Outputs.
 If an upstream Node fails during a Run, execution stops and downstream Nodes do
 not execute.
 
-Full-graph and upstream-to-node runs are source-backed. The app sends either
-current Python source or a validated editable document model that the server
-renders to Python source, then the Python runtime worker parses, validates,
-plans, and executes it with the active document path as file context.
+App runs are source-backed. Before a run, the canvas flushes pending document
+operations; the server then executes either explicit request `source` or the
+active Python file on disk. The server does not render client-authoritative
+editable document models for execution. The Python runtime worker parses,
+validates, plans, and executes source with the active document path as file
+context.
 
 `Run single node` is cache-backed through the Python runtime worker. It is for
 iterative development: it executes only the selected Node, using copied outputs
@@ -128,6 +130,25 @@ sources should be modeled as normal Python code inside root Nodes.
 Source-backed app and worker runs follow the same rule. Empty `inputs` objects
 are tolerated for shared request-shape compatibility, but non-empty explicit
 inputs are rejected instead of being ignored.
+
+## Document Operations
+
+The browser-facing write API applies operation batches rather than replacing a
+whole document projection. `POST /document/operations` accepts a base revision,
+optional client batch ID, and ordered operations such as node body/output
+updates, node/function additions and deletions, edge changes, globals edits, and
+sidecar metadata changes. The server rejects stale base revisions, calls the
+Python runtime worker's `apply_operations` operation to rewrite source, writes
+the returned Python source and `.nodebook.json` metadata, and reloads the
+canonical document response. Graph and output operations normalize standard
+editor-authored downstream function signatures to match direct upstream outputs.
+Custom-return nodes are rejected when an operation would change their authored
+input dependency surface.
+
+The app-visible document revision includes both Python source and normalized
+sidecar metadata so UI-only edits such as node position changes participate in
+stale-write detection. The lower-level Python parser revision remains the source
+hash used by CLI/runtime code.
 
 Future runtime configurations may expose explicit isolation modes:
 

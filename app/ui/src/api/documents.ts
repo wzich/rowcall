@@ -17,13 +17,48 @@ export type LoadDocumentSuccess = {
   ok: true;
   document: NodebookDocumentV1;
   path: string;
+  clientBatchId?: string;
 };
 
 export type LoadDocumentResult =
   | LoadDocumentSuccess
   | DocumentApiError;
 
-export type SaveDocumentResult =
+export type DocumentOperation =
+  | { type: "update_globals"; code: string }
+  | { type: "update_node_body"; nodeId: string; code: string }
+  | { type: "update_node_outputs"; nodeId: string; outputs: string[] }
+  | { type: "rename_node_function"; nodeId: string; functionName: string }
+  | {
+    type: "add_node";
+    node: {
+      id: string;
+      functionName: string;
+      code: string;
+      outputs: string[];
+      position?: { x: number; y: number };
+      title?: string;
+      description?: string;
+    };
+  }
+  | { type: "delete_node"; nodeId: string }
+  | { type: "add_edge"; fromNode: string; toNode: string }
+  | { type: "remove_edge"; fromNode: string; toNode: string }
+  | { type: "move_node"; nodeId: string; position: { x: number; y: number } }
+  | { type: "update_node_title"; nodeId: string; title: string }
+  | {
+    type: "update_node_description";
+    nodeId: string;
+    description: string;
+  };
+
+export type ApplyDocumentOperationsRequest = {
+  baseRevision: string;
+  clientBatchId?: string;
+  operations: DocumentOperation[];
+};
+
+export type ApplyDocumentOperationsResult =
   | LoadDocumentSuccess
   | DocumentApiError;
 
@@ -51,15 +86,22 @@ export async function loadDocument(): Promise<LoadDocumentSuccess> {
   return result;
 }
 
-export async function saveDocument(
-  document: NodebookDocumentV1,
+export async function applyDocumentOperations(
+  baseRevision: string,
+  operations: DocumentOperation[],
+  clientBatchId?: string,
 ): Promise<LoadDocumentSuccess> {
-  const response = await nodebookFetch(activeDocumentPath, {
-    method: "PUT",
+  const request: ApplyDocumentOperationsRequest = {
+    baseRevision,
+    operations,
+    ...(clientBatchId ? { clientBatchId } : {}),
+  };
+  const response = await nodebookFetch(`${activeDocumentPath}/operations`, {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(document),
+    body: JSON.stringify(request),
   });
-  const result = await response.json() as SaveDocumentResult;
+  const result = await response.json() as ApplyDocumentOperationsResult;
 
   if (!result.ok) {
     throw new DocumentApiRequestError(

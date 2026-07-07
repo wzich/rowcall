@@ -194,6 +194,7 @@ export async function* streamSourceRunToNode(
   nodeId: string,
   inputs: Record<string, unknown> = {},
   trace: boolean = false,
+  signal?: AbortSignal,
 ): AsyncGenerator<ExecutionStreamEvent> {
   if (hasExplicitRunInputs(inputs)) {
     yield* streamSourceBackedInputsNotSupported(
@@ -211,6 +212,7 @@ export async function* streamSourceRunToNode(
     "run_to_node",
     nodeId,
     trace,
+    signal,
   );
 }
 
@@ -221,6 +223,7 @@ export async function* streamSourceRunSingleNode(
   nodeId: string,
   inputs: Record<string, unknown> = {},
   trace: boolean = false,
+  signal?: AbortSignal,
 ): AsyncGenerator<ExecutionStreamEvent> {
   if (hasExplicitRunInputs(inputs)) {
     yield* streamSourceBackedInputsNotSupported(
@@ -238,6 +241,7 @@ export async function* streamSourceRunSingleNode(
     "run_node",
     nodeId,
     trace,
+    signal,
   );
 }
 
@@ -299,6 +303,7 @@ export async function* streamSourceRunGraph(
   documentPath: string,
   userInputs: Record<string, unknown> = {},
   trace: boolean = false,
+  signal?: AbortSignal,
 ): AsyncGenerator<ExecutionStreamEvent> {
   if (hasExplicitRunInputs(userInputs)) {
     yield* streamSourceBackedInputsNotSupported(
@@ -316,6 +321,7 @@ export async function* streamSourceRunGraph(
     "run_graph",
     undefined,
     trace,
+    signal,
   );
 }
 
@@ -533,6 +539,7 @@ async function* streamSourceRun(
   runType: ExecutionRunType,
   targetNodeId: string | undefined,
   traceEnabled: boolean,
+  signal?: AbortSignal,
 ): AsyncGenerator<ExecutionStreamEvent> {
   yield* streamWorkerRun(
     runId,
@@ -541,6 +548,8 @@ async function* streamSourceRun(
     runType,
     targetNodeId,
     traceEnabled,
+    undefined,
+    signal,
   );
 }
 
@@ -552,6 +561,7 @@ async function* streamWorkerRun(
   targetNodeId: string | undefined,
   traceEnabled: boolean,
   inputs: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): AsyncGenerator<ExecutionStreamEvent> {
   for await (
     const event of streamWorkerRunEvents(
@@ -561,6 +571,7 @@ async function* streamWorkerRun(
       targetNodeId,
       traceEnabled,
       inputs,
+      signal,
     )
   ) {
     if (event.type === "run_started") {
@@ -642,6 +653,7 @@ async function* streamWorkerRunEvents(
   targetNodeId: string | undefined,
   traceEnabled: boolean,
   inputs: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): AsyncGenerator<PythonWorkerEvent> {
   const payload: Record<string, unknown> = {
     source,
@@ -653,7 +665,7 @@ async function* streamWorkerRunEvents(
     payload.target = targetNodeId;
   }
 
-  yield* sourceRuntimeWorker.request(runType, payload);
+  yield* sourceRuntimeWorker.request(runType, payload, { signal });
 }
 
 function readWorkerRunPlan(event: PythonWorkerEvent): RunPlan {

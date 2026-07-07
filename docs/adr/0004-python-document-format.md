@@ -64,11 +64,13 @@ clean_data.depends_on(read_data)
 ```
 
 Edges are explicit and should be declared in a graph block after node
-definitions. Edges do not mutate downstream function signatures. Function
-parameters declare which input names a node consumes; explicit edges declare
-which upstream nodes may provide values. At runtime, Nodebook gathers outputs
-from directly connected upstream nodes and passes matching values into the
-downstream function.
+definitions. Function parameters declare which input names a node consumes;
+explicit edges declare which upstream nodes may provide values. At runtime,
+Nodebook gathers outputs from directly connected upstream nodes and passes
+matching values into the downstream function. For standard editor-authored
+nodes, UI graph/output edits may normalize downstream function signatures to
+match direct upstream outputs. Custom-return nodes are left as authored; graph
+operations that would change their input dependency surface are rejected.
 
 Declared outputs are represented in the decorator and returned as a dictionary.
 For normal Nodebook-authored nodes, the editor may generate the return
@@ -96,7 +98,7 @@ produces actionable validation errors. The beta implementation detects and
 preserves custom returns, but it does not offer full UI editing for them. Nodes
 with custom return control flow are custom-managed nodes: they remain visible
 and runnable, but UI actions that would require safely regenerating return
-statements are disabled.
+statements or changing input dependencies are disabled.
 
 Top-level imports, constants, helper functions, and classes are allowed. The UI
 should eventually expose code outside node functions through a "Globals" section
@@ -153,19 +155,22 @@ The implemented split uses these boundaries:
 4. The Deno/Hono app server owns editing APIs, startup configuration, and the
    browser-facing API. Document operations and execution call the Python runtime
    worker, including cache-backed single-node execution.
-5. Normal UI-authored node edits regenerate function bodies, parameters, output
-   declarations, return dictionaries, and graph edges as Python source rewrites.
-   Custom returns are preserved or flagged with specific validation errors.
+5. Normal UI-authored edits are sent as operation batches. The Python document
+   package owns source rewrites for node bodies, output declarations, function
+   names, node additions/deletions, graph edges, and globals. Custom returns are
+   preserved or flagged with specific validation errors.
 6. `.nodebook.json` sidecars remain UI-only metadata. They are not required to
-   validate or run a Python document.
+   validate or run a Python document, but the app-facing revision includes
+   normalized sidecar metadata so position/title/description edits participate
+   in stale-write detection.
 7. File watching and reconciliation remain future work. The Python file should
    remain authoritative when it changes externally.
 
 ## Follow-On Decisions
 
-- Consider concrete-syntax editing for future save operations that need broader
+- Consider concrete-syntax editing for future operations that need broader
   comment and formatting preservation. The beta implementation uses constrained
-  source rewrites for supported editor operations.
+  Python-owned source rewrites for supported editor operations.
 - Create the `<document-name>.nodebook.json` sidecar on first canvas save. A
   bare `.py` file remains sufficient to open and run the document.
 - Treat external file writes as authoritative. Nodebook should reload cleanly

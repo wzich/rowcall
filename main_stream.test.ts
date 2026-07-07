@@ -59,6 +59,43 @@ Deno.test("streamExecutionEvents emits padding and heartbeat comments around del
   }
 });
 
+Deno.test("streamExecutionEvents aborts event sources while waiting for the next event", async () => {
+  let aborted = false;
+  let signalWasAborted = false;
+  const never = deferred<void>();
+
+  const response = streamExecutionEvents("run-1", "run_graph", (signal) => {
+    signal.addEventListener("abort", () => {
+      aborted = true;
+      signalWasAborted = signal.aborted;
+      never.resolve();
+    }, { once: true });
+
+    return (async function* () {
+      yield {
+        type: "run_started",
+        runId: "run-1",
+        runType: "run_graph",
+      } satisfies ExecutionStreamEvent;
+      await never.promise;
+    })();
+  });
+
+  assert(response.body);
+  const reader = response.body.getReader();
+
+  await readUntil(
+    reader,
+    new TextDecoder(),
+    "",
+    (value) => value.includes("event: run_started"),
+  );
+  await reader.cancel();
+
+  assertEquals(signalWasAborted, true);
+  assertEquals(aborted, true);
+});
+
 async function readUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   decoder: TextDecoder,

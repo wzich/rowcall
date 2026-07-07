@@ -1,4 +1,3 @@
-import type { NodebookDocumentV1 } from "../../../../document.ts";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
@@ -9,7 +8,6 @@ import { nodebookFetch } from "./auth.ts";
 export type RunExecutionRequest = {
   graph: Graph;
   nodeId: string;
-  document?: NodebookDocumentV1;
   inputs?: Record<string, unknown>;
   source?: string;
   trace?: boolean;
@@ -19,7 +17,6 @@ export type RunExecutionRequest = {
 
 export type RunGraphRequest = {
   graph: Graph;
-  document?: NodebookDocumentV1;
   inputs?: Record<string, unknown>;
   source?: string;
   trace?: boolean;
@@ -37,9 +34,7 @@ export class RunExecutionRequestError extends Error {
 async function runExecution(
   path: "/run-node" | "/run-to-node",
   {
-    graph,
     nodeId,
-    document,
     inputs = {},
     source,
     trace = false,
@@ -54,9 +49,7 @@ async function runExecution(
       ...(onEvent ? { Accept: "text/event-stream" } : {}),
     },
     body: JSON.stringify({
-      graph,
       nodeId,
-      ...(document !== undefined ? { document } : {}),
       inputs,
       ...(source !== undefined ? { source } : {}),
       trace,
@@ -80,8 +73,7 @@ async function runExecution(
 }
 
 async function runGraphExecution(
-  { graph, document, inputs = {}, source, trace = false, onEvent, signal }:
-    RunGraphRequest,
+  { inputs = {}, source, trace = false, onEvent, signal }: RunGraphRequest,
 ): Promise<ExecutionResponse> {
   const response = await nodebookFetch("/run-graph", {
     method: "POST",
@@ -90,8 +82,6 @@ async function runGraphExecution(
       ...(onEvent ? { Accept: "text/event-stream" } : {}),
     },
     body: JSON.stringify({
-      graph,
-      ...(document !== undefined ? { document } : {}),
       inputs,
       ...(source !== undefined ? { source } : {}),
       trace,

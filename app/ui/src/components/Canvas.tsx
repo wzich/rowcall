@@ -67,7 +67,7 @@ type CanvasProps = {
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onConnectNodes?: (fromNode: string, toNode: string) => void;
-  onDeleteEdges?: (edgeIds: string[]) => void;
+  onDeleteEdges?: (edgeIds: string[]) => string[];
   onDeleteNode?: (nodeId: string) => void;
   onNodePositionChange: (nodeId: string, position: GraphPosition) => void;
   onNodeSelect: (nodeId: string) => void;
@@ -194,13 +194,19 @@ export function Canvas({
     onNodePositionChange(node.id, node.position);
   }, [onNodePositionChange]);
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
-    onEdgesChange(changes);
     const removedEdgeIds = changes
       .filter((change) => change.type === "remove")
       .map((change) => change.id);
+    const acceptedRemovedEdgeIds = removedEdgeIds.length > 0
+      ? onDeleteEdges?.(removedEdgeIds) ?? removedEdgeIds
+      : [];
+    const acceptedRemovedEdgeIdSet = new Set(acceptedRemovedEdgeIds);
+    const acceptedChanges = changes.filter((change) =>
+      change.type !== "remove" || acceptedRemovedEdgeIdSet.has(change.id)
+    );
 
-    if (removedEdgeIds.length > 0) {
-      onDeleteEdges?.(removedEdgeIds);
+    if (acceptedChanges.length > 0) {
+      onEdgesChange(acceptedChanges);
     }
   }, [onDeleteEdges, onEdgesChange]);
   const handleConnect = useCallback<OnConnect>((connection) => {

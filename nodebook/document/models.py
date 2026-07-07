@@ -51,6 +51,8 @@ class ValidationIssue:
     node_id: str | None = None
     edge_index: int | None = None
     field: str | None = None
+    operation_index: int | None = None
+    operation_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = {"kind": self.kind, "message": self.message}
@@ -62,6 +64,10 @@ class ValidationIssue:
             result["edgeIndex"] = self.edge_index
         if self.field is not None:
             result["field"] = self.field
+        if self.operation_index is not None:
+            result["operationIndex"] = self.operation_index
+        if self.operation_type is not None:
+            result["operationType"] = self.operation_type
         return result
 
 

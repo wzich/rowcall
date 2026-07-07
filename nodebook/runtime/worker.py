@@ -78,6 +78,7 @@ def handle_request(
         "inspect_source",
         "render_source",
         "validate_candidate_source",
+        "apply_operations",
         "plan_run",
         "run_graph",
         "run_to_node",
@@ -119,6 +120,23 @@ def handle_request(
                 "validate_candidate_source_completed",
                 request_id,
                 session.validate_candidate_source(source, document_path),
+            )
+        ], False
+
+    if operation == "apply_operations":
+        operations = payload.get("operations")
+        if not isinstance(operations, list):
+            return [_error_event(request_id, "invalid_request", "Request field 'operations' must be a list")], False
+        if not all(isinstance(item, dict) for item in operations):
+            return [_error_event(request_id, "invalid_request", "Request field 'operations' must contain objects")], False
+        sidecar_metadata = payload.get("sidecarMetadata")
+        if sidecar_metadata is not None and not isinstance(sidecar_metadata, dict):
+            return [_error_event(request_id, "invalid_request", "Request field 'sidecarMetadata' must be an object")], False
+        return [
+            _event(
+                "apply_operations_completed",
+                request_id,
+                session.apply_operations(source, document_path, operations, sidecar_metadata=sidecar_metadata),
             )
         ], False
 

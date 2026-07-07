@@ -1,9 +1,15 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertExists } from "@std/assert";
 import {
+  app,
   buildNodebookUrl,
   type NodebookServerSecurity,
+  setActiveDocumentPathForTests,
   validateLocalRequest,
 } from "./main.ts";
+import {
+  loadPythonDocument,
+  sidecarPathForPythonDocument,
+} from "./python_document.ts";
 
 const security: NodebookServerSecurity = {
   hostname: "127.0.0.1",
@@ -47,6 +53,176 @@ Deno.test("validateLocalRequest requires a token for API requests", () => {
     ),
     { ok: true },
   );
+});
+
+Deno.test("validateLocalRequest requires a token for document operations", () => {
+  assertEquals(
+    validateLocalRequest(
+      request("/document/operations", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+      }),
+      security,
+    ),
+    {
+      ok: false,
+      status: 401,
+      message: "Missing or invalid Nodebook authorization token.",
+    },
+  );
+  assertEquals(
+    validateLocalRequest(
+      request("/document/operations", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+      security,
+    ),
+    { ok: true },
+  );
+});
+
+Deno.test("PUT /document is no longer a document write route", async () => {
+  const response = await app.fetch(
+    request("/document", {
+      method: "PUT",
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status === 404 || response.status === 405, true);
+});
+
+Deno.test("POST /document/operations applies operations and echoes client batch", async () => {
+  const documentPath = await writeRouteTestDocument("operations_success.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+  assertExists(loaded.document.revision);
+
+  const response = await app.fetch(
+    jsonRequest("/document/operations", {
+      baseRevision: loaded.document.revision,
+      clientBatchId: "batch-1",
+      operations: [
+        {
+          type: "update_node_body",
+          nodeId: "n_test",
+          code: "x = 2",
+        },
+        {
+          type: "move_node",
+          nodeId: "n_test",
+          position: { x: 12, y: 34 },
+        },
+      ],
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.ok, true);
+  assertEquals(body.clientBatchId, "batch-1");
+  assertEquals(body.path, documentPath);
+  assertEquals(body.document.nodes[0].id, "n_test");
+  assertEquals(body.document.nodes[0].code, "x = 2");
+  assertEquals(body.document.nodes[0].position, { x: 12, y: 34 });
+  assertExists(body.document.revision);
+
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = 2",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+  const sidecar = JSON.parse(
+    await Deno.readTextFile(sidecarPathForPythonDocument(documentPath)),
+  );
+  assertEquals(sidecar.nodes[0].position, { x: 12, y: 34 });
+});
+
+Deno.test("POST /document/operations maps stale base revisions to 409", async () => {
+  const documentPath = await writeRouteTestDocument("operations_stale.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const response = await app.fetch(
+    jsonRequest("/document/operations", {
+      baseRevision: "stale-revision",
+      operations: [
+        {
+          type: "update_node_body",
+          nodeId: "n_test",
+          code: "x = 2",
+        },
+      ],
+    }),
+  );
+
+  assertEquals(response.status, 409);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "stale_document");
+  assertEquals(body.error.issues[0].kind, "stale_document");
+});
+
+Deno.test("POST /document/operations returns validation issues for invalid operations", async () => {
+  const documentPath = await writeRouteTestDocument("operations_invalid.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+  assertExists(loaded.document.revision);
+
+  const response = await app.fetch(
+    jsonRequest("/document/operations", {
+      baseRevision: loaded.document.revision,
+      operations: [{ type: "update_node_body", nodeId: "n_test" }],
+    }),
+  );
+
+  assertEquals(response.status, 422);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "document_decode_error");
+  assertEquals(body.error.issues[0].path, "operations[0].code");
+});
+
+Deno.test("HTTP run routes reject graph-only payloads", async () => {
+  const graph = {
+    nodes: [{ id: "n_test", code: "x = 1", outputs: ["x"] }],
+    edges: [],
+  };
+
+  for (const route of ["/run-node", "/run-to-node", "/run-graph"]) {
+    const response = await app.fetch(
+      jsonRequest(route, {
+        graph,
+        ...(route === "/run-graph" ? {} : { nodeId: "n_test" }),
+      }),
+    );
+
+    assertEquals(response.status, 422);
+    const body = await response.json();
+    assertEquals(body.ok, false);
+    assertEquals(body.error.kind, "invalid_request");
+    assertEquals(
+      body.error.message,
+      "Run routes are source-backed and do not accept graph payloads. Save document operations before running the active document.",
+    );
+  }
 });
 
 Deno.test("validateLocalRequest accepts token query params for non-browser agents", () => {
@@ -126,4 +302,35 @@ function request(
     method: options.method ?? "GET",
     headers,
   });
+}
+
+function jsonRequest(path: string, body: unknown): Request {
+  const headers = new Headers({
+    host: "127.0.0.1:8000",
+    "content-type": "application/json",
+    "x-nodebook-token": "secret-token",
+  });
+  return new Request(`http://127.0.0.1:8000${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+async function writeRouteTestDocument(filename: string): Promise<string> {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/${filename}`;
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from nodebook import node",
+      "",
+      '@node(id="n_test", outputs=["x"])',
+      "def make_x():",
+      "    x = 1",
+      '    return {"x": x}',
+      "",
+    ].join("\n"),
+  );
+  return documentPath;
 }

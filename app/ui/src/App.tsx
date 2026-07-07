@@ -8,12 +8,17 @@ import {
   type InspectGraphValidationIssue,
 } from "./api/inspectGraph.ts";
 import {
+  applyDocumentOperations,
   DocumentApiRequestError,
+  type DocumentOperation,
   loadDocument,
-  saveDocument,
 } from "./api/documents.ts";
 import { loadPythonRuntime } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
+import {
+  coalesceDocumentOperations,
+  hasCustomManagedDownstream,
+} from "./documentOperations.ts";
 import {
   type ExecutionDisplayState,
   type GraphInspectorModel,
@@ -42,8 +47,8 @@ import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
-const documentSourceValue = "document:active";
 const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
+const documentCanvasKey = "document:active";
 const themeStorageKey = "nodebook:theme";
 
 export type ThemeMode = "light" | "dark";
@@ -61,6 +66,13 @@ type SaveErrorMessage = {
   title: string;
   detail: string;
 };
+
+function getDocumentSourceValue(
+  baseRevision: string,
+  editGeneration: number,
+): string {
+  return `document:${baseRevision}:${editGeneration}`;
+}
 
 function getInitialThemeMode(): ThemeMode {
   if (
@@ -96,6 +108,16 @@ export default function App() {
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
   const editGenerationRef = useRef(0);
+  const editableDocumentRef = useRef<NodebookDocumentV1 | null>(null);
+  const baseRevisionRef = useRef("");
+  const documentSourceValueRef = useRef(
+    getDocumentSourceValue(baseRevisionRef.current, editGenerationRef.current),
+  );
+  const [documentSourceValue, setDocumentSourceValue] = useState(() =>
+    documentSourceValueRef.current
+  );
+  const pendingOperationsRef = useRef<DocumentOperation[]>([]);
+  const flushPromiseRef = useRef<Promise<boolean> | null>(null);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
     reservedNames: new Set(),
     nextIndex: 1,
@@ -112,12 +134,22 @@ export default function App() {
   useEffect(() => {
     globalThis.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
+  const syncDocumentSourceValue = useCallback(() => {
+    const sourceValue = getDocumentSourceValue(
+      baseRevisionRef.current,
+      editGenerationRef.current,
+    );
+    documentSourceValueRef.current = sourceValue;
+    setDocumentSourceValue(sourceValue);
+    return sourceValue;
+  }, []);
   const {
     executionStateByNodeId,
     graphExecutionState,
     nodeRunStatuses,
     applyExecutionStreamEvent,
     clearActiveRun,
+    clearExecutionSession,
     forgetNodes,
     isCurrentSource,
     markGraphExecutionRunning,
@@ -129,11 +161,17 @@ export default function App() {
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
-  } = useExecutionSession(documentSourceValue);
+  } = useExecutionSession(documentSourceValue, {
+    getCurrentSourceValue: () => documentSourceValueRef.current,
+  });
   const isGraphRunning = graphExecutionState?.status === "running";
   const isSelectedNodeRunning = selectedNodeId
     ? executionStateByNodeId[selectedNodeId]?.status === "running"
     : false;
+
+  useEffect(() => {
+    editableDocumentRef.current = editableDocument;
+  }, [editableDocument]);
 
   useEffect(() => {
     if (!documentQuery.isSuccess) {
@@ -145,39 +183,90 @@ export default function App() {
       createGeneratedFunctionNameSession(graph);
     setDocumentPath(documentQuery.data.path);
     const flowGraph = toReactFlowGraph(graph);
-    setEditableDocument({
+    const nextDocument = {
       ...graph,
       nodes: graph.nodes.map((node) => ({
         ...node,
         position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
           ?.position,
       })),
-    });
+    };
+    editableDocumentRef.current = nextDocument;
+    setEditableDocument(nextDocument);
+    baseRevisionRef.current = graph.revision ?? "";
+    pendingOperationsRef.current = [];
     setValidationIssues([]);
     setSaveStatus("idle");
     setSaveError(null);
     editGenerationRef.current = 0;
-  }, [documentQuery.data, documentQuery.isSuccess]);
+    syncDocumentSourceValue();
+  }, [documentQuery.data, documentQuery.isSuccess, syncDocumentSourceValue]);
 
-  const saveDocumentMutation = useMutation({
-    mutationFn: saveDocument,
-    onMutate: () => {
-      setSaveStatus("saving");
-      setSaveError(null);
-      return { editGeneration: editGenerationRef.current };
-    },
-    onSuccess: (result, _variables, context) => {
-      setDocumentPath(result.path);
-      if (context?.editGeneration === editGenerationRef.current) {
-        setEditableDocument(result.document);
-        setSaveStatus("saved");
-      }
-    },
-    onError: (error) => {
-      setSaveStatus("error");
-      setSaveError(formatSaveError(error));
-    },
-  });
+  const queueOperation = useCallback((operation: DocumentOperation) => {
+    pendingOperationsRef.current = coalesceDocumentOperations([
+      ...pendingOperationsRef.current,
+      operation,
+    ]);
+    setSaveStatus("idle");
+    setSaveError(null);
+  }, []);
+
+  const flushPendingOperations = useCallback(async (): Promise<boolean> => {
+    if (flushPromiseRef.current) {
+      return await flushPromiseRef.current;
+    }
+    if (pendingOperationsRef.current.length === 0) {
+      return true;
+    }
+    if (!editableDocumentRef.current) {
+      return false;
+    }
+
+    const operations = pendingOperationsRef.current;
+    const baseRevision = baseRevisionRef.current;
+    const clientBatchId = crypto.randomUUID();
+    const editGeneration = editGenerationRef.current;
+
+    pendingOperationsRef.current = [];
+    setSaveStatus("saving");
+    setSaveError(null);
+
+    const promise = applyDocumentOperations(
+      baseRevision,
+      operations,
+      clientBatchId,
+    )
+      .then((result) => {
+        setDocumentPath(result.path);
+        baseRevisionRef.current = result.document.revision ?? "";
+        syncDocumentSourceValue();
+        if (editGeneration === editGenerationRef.current) {
+          editableDocumentRef.current = result.document;
+          setEditableDocument(result.document);
+          setSaveStatus("saved");
+        } else if (pendingOperationsRef.current.length > 0) {
+          setSaveStatus("idle");
+        } else {
+          setSaveStatus("saved");
+        }
+        return pendingOperationsRef.current.length === 0;
+      })
+      .catch((error) => {
+        pendingOperationsRef.current = coalesceDocumentOperations([
+          ...operations,
+          ...pendingOperationsRef.current,
+        ]);
+        setSaveStatus("error");
+        setSaveError(formatSaveError(error));
+        return false;
+      })
+      .finally(() => {
+        flushPromiseRef.current = null;
+      });
+
+    flushPromiseRef.current = promise;
+    return await promise;
+  }, []);
 
   const runNodeMutation = useMutation({
     ...runNodeMutationOptions(),
@@ -391,143 +480,173 @@ export default function App() {
   }, [editableGraph, executionStateByNodeId, graphNodeDetails, selectedNodeId]);
 
   const markDocumentEdited = useCallback(() => {
+    clearExecutionSession();
     editGenerationRef.current += 1;
+    syncDocumentSourceValue();
     setSaveStatus("idle");
     setSaveError(null);
-  }, []);
+  }, [clearExecutionSession, syncDocumentSourceValue]);
+
+  const commitEditableDocument = useCallback(
+    (nextDocument: NodebookDocumentV1) => {
+      editableDocumentRef.current = nextDocument;
+      setEditableDocument(nextDocument);
+    },
+    [],
+  );
 
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
-    if (!editableDocument) return;
-    const nodeId = createNextNodeId(editableDocument);
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const nodeId = createNextNodeId(current);
     const functionName = reserveNextFunctionName(
-      editableDocument,
+      current,
       generatedFunctionNameSessionRef.current,
     );
+    if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
+      return;
+    }
     const node = createNewPythonNode(
       nodeId,
       functionName,
       position,
     );
+    const nextDocument = {
+      ...current,
+      nodes: [...current.nodes, node],
+    };
 
-    setEditableDocument((current) => {
-      if (!current) return current;
-      if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
-        return current;
-      }
-
-      markDocumentEdited();
-      return {
-        ...current,
-        nodes: [...current.nodes, node],
-      };
-    });
-  }, [editableDocument, markDocumentEdited]);
+    markDocumentEdited();
+    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
+    commitEditableDocument(nextDocument);
+  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
-    if (!editableDocument) return;
-    const parentNodeExists = editableDocument.nodes.some((node) =>
-      node.id === parentNodeId
-    );
-    if (!parentNodeExists) return;
-    const nodeId = createNextNodeId(editableDocument);
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const parentNode = current.nodes.find((node) => node.id === parentNodeId);
+    if (!parentNode) return;
+    const nodeId = createNextNodeId(current);
     const functionName = reserveNextFunctionName(
-      editableDocument,
+      current,
       generatedFunctionNameSessionRef.current,
     );
+    if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
+      return;
+    }
 
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const parentNode = current.nodes.find((node) => node.id === parentNodeId);
-      if (!parentNode) return current;
-      if (hasNodeIdOrFunctionName(current, nodeId, functionName)) {
-        return current;
-      }
+    const position = {
+      ...createChildNodePosition(current, parentNode),
+    };
+    const node = createNewPythonNode(
+      nodeId,
+      functionName,
+      position,
+    );
+    const nextDocument = {
+      ...current,
+      nodes: [...current.nodes, node],
+      edges: [
+        ...current.edges,
+        { fromNode: parentNodeId, toNode: node.id },
+      ],
+    };
 
-      const position = {
-        ...createChildNodePosition(current, parentNode),
-      };
-      const node = createNewPythonNode(
-        nodeId,
-        functionName,
-        position,
-      );
-
-      markDocumentEdited();
-      setSelectedNodeId(node.id);
-      return {
-        ...current,
-        nodes: [...current.nodes, node],
-        edges: [
-          ...current.edges,
-          { fromNode: parentNodeId, toNode: node.id },
-        ],
-      };
+    markDocumentEdited();
+    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
+    queueOperation({
+      type: "add_edge",
+      fromNode: parentNodeId,
+      toNode: node.id,
     });
-  }, [editableDocument, markDocumentEdited]);
+    setSelectedNodeId(node.id);
+    commitEditableDocument(nextDocument);
+  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const node = current.nodes.find((item) => item.id === nodeId);
-      if (!node || node.code === code) return current;
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node || node.code === code) return;
+    const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((item) =>
+        item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
+      ),
+    };
 
-      markDocumentEdited();
-      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
-      return {
-        ...current,
-        nodes: current.nodes.map((item) =>
-          item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
-        ),
-      };
-    });
-  }, [markDocumentEdited, markNodesStale]);
+    markDocumentEdited();
+    queueOperation({ type: "update_node_body", nodeId, code });
+    markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleGlobalsCodeChange = useCallback((globalsCode: string) => {
-    setEditableDocument((current) => {
-      if (!current || (current.globalsCode ?? "") === globalsCode) {
-        return current;
-      }
+    const current = editableDocumentRef.current;
+    if (!current || (current.globalsCode ?? "") === globalsCode) {
+      return;
+    }
+    const staleNodeIds = current.nodes.map((node) => node.id);
+    const nextDocument = {
+      ...current,
+      globalsCode,
+    };
 
-      markDocumentEdited();
-      markNodesStale(current.nodes.map((node) => node.id));
-      return {
-        ...current,
-        globalsCode,
-      };
-    });
-  }, [markDocumentEdited, markNodesStale]);
+    markDocumentEdited();
+    queueOperation({ type: "update_globals", code: globalsCode });
+    markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleOutputsChange = useCallback((
     nodeId: string,
     outputs: string[],
   ) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const node = current.nodes.find((item) => item.id === nodeId);
-      if (!node || areStringArraysEqual(node.outputs, outputs)) return current;
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node || areStringArraysEqual(node.outputs, outputs)) return;
+    if (hasCustomManagedDownstream(current, nodeId)) return;
+    const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((item) =>
+        item.id === nodeId ? { ...item, outputs, runtimeCode: undefined } : item
+      ),
+    };
 
-      markDocumentEdited();
-      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
-      return {
-        ...current,
-        nodes: current.nodes.map((item) =>
-          item.id === nodeId
-            ? { ...item, outputs, runtimeCode: undefined }
-            : item
-        ),
-      };
-    });
-  }, [markDocumentEdited, markNodesStale]);
+    markDocumentEdited();
+    queueOperation({ type: "update_node_outputs", nodeId, outputs });
+    markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleNodeNameChange = useCallback((
     nodeId: string,
     displayName: string,
   ): NodeNameChangeResult => {
-    if (!editableDocument) {
+    const current = editableDocumentRef.current;
+    if (!current) {
       return { ok: false, message: "The document is not ready yet." };
     }
 
-    const node = editableDocument.nodes.find((item) => item.id === nodeId);
+    const node = current.nodes.find((item) => item.id === nodeId);
     if (!node) {
       return { ok: false, message: "This step no longer exists." };
     }
@@ -535,6 +654,12 @@ export default function App() {
       return {
         ok: false,
         message: "This step cannot be renamed because it has no Python name.",
+      };
+    }
+    if (node.editable === false) {
+      return {
+        ok: false,
+        message: "This step cannot be renamed because it has custom Python.",
       };
     }
 
@@ -549,7 +674,7 @@ export default function App() {
       };
     }
 
-    const conflictingNode = editableDocument.nodes.find((item) =>
+    const conflictingNode = current.nodes.find((item) =>
       item.id !== nodeId && item.functionName === functionName
     );
     if (conflictingNode) {
@@ -565,180 +690,235 @@ export default function App() {
       return { ok: true, functionName };
     }
 
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const currentNode = current.nodes.find((item) => item.id === nodeId);
-      if (!currentNode || currentNode.functionName === functionName) {
-        return current;
-      }
-      if (
-        current.nodes.some((item) =>
-          item.id !== nodeId && item.functionName === functionName
-        )
-      ) {
-        return current;
-      }
+    const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((item) =>
+        item.id === nodeId
+          ? { ...item, functionName, runtimeCode: undefined }
+          : item
+      ),
+    };
 
-      markDocumentEdited();
-      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), nodeId));
-      return {
-        ...current,
-        nodes: current.nodes.map((item) =>
-          item.id === nodeId
-            ? { ...item, functionName, runtimeCode: undefined }
-            : item
-        ),
-      };
-    });
+    markDocumentEdited();
+    queueOperation({ type: "rename_node_function", nodeId, functionName });
+    markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
 
     return { ok: true, functionName };
-  }, [editableDocument, markDocumentEdited, markNodesStale]);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleNodeMetadataChange = useCallback((
     nodeId: string,
     metadata: { description?: string },
   ) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const node = current.nodes.find((item) => item.id === nodeId);
-      if (!node) return current;
-      const nextDescription = metadata.description ?? node.description;
-      if (
-        (node.description ?? "") === (nextDescription ?? "")
-      ) {
-        return current;
-      }
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    const nextDescription = metadata.description ?? node.description;
+    if (
+      (node.description ?? "") === (nextDescription ?? "")
+    ) {
+      return;
+    }
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((item) =>
+        item.id === nodeId
+          ? {
+            ...item,
+            ...(metadata.description !== undefined
+              ? { description: metadata.description }
+              : {}),
+          }
+          : item
+      ),
+    };
 
-      markDocumentEdited();
-      return {
-        ...current,
-        nodes: current.nodes.map((item) =>
-          item.id === nodeId
-            ? {
-              ...item,
-              ...(metadata.description !== undefined
-                ? { description: metadata.description }
-                : {}),
-            }
-            : item
-        ),
-      };
-    });
-  }, [markDocumentEdited]);
+    markDocumentEdited();
+    if (metadata.description !== undefined) {
+      queueOperation({
+        type: "update_node_description",
+        nodeId,
+        description: metadata.description,
+      });
+    }
+    commitEditableDocument(nextDocument);
+  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
   const handleConnectNodes = useCallback((fromNode: string, toNode: string) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      if (
-        current.edges.some((edge) =>
-          edge.fromNode === fromNode && edge.toNode === toNode
-        )
-      ) {
-        return current;
-      }
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    if (
+      current.edges.some((edge) =>
+        edge.fromNode === fromNode && edge.toNode === toNode
+      )
+    ) {
+      return;
+    }
+    const targetNode = current.nodes.find((node) => node.id === toNode);
+    if (targetNode?.editable === false) {
+      return;
+    }
+    const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), toNode);
+    const nextDocument = {
+      ...current,
+      edges: [...current.edges, { fromNode, toNode }],
+    };
 
-      markDocumentEdited();
-      markNodesStale(getNodeAndDescendants(toRuntimeGraph(current), toNode));
-      return {
-        ...current,
-        edges: [...current.edges, { fromNode, toNode }],
-      };
-    });
-  }, [markDocumentEdited, markNodesStale]);
+    markDocumentEdited();
+    queueOperation({ type: "add_edge", fromNode, toNode });
+    markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleDeleteEdges = useCallback((edgeIds: string[]) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const edgeIdSet = new Set(edgeIds);
-      const removedEdges = current.edges.filter((edge) =>
-        edgeIdSet.has(getEdgeId(edge))
-      );
-      if (removedEdges.length === 0) return current;
-
-      markDocumentEdited();
-      for (const edge of removedEdges) {
-        markNodesStale(
-          getNodeAndDescendants(toRuntimeGraph(current), edge.toNode),
-        );
-      }
-
-      return {
-        ...current,
-        edges: current.edges.filter((edge) => !edgeIdSet.has(getEdgeId(edge))),
-      };
+    const current = editableDocumentRef.current;
+    if (!current) return [];
+    const edgeIdSet = new Set(edgeIds);
+    const removedEdges = current.edges.filter((edge) =>
+      edgeIdSet.has(getEdgeId(edge))
+    );
+    if (removedEdges.length === 0) return [];
+    const editableRemovedEdges = removedEdges.filter((edge) => {
+      const targetNode = current.nodes.find((node) => node.id === edge.toNode);
+      return targetNode?.editable !== false;
     });
-  }, [markDocumentEdited, markNodesStale]);
+    if (editableRemovedEdges.length === 0) return [];
+    const acceptedEdgeIds = editableRemovedEdges.map((edge) => getEdgeId(edge));
+    const runtimeGraph = toRuntimeGraph(current);
+    const staleNodeIdGroups = editableRemovedEdges.map((edge) =>
+      getNodeAndDescendants(runtimeGraph, edge.toNode)
+    );
+    const nextDocument = {
+      ...current,
+      edges: current.edges.filter((edge) =>
+        !editableRemovedEdges.some((removedEdge) =>
+          getEdgeId(removedEdge) === getEdgeId(edge)
+        )
+      ),
+    };
+
+    markDocumentEdited();
+    for (const edge of editableRemovedEdges) {
+      queueOperation({
+        type: "remove_edge",
+        fromNode: edge.fromNode,
+        toNode: edge.toNode,
+      });
+    }
+    for (const staleNodeIds of staleNodeIdGroups) {
+      markNodesStale(staleNodeIds);
+    }
+    commitEditableDocument(nextDocument);
+    return acceptedEdgeIds;
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      if (!current.nodes.some((node) => node.id === nodeId)) return current;
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    if (!current.nodes.some((node) => node.id === nodeId)) return;
+    if (hasCustomManagedDownstream(current, nodeId)) return;
 
-      const descendants = getDescendants(toRuntimeGraph(current), nodeId);
-      markDocumentEdited();
-      markNodesStale(descendants);
-      forgetNodes([nodeId]);
-      if (selectedNodeId === nodeId) {
-        setSelectedNodeId(null);
-      }
+    const descendants = getDescendants(toRuntimeGraph(current), nodeId);
+    const shouldClearSelection = selectedNodeId === nodeId;
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.filter((node) => node.id !== nodeId),
+      edges: current.edges.filter((edge) =>
+        edge.fromNode !== nodeId && edge.toNode !== nodeId
+      ),
+    };
 
-      return {
-        ...current,
-        nodes: current.nodes.filter((node) => node.id !== nodeId),
-        edges: current.edges.filter((edge) =>
-          edge.fromNode !== nodeId && edge.toNode !== nodeId
-        ),
-      };
-    });
-  }, [forgetNodes, markDocumentEdited, markNodesStale, selectedNodeId]);
+    markDocumentEdited();
+    queueOperation({ type: "delete_node", nodeId });
+    markNodesStale(descendants);
+    forgetNodes([nodeId]);
+    if (shouldClearSelection) {
+      setSelectedNodeId(null);
+    }
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    forgetNodes,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+    selectedNodeId,
+  ]);
 
   const handleNodePositionChange = useCallback((
     nodeId: string,
     position: { x: number; y: number },
   ) => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const node = current.nodes.find((item) => item.id === nodeId);
-      if (!node || arePositionsEqual(node.position, position)) return current;
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node || arePositionsEqual(node.position, position)) return;
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId ? { ...node, position } : node
+      ),
+    };
 
-      markDocumentEdited();
-      return {
-        ...current,
-        nodes: current.nodes.map((node) =>
-          node.id === nodeId ? { ...node, position } : node
-        ),
-      };
-    });
-  }, [markDocumentEdited]);
+    markDocumentEdited();
+    queueOperation({ type: "move_node", nodeId, position });
+    commitEditableDocument(nextDocument);
+  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
   const handleAutoLayout = useCallback(() => {
-    setEditableDocument((current) => {
-      if (!current) return current;
-      const positions = createSimpleLayout(toRuntimeGraph(current));
-      const hasPositionChange = current.nodes.some((node) => {
-        const position = positions[node.id];
-        return position && !arePositionsEqual(node.position, position);
-      });
-
-      if (!hasPositionChange) return current;
-
-      markDocumentEdited();
-      return {
-        ...current,
-        nodes: current.nodes.map((node) => ({
-          ...node,
-          position: positions[node.id] ?? node.position,
-        })),
-      };
+    const current = editableDocumentRef.current;
+    if (!current) return;
+    const positions = createSimpleLayout(toRuntimeGraph(current));
+    const changedPositions = current.nodes.flatMap((node) => {
+      const position = positions[node.id];
+      return position && !arePositionsEqual(node.position, position)
+        ? [{ nodeId: node.id, position }]
+        : [];
     });
-  }, [markDocumentEdited]);
 
-  async function validateGraphForExecution(): Promise<boolean> {
-    if (!editableGraph) {
+    if (changedPositions.length === 0) return;
+
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((node) => ({
+        ...node,
+        position: positions[node.id] ?? node.position,
+      })),
+    };
+
+    markDocumentEdited();
+    for (const { nodeId, position } of changedPositions) {
+      queueOperation({ type: "move_node", nodeId, position });
+    }
+    commitEditableDocument(nextDocument);
+  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+
+  async function validateGraphForExecution(
+    graph: RuntimeGraph | null = editableGraph,
+  ): Promise<boolean> {
+    if (!graph) {
       return false;
     }
 
-    const result = await inspectGraph(editableGraph);
+    const result = await inspectGraph(graph);
     if (!result.ok) {
       setValidationIssues(
         result.error.issues ?? [{
@@ -754,11 +934,11 @@ export default function App() {
   }
 
   function handleSaveDocument() {
-    if (!editableDocument || saveDocumentMutation.isPending) {
+    if (!editableDocument || saveStatus === "saving") {
       return;
     }
 
-    saveDocumentMutation.mutate(editableDocument);
+    void flushPendingOperations();
   }
 
   async function handleReloadDocumentFromDisk() {
@@ -780,64 +960,79 @@ export default function App() {
   }
 
   async function handleRunNode(nodeId: string) {
-    if (!editableGraph || !(await validateGraphForExecution())) {
+    if (!editableGraph || !(await flushPendingOperations())) {
+      return;
+    }
+    const document = editableDocumentRef.current;
+    const runSourceValue = documentSourceValueRef.current;
+    const graph = document ? toRuntimeGraph(document) : null;
+    if (!graph || !(await validateGraphForExecution(graph))) {
       return;
     }
 
     const abortController = startRunAbortController();
     markNodeExecutionRunning(nodeId, "run_node");
     runNodeMutation.mutate({
-      graph: editableGraph,
+      graph,
       nodeId,
-      document: editableDocument ?? undefined,
       inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: documentSourceValue,
+      sourceValue: runSourceValue,
     });
   }
 
   async function handleRunToNode(nodeId: string) {
-    if (!editableGraph || !(await validateGraphForExecution())) {
+    if (!editableGraph || !(await flushPendingOperations())) {
+      return;
+    }
+    const document = editableDocumentRef.current;
+    const runSourceValue = documentSourceValueRef.current;
+    const graph = document ? toRuntimeGraph(document) : null;
+    if (!graph || !(await validateGraphForExecution(graph))) {
       return;
     }
 
     const abortController = startRunAbortController();
     markGraphExecutionRunning("run_to_node");
     runToNodeMutation.mutate({
-      graph: editableGraph,
+      graph,
       nodeId,
-      document: editableDocument ?? undefined,
       inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: documentSourceValue,
+      sourceValue: runSourceValue,
     });
   }
 
   async function handleRunGraph() {
-    if (!editableGraph || !(await validateGraphForExecution())) {
+    if (!editableGraph || !(await flushPendingOperations())) {
+      return;
+    }
+    const document = editableDocumentRef.current;
+    const runSourceValue = documentSourceValueRef.current;
+    const graph = document ? toRuntimeGraph(document) : null;
+    if (!graph || !(await validateGraphForExecution(graph))) {
       return;
     }
 
     const abortController = startRunAbortController();
     markGraphExecutionRunning();
     runGraphMutation.mutate({
-      graph: editableGraph,
-      document: editableDocument ?? undefined,
+      graph,
       inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, documentSourceValue),
+      onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
-      sourceValue: documentSourceValue,
+      sourceValue: runSourceValue,
     });
   }
 
@@ -872,6 +1067,16 @@ export default function App() {
           />
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
+          )}
+          {saveStatus === "idle" && pendingOperationsRef.current.length > 0 && (
+            <span className="text-xs font-medium text-amber-700">
+              Unsaved changes
+            </span>
+          )}
+          {saveStatus === "saving" && (
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+              Saving...
+            </span>
           )}
           {saveStatus === "error" && saveError && (
             <span
@@ -911,7 +1116,7 @@ export default function App() {
             type="button"
             title={isReadOnlyDocument ? "Read-only" : "Save (Ctrl+S)"}
             className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-            disabled={!editableDocument || saveDocumentMutation.isPending}
+            disabled={!editableDocument || saveStatus === "saving"}
             onClick={handleSaveDocument}
           >
             {!isReadOnlyDocument && (
@@ -919,7 +1124,7 @@ export default function App() {
             )}
             {isReadOnlyDocument
               ? "Read-only"
-              : saveDocumentMutation.isPending
+              : saveStatus === "saving"
               ? "Saving..."
               : "Save"}
           </button>
@@ -1001,7 +1206,7 @@ export default function App() {
           <div className="flex h-full min-h-0">
             <div className="min-h-0 min-w-0 flex-1">
               <Canvas
-                key={documentSourceValue}
+                key={documentCanvasKey}
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
                 nodeRunStatuses={nodeRunStatuses}
@@ -1297,6 +1502,21 @@ function PreflightItem({
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function toAddNodeOperationNode(node: RuntimeNode): Extract<
+  DocumentOperation,
+  { type: "add_node" }
+>["node"] {
+  return {
+    id: node.id,
+    functionName: node.functionName ?? node.id,
+    code: node.code,
+    outputs: node.outputs,
+    ...(node.position ? { position: node.position } : {}),
+    ...(node.title ? { title: node.title } : {}),
+    ...(node.description ? { description: node.description } : {}),
+  };
 }
 
 function formatSaveError(error: unknown): SaveErrorMessage {
