@@ -1,18 +1,6 @@
-export type Node = {
-  id: string;
-  code: string;
-  codeKind?: "body" | "runtime";
-  outputs: string[];
-};
-
 export type Edge = {
   fromNode: string;
   toNode: string;
-};
-
-export type Graph = {
-  nodes: Node[];
-  edges: Edge[];
 };
 
 export type RunPlanStep = {
@@ -100,14 +88,6 @@ export type ValidationIssue = {
   operationIndex?: number;
   operationType?: string;
 };
-
-export type DecodeGraphResult =
-  | { ok: true; graph: Graph; issues: [] }
-  | { ok: false; issues: ValidationIssue[] };
-
-export type GraphValidationResult =
-  | { ok: true; issues: [] }
-  | { ok: false; issues: ValidationIssue[] };
 
 export type ExecutionError = {
   kind:

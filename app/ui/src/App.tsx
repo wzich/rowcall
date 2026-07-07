@@ -4,10 +4,6 @@ import { parser as pythonParser } from "@lezer/python";
 import { Moon, Save, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  inspectGraph,
-  type InspectGraphValidationIssue,
-} from "./api/inspectGraph.ts";
-import {
   applyDocumentOperations,
   DocumentApiRequestError,
   type DocumentOperation,
@@ -99,9 +95,6 @@ export default function App() {
   const [editableDocument, setEditableDocument] = useState<
     NodebookDocumentV1 | null
   >(null);
-  const [validationIssues, setValidationIssues] = useState<
-    InspectGraphValidationIssue[]
-  >([]);
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -195,7 +188,6 @@ export default function App() {
     setEditableDocument(nextDocument);
     baseRevisionRef.current = graph.revision ?? "";
     pendingOperationsRef.current = [];
-    setValidationIssues([]);
     setSaveStatus("idle");
     setSaveError(null);
     editGenerationRef.current = 0;
@@ -340,11 +332,9 @@ export default function App() {
       // session model once streaming or run history makes this duplication hurt.
       storeExecutionResponseForNodeIds(
         response,
-        response.ok
-          ? variables.graph.nodes.map((node) => node.id)
-          : response.executedNodeIds.filter((nodeId) =>
-            response.resultsByNode[nodeId]?.ok
-          ),
+        response.executedNodeIds.filter((nodeId) =>
+          response.ok || response.resultsByNode[nodeId]?.ok
+        ),
       );
       clearActiveRun(variables.abortController);
     },
@@ -911,28 +901,6 @@ export default function App() {
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
-  async function validateGraphForExecution(
-    graph: RuntimeGraph | null = editableGraph,
-  ): Promise<boolean> {
-    if (!graph) {
-      return false;
-    }
-
-    const result = await inspectGraph(graph);
-    if (!result.ok) {
-      setValidationIssues(
-        result.error.issues ?? [{
-          kind: result.error.kind,
-          message: result.error.message,
-        }],
-      );
-      return false;
-    }
-
-    setValidationIssues([]);
-    return true;
-  }
-
   function handleSaveDocument() {
     if (!editableDocument || saveStatus === "saving") {
       return;
@@ -963,19 +931,12 @@ export default function App() {
     if (!editableGraph || !(await flushPendingOperations())) {
       return;
     }
-    const document = editableDocumentRef.current;
     const runSourceValue = documentSourceValueRef.current;
-    const graph = document ? toRuntimeGraph(document) : null;
-    if (!graph || !(await validateGraphForExecution(graph))) {
-      return;
-    }
 
     const abortController = startRunAbortController();
     markNodeExecutionRunning(nodeId, "run_node");
     runNodeMutation.mutate({
-      graph,
       nodeId,
-      inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
@@ -989,19 +950,12 @@ export default function App() {
     if (!editableGraph || !(await flushPendingOperations())) {
       return;
     }
-    const document = editableDocumentRef.current;
     const runSourceValue = documentSourceValueRef.current;
-    const graph = document ? toRuntimeGraph(document) : null;
-    if (!graph || !(await validateGraphForExecution(graph))) {
-      return;
-    }
 
     const abortController = startRunAbortController();
     markGraphExecutionRunning("run_to_node");
     runToNodeMutation.mutate({
-      graph,
       nodeId,
-      inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
@@ -1015,18 +969,11 @@ export default function App() {
     if (!editableGraph || !(await flushPendingOperations())) {
       return;
     }
-    const document = editableDocumentRef.current;
     const runSourceValue = documentSourceValueRef.current;
-    const graph = document ? toRuntimeGraph(document) : null;
-    if (!graph || !(await validateGraphForExecution(graph))) {
-      return;
-    }
 
     const abortController = startRunAbortController();
     markGraphExecutionRunning();
     runGraphMutation.mutate({
-      graph,
-      inputs: {},
       source: getCurrentPythonSourceForRun(),
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
@@ -1261,7 +1208,6 @@ export default function App() {
               onRunToNode={handleRunToNode}
               onRunGraph={handleRunGraph}
               onSelectionClear={() => setSelectedNodeId(null)}
-              validationIssues={validationIssues}
             />
             <ShortcutHintPanel />
           </div>

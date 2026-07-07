@@ -1,13 +1,5 @@
 import { Hono } from "@hono/hono";
-import {
-  buildDownstreamAdjacency,
-  buildUpstreamAdjacency,
-  decodeGraph,
-  getSinkNodes,
-  getSourceNodes,
-  validateGraph,
-} from "./graph.ts";
-import type { ExecutionStreamEvent, Graph, ValidationIssue } from "./types.ts";
+import type { ExecutionStreamEvent, ValidationIssue } from "./types.ts";
 import {
   decodeDocumentOperationsRequest,
   type NodebookDocumentV1,
@@ -18,7 +10,6 @@ import {
   readPythonDocumentSource,
 } from "./python_document.ts";
 import {
-  clearRuntimeSessionCache,
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   runSourceGraph,
@@ -154,33 +145,8 @@ type ApiErrorResponse = {
   error: ApiError;
 };
 
-type GraphResolutionResult =
-  | { ok: true; graph: Graph }
-  | ApiErrorResponse;
-
 function errorResponse(error: ApiError): ApiErrorResponse {
   return { ok: false, error };
-}
-
-function graphValidationError(issues: ValidationIssue[]): ApiErrorResponse {
-  return errorResponse({
-    kind: "validation_error",
-    message: "Graph validation failed",
-    issues,
-  });
-}
-
-function decodeAndValidateGraph(graph: unknown): GraphResolutionResult {
-  const decoded = decodeGraph(graph);
-  if (!decoded.ok) {
-    return graphValidationError(decoded.issues);
-  }
-  const validated = validateGraph(decoded.graph);
-  if (!validated.ok) {
-    return graphValidationError(validated.issues);
-  }
-
-  return { ok: true, graph: decoded.graph };
 }
 
 function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
@@ -265,7 +231,6 @@ function requiresAuthToken(method: string, pathname: string): boolean {
 
   return [
     "/document",
-    "/inspect",
     "/run-node",
     "/run-to-node",
     "/run-graph",
@@ -670,43 +635,6 @@ function waitForExecutionStreamHeartbeat() {
   };
 }
 
-app.post("/inspect", async (c) => {
-  const body = await c.req.json();
-
-  const resolved = decodeAndValidateGraph(body.graph);
-  if (!resolved.ok) {
-    return c.json(
-      resolved,
-      422,
-    );
-  }
-  const graph = resolved.graph;
-
-  const upstream = buildUpstreamAdjacency(graph);
-  const downstream = buildDownstreamAdjacency(graph);
-  const sourceNodes = getSourceNodes(graph);
-  const sinkNodes = getSinkNodes(graph);
-
-  return c.json({
-    ok: true,
-    graph,
-    summary: {
-      nodeCount: graph.nodes.length,
-      edgeCount: graph.edges.length,
-      sourceNodeIds: [...sourceNodes],
-      sinkNodeIds: [...sinkNodes],
-    },
-    nodeDetails: graph.nodes.map((node) => ({
-      id: node.id,
-      outputs: node.outputs,
-      upstreamDependencies: upstream.get(node.id),
-      downstreamDependencies: downstream.get(node.id),
-      isSourceNode: sourceNodes.has(node.id),
-      isSinkNode: sinkNodes.has(node.id),
-    })),
-  });
-});
-
 app.get("/document", async (c) => {
   try {
     const decoded = await loadPythonDocument(activeDocumentPath);
@@ -1003,10 +931,7 @@ app.post("/run-graph", async (c) => {
 });
 
 app.post("/runtime-session/clear-cache", async (c) => {
-  await Promise.all([
-    clearRuntimeSessionCache(),
-    clearSourceRuntimeSessionCache(),
-  ]);
+  await clearSourceRuntimeSessionCache();
   return c.json({ ok: true });
 });
 

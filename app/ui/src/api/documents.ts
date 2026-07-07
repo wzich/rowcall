@@ -1,15 +1,25 @@
-import type { InspectGraphValidationIssue } from "./inspectGraph.ts";
 import type { NodebookDocumentV1 } from "../graph/documentTypes.ts";
 import { nodebookFetch } from "./auth.ts";
 
 const activeDocumentPath = "/document";
+
+export type DocumentValidationIssue = {
+  kind: string;
+  message: string;
+  path?: string;
+  nodeId?: string;
+  edgeIndex?: number;
+  field?: string;
+  operationIndex?: number;
+  operationType?: string;
+};
 
 export type DocumentApiError = {
   ok: false;
   error: {
     kind: string;
     message: string;
-    issues?: InspectGraphValidationIssue[];
+    issues?: DocumentValidationIssue[];
   };
 };
 
@@ -63,9 +73,9 @@ export type ApplyDocumentOperationsResult =
   | DocumentApiError;
 
 export class DocumentApiRequestError extends Error {
-  readonly issues: InspectGraphValidationIssue[];
+  readonly issues: DocumentValidationIssue[];
 
-  constructor(message: string, issues: InspectGraphValidationIssue[] = []) {
+  constructor(message: string, issues: DocumentValidationIssue[] = []) {
     super(message);
     this.name = "DocumentApiRequestError";
     this.issues = issues;

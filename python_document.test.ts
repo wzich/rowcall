@@ -4,13 +4,12 @@ import {
   loadPythonDocument,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
-import { toRuntimeGraph } from "./document.ts";
 import {
-  clearRuntimeSessionCache,
-  runGraph,
+  clearSourceRuntimeSessionCache,
+  runSourceGraph,
   runSourceSingleNode,
   runSourceToNode,
-  shutdownRuntimeSession,
+  shutdownSourceRuntimeSession,
 } from "./executor.ts";
 
 Deno.test("loadPythonDocument decodes function-shaped node document", async () => {
@@ -41,22 +40,20 @@ Deno.test("loadPythonDocument decodes function-shaped node document", async () =
   assertExists(decoded.document.nodes[1].runtimeCode);
 });
 
-Deno.test("Python document runtime code executes through worker runtime", async () => {
-  const decoded = await loadPythonDocument("examples/hello_world.py");
-  if (!decoded.ok) {
-    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
-  }
+Deno.test("Python document source executes through worker runtime", async () => {
+  const path = "examples/hello_world.py";
+  const source = await Deno.readTextFile(path);
 
-  await clearRuntimeSessionCache();
+  await clearSourceRuntimeSessionCache();
   try {
-    const response = await runGraph(toRuntimeGraph(decoded.document));
+    const response = await runSourceGraph(source, path);
     assertEquals(response.ok, true);
     assertEquals(
       response.finalOutputsByNode.n_shout.message.jsonValue,
       "HELLO!",
     );
   } finally {
-    await shutdownRuntimeSession();
+    await shutdownSourceRuntimeSession();
   }
 });
 
@@ -64,7 +61,7 @@ Deno.test("Python document source-backed single node reuses source-backed cache"
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
-  await clearRuntimeSessionCache();
+  await clearSourceRuntimeSessionCache();
   try {
     const seed = await runSourceToNode(source, path, "n_shout");
     const single = await runSourceSingleNode(source, path, "n_shout");
@@ -77,7 +74,7 @@ Deno.test("Python document source-backed single node reuses source-backed cache"
       "HELLO!",
     );
   } finally {
-    await shutdownRuntimeSession();
+    await shutdownSourceRuntimeSession();
   }
 });
 
@@ -112,26 +109,27 @@ Deno.test("edited Python document nodes execute with document globals", async ()
     throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
   }
 
-  const editedDocument = {
-    ...decoded.document,
-    nodes: decoded.document.nodes.map((node) =>
-      node.id === "n_add"
-        ? {
-          ...node,
-          code: "y = x + GLOBAL_OFFSET + 1",
-          runtimeCode: undefined,
-        }
-        : node
-    ),
-  };
+  const edited = await applyPythonDocumentOperations(
+    documentPath,
+    decoded.document.revision ?? "",
+    [{
+      type: "update_node_body",
+      nodeId: "n_add",
+      code: "y = x + GLOBAL_OFFSET + 1",
+    }],
+  );
+  if (!edited.ok) {
+    throw new Error(edited.issues.map((issue) => issue.message).join("; "));
+  }
+  const editedSource = await Deno.readTextFile(documentPath);
 
-  await clearRuntimeSessionCache();
+  await clearSourceRuntimeSessionCache();
   try {
-    const response = await runGraph(toRuntimeGraph(editedDocument));
+    const response = await runSourceGraph(editedSource, documentPath);
     assertEquals(response.ok, true);
     assertEquals(response.finalOutputsByNode.n_add.y.jsonValue, 4);
   } finally {
-    await shutdownRuntimeSession();
+    await shutdownSourceRuntimeSession();
   }
 });
 
@@ -160,18 +158,15 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
     ].join("\n"),
   );
 
-  const decoded = await loadPythonDocument(documentPath);
-  if (!decoded.ok) {
-    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
-  }
+  const source = await Deno.readTextFile(documentPath);
 
-  await clearRuntimeSessionCache();
+  await clearSourceRuntimeSessionCache();
   try {
-    const response = await runGraph(toRuntimeGraph(decoded.document));
+    const response = await runSourceGraph(source, documentPath);
     assertEquals(response.ok, true);
     assertEquals(response.finalOutputsByNode.n_prepare.prepared.jsonValue, 2);
   } finally {
-    await shutdownRuntimeSession();
+    await shutdownSourceRuntimeSession();
   }
 });
 

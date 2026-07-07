@@ -114,10 +114,10 @@ from valid cached upstream Nodes. If any required upstream cache entry is
 missing or transitively stale, `Run single node` fails with `cache_miss` instead
 of silently recomputing upstream Nodes.
 
-Cache entries are valid only when the Node code, declared output names, explicit
-root inputs, and upstream cache keys still match. Failed executions are not
-cached. Successful `Run single node` executions refresh the selected Node's
-cache entry so downstream Nodes can use the latest successful iteration.
+Cache entries are valid only when the Node code, declared output names, globals,
+and upstream cache keys still match. Failed executions are not cached.
+Successful `Run single node` executions refresh the selected Node's cache entry
+so downstream Nodes can use the latest successful iteration.
 
 The session cache is process-local and in memory only. It is lost when the
 server restarts, and it can be cleared explicitly with
@@ -127,9 +127,9 @@ The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
 sources should be modeled as normal Python code inside root Nodes.
 
-Source-backed app and worker runs follow the same rule. Empty `inputs` objects
-are tolerated for shared request-shape compatibility, but non-empty explicit
-inputs are rejected instead of being ignored.
+Source-backed app and worker runs follow the same rule. App requests do not send
+external inputs. Direct callers that send non-empty `inputs` to source-backed
+run endpoints receive `invalid_request` instead of having those inputs ignored.
 
 ## Document Operations
 

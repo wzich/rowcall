@@ -3,7 +3,6 @@
 export type RuntimeNode = {
   id: string;
   code: string;
-  codeKind?: "body" | "runtime";
   displayCode?: string;
   runtimeCode?: string;
   functionName?: string;
