@@ -191,6 +191,49 @@ def second():
         self.assertEqual(events[0]["issues"][0]["kind"], "duplicate_node_id")
         self.assertNotIn("document", events[0])
 
+    def test_worker_apply_operations_returns_completed_event(self) -> None:
+        editable_source = """
+from nodebook import node
+
+@node(id="hello", outputs=["message"])
+def hello():
+    message = "hello"
+    return {"message": message}
+
+@node(id="world", outputs=["text"])
+def world(message):
+    text = message + " world"
+    return {"text": text}
+
+world.depends_on(hello)
+""".lstrip()
+
+        events = self.run_lines(
+            [
+                request(
+                    "apply_operations",
+                    {
+                        "source": editable_source,
+                        "documentPath": DOCUMENT_PATH,
+                        "operations": [
+                            {
+                                "type": "update_node_body",
+                                "nodeId": "world",
+                                "bodyCode": 'text = message + " applied"',
+                            }
+                        ],
+                        "sidecarMetadata": {"nodes": {"world": {"title": "World"}}},
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(events[0]["type"], "apply_operations_completed")
+        self.assertTrue(events[0]["ok"], events[0]["issues"])
+        self.assertIn('text = message + " applied"', events[0]["source"])
+        self.assertEqual(events[0]["sidecarMetadata"], {"nodes": {"world": {"title": "World"}}})
+        self.assertEqual(events[0]["document"]["nodes"][1]["code"], 'text = message + " applied"')
+
     def test_worker_plan_run_target(self) -> None:
         events = self.run_lines(
             [

@@ -1,16 +1,11 @@
-import type { NodebookDocumentV1 } from "../../../../document.ts";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
-  Graph,
 } from "../../../../types.ts";
 import { nodebookFetch } from "./auth.ts";
 
 export type RunExecutionRequest = {
-  graph: Graph;
   nodeId: string;
-  document?: NodebookDocumentV1;
-  inputs?: Record<string, unknown>;
   source?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
@@ -18,9 +13,6 @@ export type RunExecutionRequest = {
 };
 
 export type RunGraphRequest = {
-  graph: Graph;
-  document?: NodebookDocumentV1;
-  inputs?: Record<string, unknown>;
   source?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
@@ -37,10 +29,7 @@ export class RunExecutionRequestError extends Error {
 async function runExecution(
   path: "/run-node" | "/run-to-node",
   {
-    graph,
     nodeId,
-    document,
-    inputs = {},
     source,
     trace = false,
     onEvent,
@@ -54,10 +43,7 @@ async function runExecution(
       ...(onEvent ? { Accept: "text/event-stream" } : {}),
     },
     body: JSON.stringify({
-      graph,
       nodeId,
-      ...(document !== undefined ? { document } : {}),
-      inputs,
       ...(source !== undefined ? { source } : {}),
       trace,
     }),
@@ -75,13 +61,12 @@ async function runExecution(
   }
 
   // TODO: Move all UI/runtime contract types to a shared package or shared
-  // import boundary so inspect and execution responses cannot drift.
+  // import boundary so execution responses cannot drift.
   return await response.json() as ExecutionResponse;
 }
 
 async function runGraphExecution(
-  { graph, document, inputs = {}, source, trace = false, onEvent, signal }:
-    RunGraphRequest,
+  { source, trace = false, onEvent, signal }: RunGraphRequest,
 ): Promise<ExecutionResponse> {
   const response = await nodebookFetch("/run-graph", {
     method: "POST",
@@ -90,9 +75,6 @@ async function runGraphExecution(
       ...(onEvent ? { Accept: "text/event-stream" } : {}),
     },
     body: JSON.stringify({
-      graph,
-      ...(document !== undefined ? { document } : {}),
-      inputs,
       ...(source !== undefined ? { source } : {}),
       trace,
     }),
@@ -110,7 +92,7 @@ async function runGraphExecution(
   }
 
   // TODO: Move all UI/runtime contract types to a shared package or shared
-  // import boundary so inspect and execution responses cannot drift.
+  // import boundary so execution responses cannot drift.
   return await response.json() as ExecutionResponse;
 }
 

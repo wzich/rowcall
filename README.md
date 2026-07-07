@@ -219,10 +219,10 @@ Start the React canvas UI in another terminal:
 deno task ui:dev
 ```
 
-The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document,
-inspection, and execution requests to the API at `http://127.0.0.1:8000/`.
-Document parsing and execution go through the Python runtime worker, including
-cache-aware single-node iterative runs.
+The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document and
+execution requests to the API at `http://127.0.0.1:8000/`. Document parsing and
+execution go through the Python runtime worker, including cache-aware
+single-node iterative runs.
 
 ## Build And Serve The UI
 
@@ -232,7 +232,7 @@ deno task ui:build
 
 The build output is written to `app/ui/dist/`. After building, the Deno/Hono
 server serves the React app from `http://127.0.0.1:8000/` while continuing to
-handle document, inspection, and execution API routes.
+handle document and execution API routes.
 
 Use Vite for active UI development. Use the Hono-served build when you want a
 single local server or a production-style static app host.

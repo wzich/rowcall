@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from nodebook.document import ParseResult, load_document, parse_source
+from nodebook.document import ParseResult, apply_document_operations, load_document, parse_source
 
 from .executor import NodeEventCallback, build_plan, execute_source
 
@@ -59,6 +59,30 @@ class RuntimeSession:
         resolved_path = self._resolve_document_path(document_path)
         parse_result = parse_source(source, resolved_path)
         return self._app_document_result(parse_result, resolved_path)
+
+    def apply_operations(
+        self,
+        source: str,
+        document_path: str | Path,
+        operations: list[dict[str, Any]],
+        sidecar_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resolved_path = self._resolve_document_path(document_path)
+        result = apply_document_operations(source, resolved_path, operations, sidecar_metadata=sidecar_metadata)
+        if not result.ok or result.source is None or result.parse_result.document is None:
+            return {
+                "ok": False,
+                "documentPath": str(resolved_path),
+                "issues": [issue.to_dict() for issue in result.issues],
+            }
+        return {
+            "ok": True,
+            "documentPath": str(result.parse_result.document.path),
+            "source": result.source,
+            "document": result.parse_result.document.to_app_dict(),
+            "sidecarMetadata": result.sidecar_metadata or {},
+            "issues": [],
+        }
 
     def plan_run(
         self,

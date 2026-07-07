@@ -1,18 +1,6 @@
-export type Node = {
-  id: string;
-  code: string;
-  codeKind?: "body" | "runtime";
-  outputs: string[];
-};
-
 export type Edge = {
   fromNode: string;
   toNode: string;
-};
-
-export type Graph = {
-  nodes: Node[];
-  edges: Edge[];
 };
 
 export type RunPlanStep = {
@@ -84,7 +72,9 @@ export type ValidationIssue = {
     | "duplicate_node_id"
     | "missing_node_reference"
     | "cycle"
+    | "document_write_error"
     | "conflicting_outputs"
+    | "invalid_operation"
     | "invalid_python"
     | "stale_document"
     | "duplicate_function_name"
@@ -95,15 +85,9 @@ export type ValidationIssue = {
   nodeId?: string;
   edgeIndex?: number;
   field?: string;
+  operationIndex?: number;
+  operationType?: string;
 };
-
-export type DecodeGraphResult =
-  | { ok: true; graph: Graph; issues: [] }
-  | { ok: false; issues: ValidationIssue[] };
-
-export type GraphValidationResult =
-  | { ok: true; issues: [] }
-  | { ok: false; issues: ValidationIssue[] };
 
 export type ExecutionError = {
   kind:

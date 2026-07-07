@@ -13,7 +13,6 @@ import CodeMirror from "@uiw/react-codemirror";
 import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { InspectGraphValidationIssue } from "../api/inspectGraph.ts";
 import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
@@ -137,7 +136,6 @@ type InspectorPanelProps = {
   onRunToNode: (nodeId: string) => void;
   onRunGraph: () => void;
   onSelectionClear: () => void;
-  validationIssues: InspectGraphValidationIssue[];
 };
 
 function CodeList(
@@ -811,7 +809,6 @@ function GraphInspector({
   themeMode,
   graph,
   graphExecutionState,
-  validationIssues,
   readOnly,
   onNodeSelect,
   onGlobalsCodeChange,
@@ -819,15 +816,12 @@ function GraphInspector({
   themeMode: ThemeMode;
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
-  validationIssues: InspectGraphValidationIssue[];
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onGlobalsCodeChange: (code: string) => void;
 }) {
   return (
     <div className="space-y-4">
-      <ValidationIssues issues={validationIssues} />
-
       <section className="border-t border-zinc-200 pt-4">
         <h3 className="text-xs font-semibold uppercase text-zinc-500">
           Document Globals
@@ -1211,7 +1205,6 @@ function NodeInspector({
   selectedNode,
   executionState,
   runStatus,
-  validationIssues,
   readOnly,
   actionsDisabled,
   onCodeChange,
@@ -1223,7 +1216,6 @@ function NodeInspector({
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
-  validationIssues: InspectGraphValidationIssue[];
   readOnly: boolean;
   actionsDisabled: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
@@ -1316,8 +1308,6 @@ function NodeInspector({
           onOutputReplacement={handleOutputReplacement}
         />
       </section>
-
-      <ValidationIssues issues={validationIssues} />
 
       <FlowNavigation
         upstreamDependencies={selectedNode.upstreamDependencies}
@@ -1928,41 +1918,6 @@ function TraceToggle({
   );
 }
 
-function ValidationIssues(
-  { issues }: { issues: InspectGraphValidationIssue[] },
-) {
-  if (issues.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className="rounded border border-red-200 bg-red-50 p-3">
-      <h3 className="text-xs font-semibold uppercase text-red-700">
-        Validation
-      </h3>
-      <p className="mt-1 text-sm text-red-700">
-        Fix these issues before running the graph.
-      </p>
-      <ul className="mt-3 space-y-2">
-        {issues.map((issue, index) => (
-          <li
-            key={`${issue.kind}-${issue.path ?? "graph"}-${index}`}
-            className="text-sm text-red-900"
-          >
-            <span className="font-medium">{issue.kind}</span>
-            <span className="block">{issue.message}</span>
-            {issue.path && (
-              <span className="mt-0.5 block font-mono text-xs text-red-700">
-                {issue.path}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 function DeleteNodeAction({
   selectedNode,
   disabled,
@@ -2008,11 +1963,11 @@ export function InspectorPanel({
   onRunToNode,
   onRunGraph,
   onSelectionClear,
-  validationIssues,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
   const isGraphRunning = graphExecutionState?.status === "running";
+  const isNodeNameReadOnly = readOnly || !selectedNode?.editable;
   const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
   const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
   const isGraphActionDisabled = isGraphRunning;
@@ -2105,8 +2060,11 @@ export function InspectorPanel({
                   ].join(" ")}
                   value={nodeNameDraft}
                   placeholder={selectedNode.displayName}
-                  readOnly={readOnly}
+                  readOnly={isNodeNameReadOnly}
                   onChange={(event) => {
+                    if (isNodeNameReadOnly) {
+                      return;
+                    }
                     const nextName = event.currentTarget.value;
                     setNodeNameDraft(nextName);
                     const result = onNodeNameChange(selectedNode.id, nextName);
@@ -2214,7 +2172,6 @@ export function InspectorPanel({
                 selectedNode={selectedNode}
                 executionState={selectedNodeExecutionState}
                 runStatus={selectedNodeRunStatus}
-                validationIssues={validationIssues}
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}
                 onCodeChange={onCodeChange}
@@ -2228,7 +2185,6 @@ export function InspectorPanel({
                 themeMode={themeMode}
                 graph={graph}
                 graphExecutionState={graphExecutionState}
-                validationIssues={validationIssues}
                 readOnly={readOnly}
                 onNodeSelect={onNodeSelect}
                 onGlobalsCodeChange={onGlobalsCodeChange}

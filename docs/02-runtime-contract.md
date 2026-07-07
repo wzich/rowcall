@@ -24,7 +24,7 @@ document, so `graph.py` uses `graph.nodebook.json`, while an alternate
 ### Graph
 
 A Graph is a directed acyclic graph of Nodes connected by Edges. The app may
-derive an in-memory graph from Python source for editing and legacy APIs. The
+derive an in-memory graph from Python source for editing and visualization. The
 runtime parses source into an executable graph before planning and execution.
 
 ### Node
@@ -37,8 +37,6 @@ they are declared outputs and flow through Edges. A Node can access:
 - variables it defines in its own code
 - variables made available from directly connected upstream Nodes
 - top-level document globals, imports, and helpers evaluated once for the run
-- explicit user-provided inputs when the Node is a root in the current run, for
-  lower-level runtime callers that provide them
 
 In source-backed Nodebook documents, every node function parameter must match a
 Declared Output from a direct upstream Node. Root nodes cannot declare
@@ -101,10 +99,12 @@ are not passed through Edges as Outputs.
 If an upstream Node fails during a Run, execution stops and downstream Nodes do
 not execute.
 
-Full-graph and upstream-to-node runs are source-backed. The app sends either
-current Python source or a validated editable document model that the server
-renders to Python source, then the Python runtime worker parses, validates,
-plans, and executes it with the active document path as file context.
+App runs are source-backed. Before a run, the canvas flushes pending document
+operations; the server then executes either explicit request `source` or the
+active Python file on disk. The server does not render client-authoritative
+editable document models for execution. The Python runtime worker parses,
+validates, plans, and executes source with the active document path as file
+context.
 
 `Run single node` is cache-backed through the Python runtime worker. It is for
 iterative development: it executes only the selected Node, using copied outputs
@@ -112,10 +112,10 @@ from valid cached upstream Nodes. If any required upstream cache entry is
 missing or transitively stale, `Run single node` fails with `cache_miss` instead
 of silently recomputing upstream Nodes.
 
-Cache entries are valid only when the Node code, declared output names, explicit
-root inputs, and upstream cache keys still match. Failed executions are not
-cached. Successful `Run single node` executions refresh the selected Node's
-cache entry so downstream Nodes can use the latest successful iteration.
+Cache entries are valid only when the Node code, declared output names, globals,
+and upstream cache keys still match. Failed executions are not cached.
+Successful `Run single node` executions refresh the selected Node's cache entry
+so downstream Nodes can use the latest successful iteration.
 
 The session cache is process-local and in memory only. It is lost when the
 server restarts, and it can be cleared explicitly with
@@ -125,9 +125,28 @@ The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
 sources should be modeled as normal Python code inside root Nodes.
 
-Source-backed app and worker runs follow the same rule. Empty `inputs` objects
-are tolerated for shared request-shape compatibility, but non-empty explicit
-inputs are rejected instead of being ignored.
+Source-backed app and worker runs follow the same rule. App requests do not send
+external inputs. Direct callers that send non-empty `inputs` to source-backed
+run endpoints receive `invalid_request` instead of having those inputs ignored.
+
+## Document Operations
+
+The browser-facing write API applies operation batches rather than replacing a
+whole document projection. `POST /document/operations` accepts a base revision,
+optional client batch ID, and ordered operations such as node body/output
+updates, node/function additions and deletions, edge changes, globals edits, and
+sidecar metadata changes. The server rejects stale base revisions, calls the
+Python runtime worker's `apply_operations` operation to rewrite source, writes
+the returned Python source and `.nodebook.json` metadata, and reloads the
+canonical document response. Graph and output operations normalize standard
+editor-authored downstream function signatures to match direct upstream outputs.
+Custom-return nodes are rejected when an operation would change their authored
+input dependency surface.
+
+The app-visible document revision includes both Python source and normalized
+sidecar metadata so UI-only edits such as node position changes participate in
+stale-write detection. The lower-level Python parser revision remains the source
+hash used by CLI/runtime code.
 
 Future runtime configurations may expose explicit isolation modes:
 

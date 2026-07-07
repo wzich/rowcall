@@ -9,7 +9,10 @@ import type {
 } from "../components/InspectorPanel.tsx";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 
-export function useExecutionSession(selectedSourceValue: string) {
+export function useExecutionSession(
+  selectedSourceValue: string,
+  options: { getCurrentSourceValue?: () => string } = {},
+) {
   const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
     Record<string, ExecutionDisplayState>
   >({});
@@ -24,8 +27,12 @@ export function useExecutionSession(selectedSourceValue: string) {
   const activeRunIdRef = useRef<string | null>(null);
   const activeRunAbortControllerRef = useRef<AbortController | null>(null);
 
+  function getCurrentSourceValue(): string {
+    return options.getCurrentSourceValue?.() ?? selectedSourceValueRef.current;
+  }
+
   function isCurrentSource(sourceValue: string): boolean {
-    return sourceValue === selectedSourceValueRef.current;
+    return sourceValue === getCurrentSourceValue();
   }
 
   function markNodeExecutionRunning(
@@ -56,7 +63,7 @@ export function useExecutionSession(selectedSourceValue: string) {
     event: ExecutionStreamEvent,
     sourceValue: string,
   ) {
-    if (sourceValue !== selectedSourceValueRef.current) {
+    if (!isCurrentSource(sourceValue)) {
       return;
     }
 
