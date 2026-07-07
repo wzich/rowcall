@@ -24,7 +24,7 @@ document, so `graph.py` uses `graph.nodebook.json`, while an alternate
 ### Graph
 
 A Graph is a directed acyclic graph of Nodes connected by Edges. The app may
-derive an in-memory graph from Python source for editing and legacy APIs. The
+derive an in-memory graph from Python source for editing and visualization. The
 runtime parses source into an executable graph before planning and execution.
 
 ### Node
@@ -37,8 +37,6 @@ they are declared outputs and flow through Edges. A Node can access:
 - variables it defines in its own code
 - variables made available from directly connected upstream Nodes
 - top-level document globals, imports, and helpers evaluated once for the run
-- explicit user-provided inputs when the Node is a root in the current run, for
-  lower-level runtime callers that provide them
 
 In source-backed Nodebook documents, every node function parameter must match a
 Declared Output from a direct upstream Node. Root nodes cannot declare
