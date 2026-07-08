@@ -7,6 +7,7 @@ import {
 import {
   applyPythonDocumentOperations,
   loadPythonDocument,
+  loadPythonDocumentStatus,
   readPythonDocumentSource,
 } from "./python_document.ts";
 import {
@@ -647,6 +648,25 @@ app.get("/document", async (c) => {
       ok: true,
       document: formatDocument(decoded.document),
       path: activeDocumentPath,
+    });
+  } catch (_error) {
+    return c.json(
+      errorResponse({
+        kind: "file_read_error",
+        message: `Unable to read Nodebook document: ${activeDocumentPath}`,
+      }),
+      500,
+    );
+  }
+});
+
+app.get("/document/status", async (c) => {
+  try {
+    const status = await loadPythonDocumentStatus(activeDocumentPath);
+
+    return c.json({
+      ok: true,
+      status,
     });
   } catch (_error) {
     return c.json(

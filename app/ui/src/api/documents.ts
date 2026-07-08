@@ -30,8 +30,27 @@ export type LoadDocumentSuccess = {
   clientBatchId?: string;
 };
 
+export type DocumentStatus = {
+  path: string;
+  revision?: string;
+  sourceRevision: string;
+  sidecarRevision: string;
+  valid: boolean;
+  issues: DocumentValidationIssue[];
+  checkedAt: string;
+};
+
+export type LoadDocumentStatusSuccess = {
+  ok: true;
+  status: DocumentStatus;
+};
+
 export type LoadDocumentResult =
   | LoadDocumentSuccess
+  | DocumentApiError;
+
+export type LoadDocumentStatusResult =
+  | LoadDocumentStatusSuccess
   | DocumentApiError;
 
 export type DocumentOperation =
@@ -85,6 +104,20 @@ export class DocumentApiRequestError extends Error {
 export async function loadDocument(): Promise<LoadDocumentSuccess> {
   const response = await nodebookFetch(activeDocumentPath);
   const result = await response.json() as LoadDocumentResult;
+
+  if (!result.ok) {
+    throw new DocumentApiRequestError(
+      result.error.message,
+      result.error.issues,
+    );
+  }
+
+  return result;
+}
+
+export async function loadDocumentStatus(): Promise<LoadDocumentStatusSuccess> {
+  const response = await nodebookFetch(`${activeDocumentPath}/status`);
+  const result = await response.json() as LoadDocumentStatusResult;
 
   if (!result.ok) {
     throw new DocumentApiRequestError(

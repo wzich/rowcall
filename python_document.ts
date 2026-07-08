@@ -17,12 +17,23 @@ export type ApplyPythonDocumentOperationsResult =
   | { ok: true; document: NodebookDocumentV1; issues: [] }
   | { ok: false; issues: ValidationIssue[] };
 
+export type PythonDocumentStatus = {
+  path: string;
+  revision?: string;
+  sourceRevision: string;
+  sidecarRevision: string;
+  valid: boolean;
+  issues: ValidationIssue[];
+  checkedAt: string;
+};
+
 type PythonDocumentFileSnapshot = {
   source: string;
   sidecar: SidecarDocumentMetadata;
 };
 
 let documentOperationChain: Promise<void> = Promise.resolve();
+const documentStatusCache = new Map<string, PythonDocumentStatus>();
 
 export async function loadPythonDocument(
   path: string,
@@ -93,6 +104,36 @@ export async function loadPythonDocument(
   }
 }
 
+export async function loadPythonDocumentStatus(
+  path: string,
+): Promise<PythonDocumentStatus> {
+  const checkedAt = new Date().toISOString();
+  const snapshot = await readPythonDocumentSnapshot(path);
+  const sourceRevision = await sha256Text(snapshot.source);
+  const sidecarRevision = await sidecarMetadataRevision(snapshot.sidecar);
+  const cached = documentStatusCache.get(path);
+  if (
+    cached?.sourceRevision === sourceRevision &&
+    cached.sidecarRevision === sidecarRevision
+  ) {
+    return { ...cached, checkedAt };
+  }
+
+  const loaded = await inspectPythonDocumentSnapshot(path, snapshot);
+
+  const status = {
+    path,
+    ...(loaded.ok ? { revision: loaded.document.revision } : {}),
+    sourceRevision,
+    sidecarRevision,
+    valid: loaded.ok,
+    issues: loaded.ok ? [] : loaded.issues,
+    checkedAt,
+  };
+  documentStatusCache.set(path, status);
+  return status;
+}
+
 export async function applyPythonDocumentOperations(
   path: string,
   baseRevision: string,
@@ -139,6 +180,75 @@ async function readPythonDocumentSnapshot(
     };
   } finally {
     await unlockAndClose(sourceFile);
+  }
+}
+
+async function inspectPythonDocumentSnapshot(
+  path: string,
+  snapshot: PythonDocumentFileSnapshot,
+): Promise<LoadPythonDocumentResult> {
+  const worker = new PythonWorkerClient();
+  try {
+    const event = await worker.requestFinalEvent("inspect_source", {
+      source: snapshot.source,
+      documentPath: path,
+    });
+    if (event.type === "error") {
+      return {
+        ok: false,
+        issues: workerValidationIssues(
+          event,
+          "Python worker document load failed",
+        ),
+      };
+    }
+
+    if (event.type !== "inspect_source_completed") {
+      return {
+        ok: false,
+        issues: [{
+          kind: "invalid_python",
+          message:
+            `Python worker returned unexpected document event: ${event.type}`,
+        }],
+      };
+    }
+
+    if (event.ok === false) {
+      return {
+        ok: false,
+        issues: workerValidationIssues(
+          event,
+          "Python worker document load failed",
+        ),
+      };
+    }
+
+    if (!isNodebookDocument(event["document"])) {
+      return {
+        ok: false,
+        issues: [{
+          kind: "invalid_python",
+          message: "Python worker document load returned an invalid document",
+        }],
+      };
+    }
+
+    const documentWithSidecar = await applySidecarMetadata(
+      event["document"],
+      snapshot.sidecar,
+    );
+    return { ok: true, document: documentWithSidecar, issues: [] };
+  } catch (error) {
+    return {
+      ok: false,
+      issues: [{
+        kind: "invalid_python",
+        message: error instanceof Error ? error.message : String(error),
+      }],
+    };
+  } finally {
+    await worker.shutdown();
   }
 }
 
@@ -344,6 +454,22 @@ async function documentRevisionWithSidecar(
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(payload),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function sidecarMetadataRevision(
+  sidecar: SidecarDocumentMetadata,
+): Promise<string> {
+  return await sha256Text(JSON.stringify(normalizeSidecarMetadata(sidecar)));
+}
+
+async function sha256Text(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
   );
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
