@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   app,
   buildNodebookUrl,
@@ -93,6 +93,91 @@ Deno.test("PUT /document is no longer a document write route", async () => {
   );
 
   assertEquals(response.status === 404 || response.status === 405, true);
+});
+
+Deno.test("GET /document/status returns document status revisions", async () => {
+  const documentPath = await writeRouteTestDocument("status_success.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const response = await app.fetch(
+    request("/document/status", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.ok, true);
+  assertEquals(body.status.path, documentPath);
+  assertEquals(body.status.valid, true);
+  assertEquals(body.status.revision, loaded.document.revision);
+  assertExists(body.status.sourceRevision);
+  assertExists(body.status.sidecarRevision);
+  assertEquals(body.status.issues, []);
+});
+
+Deno.test("GET /document/status includes sidecar-only revision changes", async () => {
+  const documentPath = await writeRouteTestDocument("status_sidecar.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const firstResponse = await app.fetch(
+    request("/document/status", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+  const first = await firstResponse.json();
+
+  await Deno.writeTextFile(
+    sidecarPathForPythonDocument(documentPath),
+    `${
+      JSON.stringify({
+        version: 1,
+        nodes: [{ id: "n_test", position: { x: 20, y: 30 } }],
+      })
+    }\n`,
+  );
+
+  const secondResponse = await app.fetch(
+    request("/document/status", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+  const second = await secondResponse.json();
+
+  assertEquals(second.status.valid, true);
+  assertEquals(second.status.sourceRevision, first.status.sourceRevision);
+  assertNotEquals(second.status.sidecarRevision, first.status.sidecarRevision);
+  assertNotEquals(second.status.revision, first.status.revision);
+});
+
+Deno.test("GET /document/status reports invalid external Python without a 422", async () => {
+  const documentPath = await writeRouteTestDocument("status_invalid.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  await Deno.writeTextFile(documentPath, "def broken(:\n");
+
+  const response = await app.fetch(
+    request("/document/status", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.ok, true);
+  assertEquals(body.status.valid, false);
+  assertEquals(body.status.revision, undefined);
+  assertExists(body.status.sourceRevision);
+  assertEquals(body.status.issues[0].kind, "invalid_python");
 });
 
 Deno.test("POST /document/operations applies operations and echoes client batch", async () => {

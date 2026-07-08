@@ -529,11 +529,13 @@
             it.
           </li>
           <li>
-            <strong>File watching is still an open item</strong> (ADR 0004 notes it). For the
-            agent-editing story this matters more than usual: an agent edits <code>graph.py</code>
-            while the canvas is open, and today the UI only notices on save-conflict. A simple
-            mtime/revision poll surfaced as a "document changed — reload" banner would close most
-            of the gap cheaply; proper watch + reconcile can come later.
+            <strong>File-change detection now has a beta path:</strong> the app polls
+            <code>GET /document/status</code> for the app-visible revision, source revision,
+            sidecar revision, and validation issues. Clean external edits auto-reload with a
+            small "Updated from disk" notice; dirty canvas state keeps local edits and warns before
+            reload discards them; temporarily invalid external edits are shown as a neutral
+            "waiting for readable file" state. Proper filesystem watch, operation replay, and
+            merge reconciliation can come later.
           </li>
           <li>
             <strong>The UI infers outputs with a third Python parser (Lezer).</strong> Acceptable
@@ -626,9 +628,9 @@
         </tr>
         <tr>
           <td><span class="badge later">Later</span></td>
-          <td>3.8 Split <code>App.tsx</code> / <code>InspectorPanel.tsx</code>; 3.9 smaller items; file-change detection banner</td>
+          <td>3.8 Split <code>App.tsx</code> / <code>InspectorPanel.tsx</code>; 3.9 smaller items; filesystem watch/reconcile after status polling</td>
           <td>Ongoing</td>
-          <td>Opportunistic, prioritizing file-change detection for the agent-editing story.</td>
+          <td>Opportunistic cleanup; the beta agent-editing path now has status polling, while realtime watch and merge behavior remain later work.</td>
         </tr>
       </table>
 

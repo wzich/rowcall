@@ -148,6 +148,29 @@ sidecar metadata so UI-only edits such as node position changes participate in
 stale-write detection. The lower-level Python parser revision remains the source
 hash used by CLI/runtime code.
 
+## Document Status
+
+The app polls `GET /document/status` while a document is open. The response
+reports the active path, app-visible revision, source revision, sidecar
+revision, whether the current source is valid, and any validation issues from
+the latest status inspection. The server may cache status responses by
+source/sidecar revision so unchanged polling does not repeatedly re-inspect the
+Python document.
+
+Status polling is a user-experience layer on top of optimistic concurrency. If
+the status revision differs from the editor's loaded base revision and the
+canvas has no unsaved edits, the app reloads from disk automatically and shows a
+short "Updated from disk" notice. If local unsaved edits exist, the app keeps
+the canvas state and shows a warning before the user chooses to reload and
+discard those edits. If the external file is temporarily invalid, the app keeps
+the current canvas visible and continues checking until the file becomes
+readable.
+
+Before save and run actions, the app performs a fresh status check. A stale or
+unreadable on-disk document blocks the action until the editor reloads or the
+file becomes valid. The server-side stale revision check on
+`POST /document/operations` remains the authoritative write guard.
+
 Future runtime configurations may expose explicit isolation modes:
 
 - process isolation, where Nodes run in separate processes and values must cross

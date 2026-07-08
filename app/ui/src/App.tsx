@@ -8,6 +8,8 @@ import {
   DocumentApiRequestError,
   type DocumentOperation,
   loadDocument,
+  loadDocumentStatus,
+  type LoadDocumentSuccess,
 } from "./api/documents.ts";
 import { loadPythonRuntime } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
@@ -46,6 +48,9 @@ import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const documentCanvasKey = "document:active";
 const themeStorageKey = "nodebook:theme";
+const documentStatusPollIntervalMs = 4_000;
+const invalidExternalDocumentGraceMs = 4_000;
+const updatedFromDiskNoticeMs = 3_500;
 
 export type ThemeMode = "light" | "dark";
 
@@ -62,6 +67,12 @@ type SaveErrorMessage = {
   title: string;
   detail: string;
 };
+
+type ExternalDocumentNotice =
+  | { kind: "idle" }
+  | { kind: "dirty"; detectedAt: number }
+  | { kind: "waiting_readable"; detectedAt: number; detail?: string }
+  | { kind: "updated"; updatedAt: number };
 
 function getDocumentSourceValue(
   baseRevision: string,
@@ -100,9 +111,21 @@ export default function App() {
   >("idle");
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
+  const [pendingOperationCount, setPendingOperationCount] = useState(0);
+  const [firstUnsavedEditAt, setFirstUnsavedEditAt] = useState<number | null>(
+    null,
+  );
+  const [isExternalReloading, setIsExternalReloading] = useState(false);
+  const [externalDocumentNotice, setExternalDocumentNotice] = useState<
+    ExternalDocumentNotice
+  >({ kind: "idle" });
   const editGenerationRef = useRef(0);
   const editableDocumentRef = useRef<NodebookDocumentV1 | null>(null);
   const baseRevisionRef = useRef("");
+  const saveStatusRef = useRef(saveStatus);
+  const firstUnsavedEditAtRef = useRef<number | null>(null);
+  const invalidExternalDocumentSinceRef = useRef<number | null>(null);
+  const isReloadingExternalDocumentRef = useRef(false);
   const documentSourceValueRef = useRef(
     getDocumentSourceValue(baseRevisionRef.current, editGenerationRef.current),
   );
@@ -119,6 +142,14 @@ export default function App() {
     queryKey: ["nodebook-document", "active"],
     queryFn: loadDocument,
     refetchOnWindowFocus: false,
+  });
+  const documentStatusQuery = useQuery({
+    queryKey: ["nodebook-document-status", "active"],
+    queryFn: loadDocumentStatus,
+    enabled: documentQuery.isSuccess,
+    refetchInterval: documentStatusPollIntervalMs,
+    refetchOnWindowFocus: true,
+    retry: false,
   });
   const pythonRuntimeQuery = useQuery({
     queryKey: ["runtime", "python"],
@@ -167,38 +198,59 @@ export default function App() {
   }, [editableDocument]);
 
   useEffect(() => {
+    saveStatusRef.current = saveStatus;
+  }, [saveStatus]);
+
+  const applyLoadedDocument = useCallback(
+    (loaded: LoadDocumentSuccess) => {
+      const graph = loaded.document;
+      generatedFunctionNameSessionRef.current =
+        createGeneratedFunctionNameSession(graph);
+      setDocumentPath(loaded.path);
+      const flowGraph = toReactFlowGraph(graph);
+      const nextDocument = {
+        ...graph,
+        nodes: graph.nodes.map((node) => ({
+          ...node,
+          position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
+            ?.position,
+        })),
+      };
+      editableDocumentRef.current = nextDocument;
+      setEditableDocument(nextDocument);
+      baseRevisionRef.current = graph.revision ?? "";
+      pendingOperationsRef.current = [];
+      setPendingOperationCount(0);
+      firstUnsavedEditAtRef.current = null;
+      setFirstUnsavedEditAt(null);
+      invalidExternalDocumentSinceRef.current = null;
+      setSaveStatus("idle");
+      setSaveError(null);
+      editGenerationRef.current = 0;
+      syncDocumentSourceValue();
+    },
+    [syncDocumentSourceValue],
+  );
+
+  useEffect(() => {
     if (!documentQuery.isSuccess) {
       return;
     }
 
-    const graph = documentQuery.data.document;
-    generatedFunctionNameSessionRef.current =
-      createGeneratedFunctionNameSession(graph);
-    setDocumentPath(documentQuery.data.path);
-    const flowGraph = toReactFlowGraph(graph);
-    const nextDocument = {
-      ...graph,
-      nodes: graph.nodes.map((node) => ({
-        ...node,
-        position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
-          ?.position,
-      })),
-    };
-    editableDocumentRef.current = nextDocument;
-    setEditableDocument(nextDocument);
-    baseRevisionRef.current = graph.revision ?? "";
-    pendingOperationsRef.current = [];
-    setSaveStatus("idle");
-    setSaveError(null);
-    editGenerationRef.current = 0;
-    syncDocumentSourceValue();
-  }, [documentQuery.data, documentQuery.isSuccess, syncDocumentSourceValue]);
+    applyLoadedDocument(documentQuery.data);
+  }, [applyLoadedDocument, documentQuery.data, documentQuery.isSuccess]);
 
   const queueOperation = useCallback((operation: DocumentOperation) => {
-    pendingOperationsRef.current = coalesceDocumentOperations([
+    const operations = coalesceDocumentOperations([
       ...pendingOperationsRef.current,
       operation,
     ]);
+    pendingOperationsRef.current = operations;
+    setPendingOperationCount(operations.length);
+    if (operations.length === 0) {
+      firstUnsavedEditAtRef.current = null;
+      setFirstUnsavedEditAt(null);
+    }
     setSaveStatus("idle");
     setSaveError(null);
   }, []);
@@ -241,6 +293,12 @@ export default function App() {
         } else {
           setSaveStatus("saved");
         }
+        setPendingOperationCount(pendingOperationsRef.current.length);
+        if (pendingOperationsRef.current.length === 0) {
+          firstUnsavedEditAtRef.current = null;
+          setFirstUnsavedEditAt(null);
+        }
+        void documentStatusQuery.refetch();
         return pendingOperationsRef.current.length === 0;
       })
       .catch((error) => {
@@ -248,6 +306,7 @@ export default function App() {
           ...operations,
           ...pendingOperationsRef.current,
         ]);
+        setPendingOperationCount(pendingOperationsRef.current.length);
         setSaveStatus("error");
         setSaveError(formatSaveError(error));
         return false;
@@ -258,7 +317,7 @@ export default function App() {
 
     flushPromiseRef.current = promise;
     return await promise;
-  }, []);
+  }, [documentStatusQuery]);
 
   const runNodeMutation = useMutation({
     ...runNodeMutationOptions(),
@@ -357,6 +416,78 @@ export default function App() {
       DocumentApiRequestError
     ? documentQuery.error.issues
     : [];
+  useEffect(() => {
+    const status = documentStatusQuery.data?.status;
+    if (!documentQuery.isSuccess || !status) {
+      return;
+    }
+    if (isReloadingExternalDocumentRef.current) {
+      return;
+    }
+
+    if (status.valid && status.revision) {
+      invalidExternalDocumentSinceRef.current = null;
+      if (status.revision === baseRevisionRef.current) {
+        setExternalDocumentNotice((current) =>
+          current.kind === "dirty" || current.kind === "waiting_readable"
+            ? { kind: "idle" }
+            : current
+        );
+        return;
+      }
+
+      if (
+        pendingOperationsRef.current.length === 0 &&
+        saveStatusRef.current !== "saving"
+      ) {
+        void reloadDocumentFromDisk({ showUpdatedNotice: true });
+        return;
+      }
+
+      setExternalDocumentNotice((current) =>
+        current.kind === "dirty"
+          ? current
+          : { kind: "dirty", detectedAt: Date.now() }
+      );
+      return;
+    }
+
+    const now = Date.now();
+    if (invalidExternalDocumentSinceRef.current === null) {
+      invalidExternalDocumentSinceRef.current = now;
+      return;
+    }
+
+    if (
+      now - invalidExternalDocumentSinceRef.current >=
+        invalidExternalDocumentGraceMs
+    ) {
+      setExternalDocumentNotice({
+        kind: "waiting_readable",
+        detectedAt: invalidExternalDocumentSinceRef.current,
+        detail: status.issues[0]?.message,
+      });
+    }
+  }, [
+    documentQuery.isSuccess,
+    documentStatusQuery.data?.status,
+  ]);
+  useEffect(() => {
+    if (externalDocumentNotice.kind !== "updated") {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setExternalDocumentNotice((current) =>
+        current.kind === "updated" &&
+          current.updatedAt === externalDocumentNotice.updatedAt
+          ? { kind: "idle" }
+          : current
+      );
+    }, updatedFromDiskNoticeMs);
+
+    return () => clearTimeout(timeoutId);
+  }, [externalDocumentNotice]);
   const editableGraph = useMemo<RuntimeGraph | null>(
     () => editableDocument ? toRuntimeGraph(editableDocument) : null,
     [editableDocument],
@@ -471,6 +602,11 @@ export default function App() {
 
   const markDocumentEdited = useCallback(() => {
     clearExecutionSession();
+    if (firstUnsavedEditAtRef.current === null) {
+      const now = Date.now();
+      firstUnsavedEditAtRef.current = now;
+      setFirstUnsavedEditAt(now);
+    }
     editGenerationRef.current += 1;
     syncDocumentSourceValue();
     setSaveStatus("idle");
@@ -901,24 +1037,107 @@ export default function App() {
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
-  function handleSaveDocument() {
+  async function handleSaveDocument() {
     if (!editableDocument || saveStatus === "saving") {
       return;
     }
 
-    void flushPendingOperations();
-  }
-
-  async function handleReloadDocumentFromDisk() {
-    const result = await documentQuery.refetch();
-    if (result.isSuccess) {
-      setSaveStatus("idle");
-      setSaveError(null);
+    if (!(await ensureDocumentFreshForWrite())) {
       return;
     }
 
-    setSaveStatus("error");
-    setSaveError(formatSaveError(result.error));
+    await flushPendingOperations();
+  }
+
+  async function reloadDocumentFromDisk(
+    options: { allowDiscardLocalEdits?: boolean; showUpdatedNotice?: boolean } =
+      {},
+  ): Promise<boolean> {
+    if (isReloadingExternalDocumentRef.current) {
+      return false;
+    }
+
+    const startedEditGeneration = editGenerationRef.current;
+    const startedPendingOperationCount = pendingOperationsRef.current.length;
+    isReloadingExternalDocumentRef.current = true;
+    setIsExternalReloading(true);
+    try {
+      const loaded = await loadDocument();
+
+      if (
+        !options.allowDiscardLocalEdits &&
+        (editGenerationRef.current !== startedEditGeneration ||
+          pendingOperationsRef.current.length !== startedPendingOperationCount)
+      ) {
+        setExternalDocumentNotice({
+          kind: "dirty",
+          detectedAt: Date.now(),
+        });
+        return false;
+      }
+
+      applyLoadedDocument(loaded);
+      invalidExternalDocumentSinceRef.current = null;
+      setExternalDocumentNotice(
+        options.showUpdatedNotice
+          ? { kind: "updated", updatedAt: Date.now() }
+          : { kind: "idle" },
+      );
+      return true;
+    } catch (error) {
+      setExternalDocumentNotice({
+        kind: "waiting_readable",
+        detectedAt: Date.now(),
+        detail: error instanceof Error ? error.message : undefined,
+      });
+      return false;
+    } finally {
+      isReloadingExternalDocumentRef.current = false;
+      setIsExternalReloading(false);
+    }
+  }
+
+  async function handleReloadDocumentFromDisk() {
+    await reloadDocumentFromDisk({ allowDiscardLocalEdits: true });
+  }
+
+  async function ensureDocumentFreshForWrite(): Promise<boolean> {
+    const result = await documentStatusQuery.refetch();
+    if (!result.isSuccess) {
+      setExternalDocumentNotice({
+        kind: "waiting_readable",
+        detectedAt: Date.now(),
+        detail: result.error instanceof Error
+          ? result.error.message
+          : undefined,
+      });
+      return false;
+    }
+
+    const status = result.data.status;
+    if (!status.valid || !status.revision) {
+      setExternalDocumentNotice({
+        kind: "waiting_readable",
+        detectedAt: Date.now(),
+        detail: status.issues[0]?.message,
+      });
+      return false;
+    }
+
+    if (status.revision === baseRevisionRef.current) {
+      return true;
+    }
+
+    if (pendingOperationsRef.current.length > 0) {
+      setExternalDocumentNotice({
+        kind: "dirty",
+        detectedAt: Date.now(),
+      });
+      return false;
+    }
+
+    await reloadDocumentFromDisk({ showUpdatedNotice: true });
+    return false;
   }
 
   function getCurrentPythonSourceForRun(): string | undefined {
@@ -928,7 +1147,10 @@ export default function App() {
   }
 
   async function handleRunNode(nodeId: string) {
-    if (!editableGraph || !(await flushPendingOperations())) {
+    if (
+      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
+      !(await flushPendingOperations())
+    ) {
       return;
     }
     const runSourceValue = documentSourceValueRef.current;
@@ -947,7 +1169,10 @@ export default function App() {
   }
 
   async function handleRunToNode(nodeId: string) {
-    if (!editableGraph || !(await flushPendingOperations())) {
+    if (
+      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
+      !(await flushPendingOperations())
+    ) {
       return;
     }
     const runSourceValue = documentSourceValueRef.current;
@@ -966,7 +1191,10 @@ export default function App() {
   }
 
   async function handleRunGraph() {
-    if (!editableGraph || !(await flushPendingOperations())) {
+    if (
+      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
+      !(await flushPendingOperations())
+    ) {
       return;
     }
     const runSourceValue = documentSourceValueRef.current;
@@ -1000,6 +1228,11 @@ export default function App() {
           </div>
         </div>
         <div className="flex min-w-0 items-center gap-3">
+          {externalDocumentNotice.kind === "updated" && (
+            <span className="hidden shrink-0 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200 md:inline-flex">
+              Updated from disk
+            </span>
+          )}
           <span
             className="hidden max-w-[34vw] truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline"
             title={documentPath}
@@ -1015,7 +1248,7 @@ export default function App() {
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
           )}
-          {saveStatus === "idle" && pendingOperationsRef.current.length > 0 && (
+          {saveStatus === "idle" && pendingOperationCount > 0 && (
             <span className="text-xs font-medium text-amber-700">
               Unsaved changes
             </span>
@@ -1077,6 +1310,54 @@ export default function App() {
           </button>
         </div>
       </header>
+      {externalDocumentNotice.kind === "dirty" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">Document changed on disk.</span>
+            <span className="ml-2">
+              Save and run are paused until you reload. Reloading will discard
+              unsaved canvas changes{firstUnsavedEditAt
+                ? ` from the last ${
+                  formatElapsedDuration(Date.now() - firstUnsavedEditAt)
+                }`
+                : ""}.
+            </span>
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-50 dark:hover:bg-amber-800"
+            disabled={isExternalReloading}
+            onClick={() => void handleReloadDocumentFromDisk()}
+          >
+            {isExternalReloading ? "Reloading..." : "Reload from disk"}
+          </button>
+        </div>
+      )}
+      {externalDocumentNotice.kind === "waiting_readable" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-5 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">
+              Document changed on disk. Waiting for it to become readable...
+            </span>
+            <span className="ml-2">
+              Nodebook will keep checking and update when the file is valid.
+            </span>
+            {externalDocumentNotice.detail && (
+              <span className="ml-2 text-zinc-500 dark:text-zinc-400">
+                {externalDocumentNotice.detail}
+              </span>
+            )}
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            disabled={isExternalReloading}
+            onClick={() => void handleReloadDocumentFromDisk()}
+          >
+            {isExternalReloading ? "Checking..." : "Retry now"}
+          </button>
+        </div>
+      )}
       {saveStatus === "error" && saveError && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-900">
           <p className="min-w-0 flex-1">
@@ -1501,6 +1782,21 @@ function formatIssueLocation(path: string | undefined): string {
   }
 
   return ` at ${path}`;
+}
+
+function formatElapsedDuration(milliseconds: number): string {
+  const seconds = Math.max(1, Math.round(milliseconds / 1000));
+  if (seconds < 60) {
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
 function getNodeCanvasPreviews(

@@ -163,8 +163,13 @@ The implemented split uses these boundaries:
    validate or run a Python document, but the app-facing revision includes
    normalized sidecar metadata so position/title/description edits participate
    in stale-write detection.
-7. File watching and reconciliation remain future work. The Python file should
-   remain authoritative when it changes externally.
+7. The app polls document status while the editor is open. The status response
+   includes the app-visible revision, source revision, sidecar revision, and
+   validation issues when the file is temporarily unreadable. If the on-disk
+   document changes and there are no unsaved canvas edits, the app reloads it
+   automatically. If there are unsaved canvas edits, the app warns before
+   discarding them. Full filesystem watching, operation replay, and merge
+   reconciliation remain future work.
 
 ## Follow-On Decisions
 
@@ -176,6 +181,9 @@ The implemented split uses these boundaries:
 - Treat external file writes as authoritative. Nodebook should reload cleanly
   when there are no unsaved canvas edits and should avoid overwriting newer
   external file contents with stale canvas state.
+- Keep proactive external-change detection independent from save-conflict
+  protection. Status polling improves the local collaboration UX, but
+  `POST /document/operations` still rejects stale base revisions before writing.
 
 ## Open Questions
 
