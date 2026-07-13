@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable, Iterable
 from typing import Any, TextIO
 
+from .executor import bound_diagnostic_text
 from .session import PROTOCOL_VERSION, RuntimeSession
 
 
@@ -180,8 +181,6 @@ def _run_events(
         return [_error_event(request_id, "invalid_request", "Request field 'inputs' must be an object")]
 
     plan_result = session.plan_run(source, document_path, target=target)
-    if run_type == "run_node":
-        plan_result = _single_node_plan_result(plan_result, target)
 
     events: list[dict[str, Any]] = []
 
@@ -234,39 +233,6 @@ def _run_events(
     return events
 
 
-def _single_node_plan_result(plan_result: dict[str, Any], target: str | None) -> dict[str, Any]:
-    if not plan_result.get("ok") or target is None:
-        return plan_result
-
-    plan = plan_result.get("plan")
-    if not isinstance(plan, dict):
-        return plan_result
-
-    steps = plan.get("steps")
-    if not isinstance(steps, list):
-        return plan_result
-
-    target_step = next(
-        (
-            step
-            for step in steps
-            if isinstance(step, dict) and step.get("nodeId") == plan_result.get("targetNodeId")
-        ),
-        None,
-    )
-    if target_step is None:
-        return plan_result
-
-    return {
-        **plan_result,
-        "plan": {
-            **plan,
-            "targetNodeIds": [plan_result["targetNodeId"]],
-            "steps": [target_step],
-        },
-    }
-
-
 def _require_text(payload: dict[str, Any], field: str) -> str | None:
     value = payload.get(field)
     if not isinstance(value, str):
@@ -283,7 +249,11 @@ def _event(event_type: str, request_id: Any, payload: dict[str, Any]) -> dict[st
 
 
 def _error_event(request_id: Any, kind: str, message: str) -> dict[str, Any]:
-    return _event("error", request_id, {"ok": False, "error": {"kind": kind, "message": message}})
+    return _event(
+        "error",
+        request_id,
+        {"ok": False, "error": {"kind": kind, "message": bound_diagnostic_text(message)}},
+    )
 
 
 def _write_event(output_stream: TextIO, event: dict[str, Any]) -> None:

@@ -12,15 +12,22 @@ from typing import Any
 
 
 COPY_HANDLERS: list[tuple[Callable[[Any], bool], Callable[[Any], Any], str]] = []
-CAPTURED_OUTPUT_PREVIEW_LIMIT = 500
-REPR_PREVIEW_LIMIT = 2000
+TEXT_TRUNCATION_MARKER = "...<truncated>"
+CAPTURED_OUTPUT_PREVIEW_BYTE_LIMIT = 500
+CAPTURED_OUTPUT_RETAIN_LIMIT = 16_000
+REPR_PREVIEW_BYTE_LIMIT = 2_000
+PREVIEW_IDENTITY_BYTE_LIMIT = 1_024
+PREVIEW_WARNING_BYTE_LIMIT = 16_000
+COPY_WARNING_BYTE_LIMIT = 4_096
 JSON_PREVIEW_BYTE_LIMIT = 16_000
 JSON_PREVIEW_MAX_DEPTH = 6
 JSON_PREVIEW_MAX_NODES = 1_000
 JSON_PREVIEW_MAX_CONTAINER_ITEMS = 200
 TABLE_PREVIEW_MAX_ROWS = 50
 TABLE_PREVIEW_MAX_COLUMNS = 30
-TABLE_PREVIEW_MAX_CELL_REPR = 200
+TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT = 512
+TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT = 512
+TABLE_PREVIEW_MAX_INTEGER_BITS = 1_024
 
 
 def register_copy_handler(predicate: Callable[[Any], bool], copier: Callable[[Any], Any], label: str) -> None:
@@ -54,27 +61,59 @@ def install_default_copy_handlers() -> None:
         pass
 
 
-def truncate_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "...<truncated>"
+def truncate_utf8_text(text: str, limit_bytes: int) -> str:
+    """Bound text by encoded size and make any truncation explicit."""
+    encoded = text.encode("utf-8", errors="backslashreplace")
+    if len(encoded) <= limit_bytes:
+        return encoded.decode("utf-8")
+    marker = TEXT_TRUNCATION_MARKER.encode("utf-8")
+    if limit_bytes <= len(marker):
+        return marker[: max(0, limit_bytes)].decode("utf-8", errors="ignore")
+    retained = encoded[: limit_bytes - len(marker)].decode("utf-8", errors="ignore")
+    return retained + TEXT_TRUNCATION_MARKER
+
+
+class _BoundedPreviewCapture(io.StringIO):
+    def __init__(self, limit: int = CAPTURED_OUTPUT_RETAIN_LIMIT) -> None:
+        super().__init__()
+        self.limit = limit
+        self.retained = 0
+        self.dropped = 0
+
+    def write(self, text: str) -> int:
+        remaining = max(0, self.limit - self.retained)
+        kept = text[:remaining]
+        self.retained += len(kept)
+        self.dropped += len(text) - len(kept)
+        super().write(kept)
+        return len(text)
+
+    def retained_value(self) -> str:
+        value = self.getvalue()
+        if self.dropped:
+            return f"{value}...<{self.dropped} characters truncated>"
+        return value
 
 
 def run_with_captured_stdio(action: Callable[[], Any]) -> tuple[Any, str, str]:
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
+    stdout_buffer = _BoundedPreviewCapture()
+    stderr_buffer = _BoundedPreviewCapture()
     with contextlib.redirect_stdout(stdout_buffer):
         with contextlib.redirect_stderr(stderr_buffer):
             result = action()
-    return result, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+    return result, stdout_buffer.retained_value(), stderr_buffer.retained_value()
 
 
 def captured_stdio_warning(operation: str, stdout_text: str, stderr_text: str) -> str | None:
     parts = []
     if stdout_text:
-        parts.append(f"stdout={truncate_text(stdout_text, CAPTURED_OUTPUT_PREVIEW_LIMIT)!r}")
+        parts.append(
+            f"stdout={truncate_utf8_text(stdout_text, CAPTURED_OUTPUT_PREVIEW_BYTE_LIMIT)!r}"
+        )
     if stderr_text:
-        parts.append(f"stderr={truncate_text(stderr_text, CAPTURED_OUTPUT_PREVIEW_LIMIT)!r}")
+        parts.append(
+            f"stderr={truncate_utf8_text(stderr_text, CAPTURED_OUTPUT_PREVIEW_BYTE_LIMIT)!r}"
+        )
     if not parts:
         return None
     return f"{operation} emitted output while runtime telemetry was active: {', '.join(parts)}"
@@ -168,8 +207,19 @@ def table_cell_preview(value: Any) -> Any:
     if is_nan_like(value):
         return {"kind": "nan"}
 
-    if type(value) in (bool, int, str):
+    if type(value) is bool:
         return value
+
+    if type(value) is int:
+        if value.bit_length() <= TABLE_PREVIEW_MAX_INTEGER_BITS:
+            return value
+        return {
+            "kind": "integer",
+            "value": f"<large integer omitted: {value.bit_length()} bits>",
+        }
+
+    if type(value) is str:
+        return truncate_utf8_text(value, TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT)
 
     if type(value) is float:
         if not math.isfinite(value):
@@ -179,7 +229,13 @@ def table_cell_preview(value: Any) -> Any:
     isoformat = getattr(value, "isoformat", None)
     if callable(isoformat):
         try:
-            return {"kind": "datetime", "value": str(isoformat())}
+            return {
+                "kind": "datetime",
+                "value": truncate_utf8_text(
+                    str(isoformat()),
+                    TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT,
+                ),
+            }
         except Exception:
             pass
 
@@ -196,7 +252,10 @@ def table_cell_preview(value: Any) -> Any:
     except Exception as exc:
         text = f"<repr failed: {exc}>"
 
-    return {"kind": "repr", "value": truncate_text(text, TABLE_PREVIEW_MAX_CELL_REPR)}
+    return {
+        "kind": "repr",
+        "value": truncate_utf8_text(text, TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT),
+    }
 
 
 def make_pandas_table_preview(value: Any) -> dict[str, Any] | None:
@@ -217,7 +276,16 @@ def make_pandas_table_preview(value: Any) -> dict[str, Any] | None:
 
     return {
         "columns": [
-            {"name": str(column), "dtype": str(dtype)}
+            {
+                "name": truncate_utf8_text(
+                    str(column),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+                "dtype": truncate_utf8_text(
+                    str(dtype),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+            }
             for column, dtype in zip(sliced.columns, sliced.dtypes)
         ],
         "index": [table_cell_preview(item) for item in sliced.index.tolist()],
@@ -252,7 +320,16 @@ def make_polars_table_preview(value: Any) -> dict[str, Any] | None:
 
     return {
         "columns": [
-            {"name": column, "dtype": str(dtype_by_column[column])}
+            {
+                "name": truncate_utf8_text(
+                    str(column),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+                "dtype": truncate_utf8_text(
+                    str(dtype_by_column[column]),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+            }
             for column in sliced.columns
         ],
         "rows": [[table_cell_preview(item) for item in row] for row in sliced.iter_rows()],
@@ -285,22 +362,40 @@ def preview_value(name: str, value: Any, warning: str | None = None) -> dict[str
     except Exception as exc:
         repr_text = f"<repr failed: {exc}>"
 
-    if len(repr_text) > REPR_PREVIEW_LIMIT:
-        repr_text = repr_text[:REPR_PREVIEW_LIMIT] + "...<truncated>"
+    repr_text = truncate_utf8_text(repr_text, REPR_PREVIEW_BYTE_LIMIT)
 
     preview: dict[str, Any] = {
-        "name": name,
-        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+        "name": truncate_utf8_text(name, PREVIEW_IDENTITY_BYTE_LIMIT),
+        "type": truncate_utf8_text(
+            f"{type(value).__module__}.{type(value).__qualname__}",
+            PREVIEW_IDENTITY_BYTE_LIMIT,
+        ),
         "repr": repr_text,
     }
 
-    combined_warning = combine_warnings(warning, stdio_warning)
-    if combined_warning:
-        preview["warning"] = combined_warning
-
-    table_preview = make_table_preview(value)
+    table_preview = None
+    table_warning = None
+    try:
+        table_preview, stdout_text, stderr_text = run_with_captured_stdio(
+            lambda: make_table_preview(value)
+        )
+        table_warning = captured_stdio_warning(
+            f"Table preview for '{name}'",
+            stdout_text,
+            stderr_text,
+        )
+    except Exception:
+        # Table previews are optional telemetry and must not fail execution.
+        pass
     if table_preview is not None:
         preview["table"] = table_preview
+
+    combined_warning = combine_warnings(warning, stdio_warning, table_warning)
+    if combined_warning:
+        preview["warning"] = truncate_utf8_text(
+            combined_warning,
+            PREVIEW_WARNING_BYTE_LIMIT,
+        )
 
     try:
         preview["jsonValue"] = make_json_preview_value(value)
@@ -329,16 +424,30 @@ def copy_for_node_input(name: str, value: Any) -> tuple[Any, str | None]:
                     copier_stdout,
                     copier_stderr,
                 )
-                return copied, combine_warnings(predicate_warning, copier_warning)
+                return copied, _bounded_copy_warning(
+                    combine_warnings(predicate_warning, copier_warning)
+                )
         except Exception as exc:
-            return value, f"Could not copy input '{name}' with {label}; passed by reference: {exc}"
+            return value, _bounded_copy_warning(
+                f"Could not copy input '{name}' with {label}; passed by reference: {exc}"
+            )
 
     try:
         copied, stdout_text, stderr_text = run_with_captured_stdio(lambda: copy.deepcopy(value))
-        return copied, captured_stdio_warning(
-            f"Deepcopy for input '{name}'",
-            stdout_text,
-            stderr_text,
+        return copied, _bounded_copy_warning(
+            captured_stdio_warning(
+                f"Deepcopy for input '{name}'",
+                stdout_text,
+                stderr_text,
+            )
         )
     except Exception as exc:
-        return value, f"Could not deepcopy input '{name}'; passed by reference: {exc}"
+        return value, _bounded_copy_warning(
+            f"Could not deepcopy input '{name}'; passed by reference: {exc}"
+        )
+
+
+def _bounded_copy_warning(warning: str | None) -> str | None:
+    if warning is None:
+        return None
+    return truncate_utf8_text(warning, COPY_WARNING_BYTE_LIMIT)

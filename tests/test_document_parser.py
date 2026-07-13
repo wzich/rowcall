@@ -19,6 +19,237 @@ class DocumentParserTests(unittest.TestCase):
         path = REPO_ROOT / relative_path
         return parse_source(path.read_text(), path)
 
+    def test_rejects_python_file_without_nodes_with_actionable_issue(self) -> None:
+        result = parse_source("VALUE = 1\n", Path("/tmp/not_a_nodebook.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].kind, "missing_node")
+        self.assertIn("at least one node", result.issues[0].message)
+
+    def test_diagnoses_async_and_qualified_node_near_misses(self) -> None:
+        async_result = parse_source(
+            'from nodebook import node\n\n@node(id="a", outputs=["x"])\nasync def a():\n    return {"x": 1}\n',
+            Path("/tmp/async_node.py"),
+        )
+        qualified_result = parse_source(
+            'import nodebook\n\n@nodebook.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
+            Path("/tmp/qualified_node.py"),
+        )
+
+        self.assertEqual(async_result.issues[0].kind, "unsupported_node_syntax")
+        self.assertIn("Async node", async_result.issues[0].message)
+        self.assertEqual(qualified_result.issues[0].kind, "unsupported_node_syntax")
+        self.assertIn("from nodebook import node", qualified_result.issues[0].message)
+
+    def test_diagnoses_aliased_qualified_node_decorator(self) -> None:
+        result = parse_source(
+            'import nodebook as nb\n\n@nb.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
+            Path("/tmp/aliased_qualified_node.py"),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual([issue.kind for issue in result.issues], ["unsupported_node_syntax"])
+        self.assertIn("Qualified node decorator", result.issues[0].message)
+        self.assertIn("from nodebook import node", result.issues[0].message)
+
+    def test_rejects_node_decorator_without_nodebook_binding_provenance(self) -> None:
+        unrelated_import = parse_source(
+            'from unrelated import node\n\n@node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
+            Path("/tmp/unrelated_node.py"),
+        )
+        shadowed_import = parse_source(
+            "from nodebook import node\n"
+            "node = lambda **kwargs: lambda fn: fn\n\n"
+            '@node(id="a", outputs=["x"])\n'
+            "def a():\n"
+            '    return {"x": 1}\n',
+            Path("/tmp/shadowed_node.py"),
+        )
+
+        for result in (unrelated_import, shadowed_import):
+            self.assertFalse(result.ok)
+            self.assertEqual(
+                [issue.kind for issue in result.issues],
+                ["unsupported_node_syntax"],
+            )
+            self.assertIn("top-level 'from nodebook import node'", result.issues[0].message)
+
+    def test_accepts_nodebook_binding_until_it_is_shadowed(self) -> None:
+        source = '''
+from nodebook import node
+
+@node(id="first", outputs=["x"])
+def first():
+    return {"x": 1}
+
+node = lambda **kwargs: lambda fn: fn
+
+@node(id="second", outputs=["y"])
+def second():
+    return {"y": 2}
+'''.lstrip()
+
+        result = parse_source(source, Path("/tmp/partially_shadowed_node.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual([node.id for node in result.document.nodes], ["first"])
+        self.assertEqual([issue.kind for issue in result.issues], ["unsupported_node_syntax"])
+
+    def test_dynamic_module_namespace_access_invalidates_node_binding(self) -> None:
+        statements = (
+            'exec("node = print")',
+            'globals()["node"] = print',
+            'locals().update({"node": print})',
+            'vars()["node"] = print',
+            'vars(*[])["node"] = print',
+            'vars(**{})["node"] = print',
+            'if True:\n    exec("node = print")',
+        )
+        for index, statement in enumerate(statements):
+            with self.subTest(statement=statement):
+                result = parse_source(
+                    f'''\
+from nodebook import node
+
+{statement}
+
+@node(id="a", outputs=["x"])
+def a():
+    return {{"x": 1}}
+''',
+                    Path(f"/tmp/dynamic_binding_{index}.py"),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [issue.kind for issue in result.issues],
+                    ["unsupported_node_syntax"],
+                )
+
+    def test_vars_of_an_object_does_not_invalidate_node_binding(self) -> None:
+        result = parse_source(
+            '''\
+from nodebook import node
+
+class Config:
+    value = 1
+
+INFO = vars(Config)
+
+@node(id="a", outputs=["x"])
+def a():
+    return {"x": INFO["value"]}
+''',
+            Path("/tmp/object_vars.py"),
+        )
+
+        self.assertTrue(result.ok, result.issues)
+        self.assertEqual([node.id for node in result.document.nodes], ["a"])
+
+    def test_comprehension_named_expression_shadows_nodebook_binding(self) -> None:
+        shadowed = parse_source(
+            '''
+from nodebook import node
+
+[item for item in [1] if (node := lambda **kwargs: lambda fn: fn)]
+
+@node(id="a", outputs=["x"])
+def a():
+    return {"x": 1}
+'''.lstrip(),
+            Path("/tmp/comprehension_named_expression.py"),
+        )
+        comprehension_target = parse_source(
+            '''
+from nodebook import node
+
+[node for node in []]
+
+@node(id="a", outputs=["x"])
+def a():
+    return {"x": 1}
+'''.lstrip(),
+            Path("/tmp/comprehension_target.py"),
+        )
+
+        self.assertFalse(shadowed.ok)
+        self.assertEqual(
+            [issue.kind for issue in shadowed.issues],
+            ["unsupported_node_syntax"],
+        )
+        self.assertTrue(comprehension_target.ok)
+
+    def test_pattern_and_exception_captures_shadow_nodebook_binding(self) -> None:
+        capture_statements = (
+            "match object():\n    case node:\n        pass",
+            "match []:\n    case [*node]:\n        pass",
+            "match {}:\n    case {**node}:\n        pass",
+            "try:\n    raise RuntimeError()\nexcept RuntimeError as node:\n    pass",
+        )
+        for index, statement in enumerate(capture_statements):
+            with self.subTest(statement=statement):
+                source = f'''
+from nodebook import node
+
+{statement}
+
+@node(id="a", outputs=["x"])
+def a():
+    return {{"x": 1}}
+'''.lstrip()
+                result = parse_source(source, Path(f"/tmp/captured_node_{index}.py"))
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [issue.kind for issue in result.issues],
+                    ["unsupported_node_syntax"],
+                )
+
+    def test_nested_wildcard_import_invalidates_node_binding_provenance(self) -> None:
+        source = '''
+from nodebook import node
+
+if False:
+    from unrelated import *
+
+@node(id="a", outputs=["x"])
+def a():
+    return {"x": 1}
+'''.lstrip()
+
+        result = parse_source(source, Path("/tmp/nested_wildcard_import.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [issue.kind for issue in result.issues],
+            ["unsupported_node_syntax"],
+        )
+
+    def test_rejects_invalid_metadata_and_reserved_outputs(self) -> None:
+        source = '''
+from nodebook import node
+
+@node(id="", outputs=["x", "x", "", "__nodebook_result"])
+def first():
+    return {"x": 1}
+
+@node(id="second", outputs=["y"])
+def second(x):
+    return {"y": x}
+
+second.depends_on(first)
+second.depends_on(first)
+'''.lstrip()
+        result = parse_source(source, Path("/tmp/metadata.py"))
+
+        kinds = [issue.kind for issue in result.issues]
+        self.assertIn("invalid_node_id", kinds)
+        self.assertIn("duplicate_output", kinds)
+        self.assertEqual(kinds.count("invalid_output"), 2)
+        self.assertIn("duplicate_edge", kinds)
+        assert result.document is not None
+        self.assertEqual(result.document.nodes[0].id, "")
+
     def test_parse_valid_document_and_plan(self) -> None:
         source = """
 from nodebook import node

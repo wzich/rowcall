@@ -154,7 +154,8 @@ The implemented split uses these boundaries:
    value previews, stdout/stderr capture, display events, and CLI behavior.
 4. The Deno/Hono app server owns editing APIs, startup configuration, and the
    browser-facing API. Document operations and execution call the Python runtime
-   worker, including cache-backed single-node execution.
+   worker. Selected-node runs freshly execute the complete upstream plan through
+   that node; the invited beta has no execution cache.
 5. Normal UI-authored edits are sent as operation batches. The Python document
    package owns source rewrites for node bodies, output declarations, function
    names, node additions/deletions, graph edges, and globals. Custom returns are

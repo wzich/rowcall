@@ -8,6 +8,11 @@ release_base="${NODEBOOK_RELEASE_BASE:-https://releases.nodebook.rodeo}"
 release_version="${NODEBOOK_VERSION:-latest}"
 skip_checksum="${NODEBOOK_SKIP_CHECKSUM:-}"
 
+echo "Nodebook is an invited beta. The macOS binary is unsigned and not notarized."
+echo "Nodebook runs Python with your user permissions; open only documents you trust."
+echo "Close any running Nodebook process before installing or updating."
+echo ""
+
 case "$(uname -s)" in
   Darwin) os="darwin" ;;
   *)

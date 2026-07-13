@@ -38,10 +38,15 @@ import {
 } from "./graph/nodeNames.ts";
 import {
   runGraphMutationOptions,
-  runNodeMutationOptions,
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
+import { classifySaveFailure } from "./saveOutcome.ts";
+import {
+  canApplyLoadedDocument,
+  canEditDocument,
+  shouldAutoReloadDocument,
+} from "./documentReload.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
@@ -107,7 +112,7 @@ export default function App() {
     NodebookDocumentV1 | null
   >(null);
   const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "saved" | "error"
+    "idle" | "saving" | "saved" | "error" | "outcome_unknown"
   >("idle");
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [documentPath, setDocumentPath] = useState("Active document");
@@ -122,7 +127,7 @@ export default function App() {
   const editGenerationRef = useRef(0);
   const editableDocumentRef = useRef<NodebookDocumentV1 | null>(null);
   const baseRevisionRef = useRef("");
-  const saveStatusRef = useRef(saveStatus);
+  const saveOutcomeUnknownRef = useRef(false);
   const firstUnsavedEditAtRef = useRef<number | null>(null);
   const invalidExternalDocumentSinceRef = useRef<number | null>(null);
   const isReloadingExternalDocumentRef = useRef(false);
@@ -134,6 +139,7 @@ export default function App() {
   );
   const pendingOperationsRef = useRef<DocumentOperation[]>([]);
   const flushPromiseRef = useRef<Promise<boolean> | null>(null);
+  const saveAttemptGenerationRef = useRef(0);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
     reservedNames: new Set(),
     nextIndex: 1,
@@ -178,7 +184,6 @@ export default function App() {
     isCurrentSource,
     markGraphExecutionRunning,
     markNodesStale,
-    markNodeExecutionRunning,
     resetUnfinishedRunStatuses,
     startRunAbortController,
     storeExecutionRequestErrorForNode,
@@ -196,10 +201,6 @@ export default function App() {
   useEffect(() => {
     editableDocumentRef.current = editableDocument;
   }, [editableDocument]);
-
-  useEffect(() => {
-    saveStatusRef.current = saveStatus;
-  }, [saveStatus]);
 
   const applyLoadedDocument = useCallback(
     (loaded: LoadDocumentSuccess) => {
@@ -225,6 +226,7 @@ export default function App() {
       setFirstUnsavedEditAt(null);
       invalidExternalDocumentSinceRef.current = null;
       setSaveStatus("idle");
+      saveOutcomeUnknownRef.current = false;
       setSaveError(null);
       editGenerationRef.current = 0;
       syncDocumentSourceValue();
@@ -241,6 +243,9 @@ export default function App() {
   }, [applyLoadedDocument, documentQuery.data, documentQuery.isSuccess]);
 
   const queueOperation = useCallback((operation: DocumentOperation) => {
+    if (saveOutcomeUnknownRef.current) {
+      return;
+    }
     const operations = coalesceDocumentOperations([
       ...pendingOperationsRef.current,
       operation,
@@ -251,8 +256,10 @@ export default function App() {
       firstUnsavedEditAtRef.current = null;
       setFirstUnsavedEditAt(null);
     }
-    setSaveStatus("idle");
-    setSaveError(null);
+    if (!saveOutcomeUnknownRef.current) {
+      setSaveStatus("idle");
+      setSaveError(null);
+    }
   }, []);
 
   const flushPendingOperations = useCallback(async (): Promise<boolean> => {
@@ -268,17 +275,16 @@ export default function App() {
 
     const operations = pendingOperationsRef.current;
     const baseRevision = baseRevisionRef.current;
-    const clientBatchId = crypto.randomUUID();
     const editGeneration = editGenerationRef.current;
 
     pendingOperationsRef.current = [];
+    saveAttemptGenerationRef.current += 1;
     setSaveStatus("saving");
     setSaveError(null);
 
     const promise = applyDocumentOperations(
       baseRevision,
       operations,
-      clientBatchId,
     )
       .then((result) => {
         setDocumentPath(result.path);
@@ -307,8 +313,18 @@ export default function App() {
           ...pendingOperationsRef.current,
         ]);
         setPendingOperationCount(pendingOperationsRef.current.length);
-        setSaveStatus("error");
-        setSaveError(formatSaveError(error));
+        if (classifySaveFailure(error) === "unknown_outcome") {
+          saveOutcomeUnknownRef.current = true;
+          setSaveStatus("outcome_unknown");
+          setSaveError({
+            title: "Save outcome unknown",
+            detail:
+              "Nodebook lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
+          });
+        } else {
+          setSaveStatus("error");
+          setSaveError(formatSaveError(error));
+        }
         return false;
       })
       .finally(() => {
@@ -319,36 +335,22 @@ export default function App() {
     return await promise;
   }, [documentStatusQuery]);
 
-  const runNodeMutation = useMutation({
-    ...runNodeMutationOptions(),
-    onSuccess: (response, variables) => {
-      if (!isCurrentSource(variables.sourceValue)) {
-        return;
-      }
+  useEffect(() => {
+    if (
+      pendingOperationCount === 0 && saveStatus !== "outcome_unknown"
+    ) {
+      return;
+    }
 
-      storeExecutionResponseForNodeIds(response, [
-        ...response.executedNodeIds,
-        variables.nodeId,
-      ]);
-      storeGraphExecutionResponse(response);
-      clearActiveRun(variables.abortController);
-    },
-    onError: (error, variables) => {
-      if (!isCurrentSource(variables.sourceValue)) {
-        return;
-      }
-      if (isAbortError(error)) {
-        if (clearActiveRun(variables.abortController)) {
-          resetUnfinishedRunStatuses();
-        }
-        return;
-      }
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    globalThis.addEventListener("beforeunload", warnBeforeUnload);
+    return () =>
+      globalThis.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [pendingOperationCount, saveStatus]);
 
-      storeExecutionRequestErrorForNode(error, variables.nodeId);
-      storeGraphExecutionRequestError(error);
-      clearActiveRun(variables.abortController);
-    },
-  });
   const runToNodeMutation = useMutation({
     ...runToNodeMutationOptions(),
     onSuccess: (response, variables) => {
@@ -437,8 +439,11 @@ export default function App() {
       }
 
       if (
-        pendingOperationsRef.current.length === 0 &&
-        saveStatusRef.current !== "saving"
+        shouldAutoReloadDocument({
+          pendingOperationCount: pendingOperationsRef.current.length,
+          saveInFlight: flushPromiseRef.current !== null,
+          saveOutcomeUnknown: saveOutcomeUnknownRef.current,
+        })
       ) {
         void reloadDocumentFromDisk({ showUpdatedNotice: true });
         return;
@@ -493,8 +498,12 @@ export default function App() {
     [editableDocument],
   );
   const isReadOnlyDocument = editableDocument?.readOnly ?? false;
-  const canEditStructure = !isReadOnlyDocument;
-  const canEditOutputs = !isReadOnlyDocument;
+  const editingBlocked = saveStatus === "outcome_unknown";
+  const canEditStructure = canEditDocument({
+    readOnly: isReadOnlyDocument,
+    saveOutcomeUnknown: editingBlocked,
+  });
+  const canEditOutputs = canEditStructure;
   const nodePreviews = useMemo(
     () => getNodeCanvasPreviews(executionStateByNodeId),
     [executionStateByNodeId],
@@ -601,6 +610,9 @@ export default function App() {
   }, [editableGraph, executionStateByNodeId, graphNodeDetails, selectedNodeId]);
 
   const markDocumentEdited = useCallback(() => {
+    if (saveOutcomeUnknownRef.current) {
+      return;
+    }
     clearExecutionSession();
     if (firstUnsavedEditAtRef.current === null) {
       const now = Date.now();
@@ -609,12 +621,17 @@ export default function App() {
     }
     editGenerationRef.current += 1;
     syncDocumentSourceValue();
-    setSaveStatus("idle");
-    setSaveError(null);
+    if (!saveOutcomeUnknownRef.current) {
+      setSaveStatus("idle");
+      setSaveError(null);
+    }
   }, [clearExecutionSession, syncDocumentSourceValue]);
 
   const commitEditableDocument = useCallback(
     (nextDocument: NodebookDocumentV1) => {
+      if (saveOutcomeUnknownRef.current) {
+        return;
+      }
       editableDocumentRef.current = nextDocument;
       setEditableDocument(nextDocument);
     },
@@ -623,7 +640,7 @@ export default function App() {
 
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const nodeId = createNextNodeId(current);
     const functionName = reserveNextFunctionName(
       current,
@@ -649,7 +666,7 @@ export default function App() {
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const parentNode = current.nodes.find((node) => node.id === parentNodeId);
     if (!parentNode) return;
     const nodeId = createNextNodeId(current);
@@ -691,7 +708,7 @@ export default function App() {
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || node.code === code) return;
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
@@ -715,7 +732,10 @@ export default function App() {
 
   const handleGlobalsCodeChange = useCallback((globalsCode: string) => {
     const current = editableDocumentRef.current;
-    if (!current || (current.globalsCode ?? "") === globalsCode) {
+    if (
+      !current || saveOutcomeUnknownRef.current ||
+      (current.globalsCode ?? "") === globalsCode
+    ) {
       return;
     }
     const staleNodeIds = current.nodes.map((node) => node.id);
@@ -740,7 +760,7 @@ export default function App() {
     outputs: string[],
   ) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || areStringArraysEqual(node.outputs, outputs)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
@@ -768,6 +788,12 @@ export default function App() {
     displayName: string,
   ): NodeNameChangeResult => {
     const current = editableDocumentRef.current;
+    if (saveOutcomeUnknownRef.current) {
+      return {
+        ok: false,
+        message: "Reload from disk before making more changes.",
+      };
+    }
     if (!current) {
       return { ok: false, message: "The document is not ready yet." };
     }
@@ -844,7 +870,7 @@ export default function App() {
     metadata: { description?: string },
   ) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     const nextDescription = metadata.description ?? node.description;
@@ -880,7 +906,7 @@ export default function App() {
 
   const handleConnectNodes = useCallback((fromNode: string, toNode: string) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     if (
       current.edges.some((edge) =>
         edge.fromNode === fromNode && edge.toNode === toNode
@@ -911,7 +937,7 @@ export default function App() {
 
   const handleDeleteEdges = useCallback((edgeIds: string[]) => {
     const current = editableDocumentRef.current;
-    if (!current) return [];
+    if (!current || saveOutcomeUnknownRef.current) return [];
     const edgeIdSet = new Set(edgeIds);
     const removedEdges = current.edges.filter((edge) =>
       edgeIdSet.has(getEdgeId(edge))
@@ -958,7 +984,7 @@ export default function App() {
 
   const handleDeleteNode = useCallback((nodeId: string) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     if (!current.nodes.some((node) => node.id === nodeId)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
 
@@ -994,7 +1020,7 @@ export default function App() {
     position: { x: number; y: number },
   ) => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || arePositionsEqual(node.position, position)) return;
     const nextDocument = {
@@ -1011,7 +1037,7 @@ export default function App() {
 
   const handleAutoLayout = useCallback(() => {
     const current = editableDocumentRef.current;
-    if (!current) return;
+    if (!current || saveOutcomeUnknownRef.current) return;
     const positions = createSimpleLayout(toRuntimeGraph(current));
     const changedPositions = current.nodes.flatMap((node) => {
       const position = positions[node.id];
@@ -1038,7 +1064,10 @@ export default function App() {
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
   async function handleSaveDocument() {
-    if (!editableDocument || saveStatus === "saving") {
+    if (
+      !editableDocument || saveStatus === "saving" ||
+      saveOutcomeUnknownRef.current
+    ) {
       return;
     }
 
@@ -1057,17 +1086,34 @@ export default function App() {
       return false;
     }
 
-    const startedEditGeneration = editGenerationRef.current;
-    const startedPendingOperationCount = pendingOperationsRef.current.length;
+    if (flushPromiseRef.current) {
+      setExternalDocumentNotice({
+        kind: "dirty",
+        detectedAt: Date.now(),
+      });
+      return false;
+    }
+
+    const started = {
+      editGeneration: editGenerationRef.current,
+      pendingOperationCount: pendingOperationsRef.current.length,
+      saveAttemptGeneration: saveAttemptGenerationRef.current,
+    };
     isReloadingExternalDocumentRef.current = true;
     setIsExternalReloading(true);
     try {
       const loaded = await loadDocument();
 
       if (
-        !options.allowDiscardLocalEdits &&
-        (editGenerationRef.current !== startedEditGeneration ||
-          pendingOperationsRef.current.length !== startedPendingOperationCount)
+        !canApplyLoadedDocument(
+          started,
+          {
+            editGeneration: editGenerationRef.current,
+            pendingOperationCount: pendingOperationsRef.current.length,
+            saveAttemptGeneration: saveAttemptGenerationRef.current,
+            saveInFlight: flushPromiseRef.current !== null,
+          },
+        )
       ) {
         setExternalDocumentNotice({
           kind: "dirty",
@@ -1102,6 +1148,10 @@ export default function App() {
   }
 
   async function ensureDocumentFreshForWrite(): Promise<boolean> {
+    if (saveOutcomeUnknownRef.current) {
+      return false;
+    }
+
     const result = await documentStatusQuery.refetch();
     if (!result.isSuccess) {
       setExternalDocumentNotice({
@@ -1146,28 +1196,6 @@ export default function App() {
     return undefined;
   }
 
-  async function handleRunNode(nodeId: string) {
-    if (
-      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
-      !(await flushPendingOperations())
-    ) {
-      return;
-    }
-    const runSourceValue = documentSourceValueRef.current;
-
-    const abortController = startRunAbortController();
-    markNodeExecutionRunning(nodeId, "run_node");
-    runNodeMutation.mutate({
-      nodeId,
-      source: getCurrentPythonSourceForRun(),
-      trace: traceEnabled,
-      onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
-      signal: abortController.signal,
-      abortController,
-      sourceValue: runSourceValue,
-    });
-  }
-
   async function handleRunToNode(nodeId: string) {
     if (
       !editableGraph || !(await ensureDocumentFreshForWrite()) ||
@@ -1182,6 +1210,7 @@ export default function App() {
     runToNodeMutation.mutate({
       nodeId,
       source: getCurrentPythonSourceForRun(),
+      expectedRevision: baseRevisionRef.current,
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
@@ -1203,6 +1232,7 @@ export default function App() {
     markGraphExecutionRunning();
     runGraphMutation.mutate({
       source: getCurrentPythonSourceForRun(),
+      expectedRevision: baseRevisionRef.current,
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
@@ -1294,9 +1324,14 @@ export default function App() {
           </button>
           <button
             type="button"
-            title={isReadOnlyDocument ? "Read-only" : "Save (Ctrl+S)"}
+            title={isReadOnlyDocument
+              ? "Read-only"
+              : saveStatus === "outcome_unknown"
+              ? "Save outcome unknown; reload from disk before saving again"
+              : "Save (Ctrl+S)"}
             className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-            disabled={!editableDocument || saveStatus === "saving"}
+            disabled={!editableDocument || saveStatus === "saving" ||
+              saveStatus === "outcome_unknown"}
             onClick={handleSaveDocument}
           >
             {!isReadOnlyDocument && (
@@ -1374,6 +1409,24 @@ export default function App() {
           </button>
         </div>
       )}
+      {saveStatus === "outcome_unknown" && saveError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-300 bg-red-50 px-5 py-2 text-sm text-red-950 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">{saveError.title}.</span>
+            <span className="ml-2">{saveError.detail}</span>
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-900 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-red-900 dark:text-red-50 dark:hover:bg-red-800"
+            disabled={isExternalReloading}
+            onClick={() => void handleReloadDocumentFromDisk()}
+          >
+            {isExternalReloading
+              ? "Reloading..."
+              : "Reload and inspect saved state"}
+          </button>
+        </div>
+      )}
       {documentQuery.isSuccess && (
         <PreflightPanel
           python={pythonRuntimeQuery.data?.python ?? null}
@@ -1442,24 +1495,28 @@ export default function App() {
                 nodeInputPreviews={nodeInputPreviews}
                 nodeOutputOptions={nodeOutputOptions}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
-                onAutoLayout={isReadOnlyDocument ? undefined : handleAutoLayout}
+                onAutoLayout={canEditStructure ? handleAutoLayout : undefined}
                 onAddChildNode={canEditStructure
                   ? handleAddChildNode
                   : undefined}
-                onCodeChange={isReadOnlyDocument ? undefined : handleCodeChange}
+                onCodeChange={canEditStructure ? handleCodeChange : undefined}
                 onConnectNodes={canEditStructure
                   ? handleConnectNodes
                   : undefined}
                 onDeleteEdges={canEditStructure ? handleDeleteEdges : undefined}
                 onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-                onNodePositionChange={handleNodePositionChange}
+                onNodePositionChange={editingBlocked
+                  ? undefined
+                  : handleNodePositionChange}
                 onNodeSelect={setSelectedNodeId}
-                onOutputsChange={handleOutputsChange}
+                onOutputsChange={canEditOutputs
+                  ? handleOutputsChange
+                  : undefined}
                 onRunToNode={handleRunToNode}
-                onRunStep={handleRunNode}
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isGraphRunning || isSelectedNodeRunning}
+                runToNodeDisabled={isGraphRunning || isSelectedNodeRunning ||
+                  saveStatus === "outcome_unknown"}
                 onSelectionClear={() => setSelectedNodeId(null)}
                 themeMode={themeMode}
               />
@@ -1485,10 +1542,10 @@ export default function App() {
               onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
               onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-              onRunNode={handleRunNode}
               onRunToNode={handleRunToNode}
               onRunGraph={handleRunGraph}
               onSelectionClear={() => setSelectedNodeId(null)}
+              actionsBlocked={saveStatus === "outcome_unknown"}
             />
             <ShortcutHintPanel />
           </div>
@@ -1505,7 +1562,7 @@ function ShortcutHintPanel() {
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         Shift+Enter
       </kbd>
-      <span className="mx-1">run step</span>
+      <span className="mx-1">run through step</span>
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         A
       </kbd>

@@ -1,0 +1,54 @@
+name: Invited beta smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            asset: nodebook-darwin-arm64
+          - runner: macos-15-intel
+            asset: nodebook-darwin-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test runtime
+        run: python3 -m pip install -e .
+
+      - name: Check and test
+        run: |
+          deno task check
+          deno task test
+
+      - name: Build beta artifacts
+        run: deno task release:build
+
+      - name: Smoke installed artifact outside checkout
+        run: deno task release:smoke -- dist/release/${{ matrix.asset }}
+        env:
+          NODEBOOK_RELEASE_REQUIRE_AUTHORIZING: "1"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: invited-beta-${{ matrix.asset }}-${{ github.sha }}
+          path: |
+            dist/release/${{ matrix.asset }}
+            dist/release/${{ matrix.asset }}.smoke-attestation.json
+          if-no-files-found: error
+          retention-days: 7

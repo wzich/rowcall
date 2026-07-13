@@ -2,15 +2,37 @@ import { assertEquals, assertExists } from "@std/assert";
 import {
   applyPythonDocumentOperations,
   loadPythonDocument,
+  postCommitInspectionResult,
+  readPythonDocumentSource,
+  setBeforeDocumentPublishForTests,
+  setBeforeSidecarPublishForTests,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
 import {
   clearSourceRuntimeSessionCache,
   runSourceGraph,
   runSourceSingleNode,
-  runSourceToNode,
   shutdownSourceRuntimeSession,
 } from "./executor.ts";
+
+Deno.test("post-commit inspection failures report an unknown save outcome", () => {
+  const result = postCommitInspectionResult({
+    ok: false,
+    issues: [{
+      kind: "invalid_python",
+      message: "inspection worker stopped",
+    }],
+  });
+
+  assertEquals(result, {
+    ok: false,
+    issues: [{
+      kind: "document_write_error",
+      message:
+        "The document files were committed, but Nodebook could not inspect the saved state. Reload from disk before editing. inspection worker stopped",
+    }],
+  });
+});
 
 Deno.test("loadPythonDocument decodes function-shaped node document", async () => {
   const decoded = await loadPythonDocument("examples/hello_world.py");
@@ -57,18 +79,16 @@ Deno.test("Python document source executes through worker runtime", async () => 
   }
 });
 
-Deno.test("Python document source-backed single node reuses source-backed cache", async () => {
+Deno.test("Python document source-backed node run executes fresh upstream", async () => {
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
   await clearSourceRuntimeSessionCache();
   try {
-    const seed = await runSourceToNode(source, path, "n_shout");
     const single = await runSourceSingleNode(source, path, "n_shout");
 
-    assertEquals(seed.ok, true);
     assertEquals(single.ok, true);
-    assertEquals(single.executedNodeIds, ["n_shout"]);
+    assertEquals(single.executedNodeIds, ["n_load", "n_shout"]);
     assertEquals(
       single.finalOutputsByNode.n_shout.message.jsonValue,
       "HELLO!",
@@ -395,6 +415,157 @@ Deno.test("applyPythonDocumentOperations rejects stale sidecar revisions", async
   }
 });
 
+Deno.test("save revalidates both files immediately before publishing", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/publish_race.py`;
+  const externalSource = operationTestSource(99);
+  await Deno.writeTextFile(documentPath, operationTestSource(1));
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load publish race test document.");
+  }
+
+  setBeforeDocumentPublishForTests(async () => {
+    await Deno.writeTextFile(documentPath, externalSource);
+  });
+  try {
+    const applied = await applyPythonDocumentOperations(
+      documentPath,
+      loaded.document.revision,
+      [
+        { type: "update_node_body", nodeId: "n_test", code: "x = 2" },
+        {
+          type: "move_node",
+          nodeId: "n_test",
+          position: { x: 20, y: 30 },
+        },
+      ],
+    );
+
+    assertEquals(applied.ok, false);
+    if (!applied.ok) {
+      assertEquals(applied.issues[0].kind, "stale_document");
+    }
+    assertEquals(await Deno.readTextFile(documentPath), externalSource);
+    await assertNotFound(transactionPath(await Deno.realPath(documentPath)));
+    assertEquals(
+      (await Array.fromAsync(Deno.readDir(directory))).some((entry) =>
+        entry.name.startsWith(".nodebook-source-") ||
+        entry.name.startsWith(".nodebook-sidecar-")
+      ),
+      false,
+    );
+  } finally {
+    setBeforeDocumentPublishForTests(null);
+  }
+});
+
+Deno.test("read-only document directories can still be loaded and read", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/read_only.py`;
+  const source = operationTestSource(1);
+  await Deno.writeTextFile(documentPath, source);
+  await Deno.chmod(directory, 0o555);
+  try {
+    const loaded = await loadPythonDocument(documentPath);
+    if (!loaded.ok) {
+      throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+    }
+    assertEquals(loaded.document.nodes[0].id, "n_test");
+    assertEquals(await readPythonDocumentSource(documentPath), source);
+    const run = await runSourceGraph(source, documentPath);
+    assertEquals(run.ok, true);
+    assertEquals(run.finalOutputsByNode.n_test.x.jsonValue, 1);
+  } finally {
+    await shutdownSourceRuntimeSession();
+    await Deno.chmod(directory, 0o755);
+  }
+});
+
+Deno.test("read-only recovery errors are not reported as invalid Python", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/read_only_pending.py`;
+  await Deno.writeTextFile(documentPath, operationTestSource(1));
+  const canonicalDocumentPath = await Deno.realPath(documentPath);
+  await Deno.writeTextFile(
+    transactionPath(canonicalDocumentPath),
+    "pending transaction\n",
+  );
+  await Deno.chmod(directory, 0o555);
+  try {
+    const loaded = await loadPythonDocument(documentPath);
+    assertEquals(loaded.ok, false);
+    if (!loaded.ok) {
+      assertEquals(loaded.issues[0].kind, "document_read_error");
+    }
+  } finally {
+    await Deno.chmod(directory, 0o755);
+  }
+});
+
+Deno.test("save preserves an external sidecar edit after the source commit", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/sidecar_commit_race.py`;
+  const sidecarPath = sidecarPathForPythonDocument(documentPath);
+  const originalSidecar = `${
+    JSON.stringify({ version: 1, nodes: [] }, null, 2)
+  }\n`;
+  const externalSidecar = `${
+    JSON.stringify(
+      {
+        version: 1,
+        nodes: [{ id: "n_test", title: "External title" }],
+      },
+      null,
+      2,
+    )
+  }\n`;
+  await Deno.writeTextFile(documentPath, operationTestSource(1));
+  await Deno.writeTextFile(sidecarPath, originalSidecar);
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load sidecar commit race test document.");
+  }
+
+  setBeforeSidecarPublishForTests(async () => {
+    await Deno.writeTextFile(sidecarPath, externalSidecar);
+  });
+  try {
+    const applied = await applyPythonDocumentOperations(
+      documentPath,
+      loaded.document.revision,
+      [
+        { type: "update_node_body", nodeId: "n_test", code: "x = 2" },
+        {
+          type: "move_node",
+          nodeId: "n_test",
+          position: { x: 20, y: 30 },
+        },
+      ],
+    );
+
+    assertEquals(applied.ok, false);
+    if (!applied.ok) {
+      assertEquals(applied.issues[0].kind, "document_write_error");
+    }
+    assertEquals(await Deno.readTextFile(documentPath), operationTestSource(2));
+    assertEquals(await Deno.readTextFile(sidecarPath), externalSidecar);
+    const canonicalDocumentPath = await Deno.realPath(documentPath);
+    assertEquals(
+      (await Deno.stat(transactionPath(canonicalDocumentPath))).isFile,
+      true,
+    );
+  } finally {
+    setBeforeSidecarPublishForTests(null);
+  }
+});
+
 Deno.test("applyPythonDocumentOperations updates a standard node body", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/body_operation.py`;
@@ -649,3 +820,312 @@ Deno.test("applyPythonDocumentOperations preserves source file mode", async () =
   const mode = (await Deno.stat(documentPath)).mode;
   assertEquals(typeof mode === "number" ? mode & 0o777 : mode, 0o744);
 });
+
+Deno.test("applyPythonDocumentOperations preserves document symlinks", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const targetPath = `${directory}/target.py`;
+  const linkPath = `${directory}/linked.py`;
+  await Deno.writeTextFile(targetPath, operationTestSource(1));
+  await Deno.symlink(targetPath, linkPath);
+
+  const loaded = await loadPythonDocument(linkPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load symlink operation test document.");
+  }
+  const applied = await applyPythonDocumentOperations(
+    linkPath,
+    loaded.document.revision,
+    [{ type: "update_node_body", nodeId: "n_test", code: "x = 2" }],
+  );
+  if (!applied.ok) {
+    throw new Error(applied.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals((await Deno.lstat(linkPath)).isSymlink, true);
+  assertEquals(await Deno.readTextFile(targetPath), operationTestSource(2));
+});
+
+Deno.test("save rejects a document symlink retargeted before publish", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const firstTarget = `${directory}/first.py`;
+  const secondTarget = `${directory}/second.py`;
+  const linkPath = `${directory}/active.py`;
+  await Deno.writeTextFile(firstTarget, operationTestSource(1));
+  await Deno.writeTextFile(secondTarget, operationTestSource(9));
+  await Deno.symlink(firstTarget, linkPath);
+  const loaded = await loadPythonDocument(linkPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load retarget test document.");
+  }
+
+  setBeforeDocumentPublishForTests(async () => {
+    await Deno.remove(linkPath);
+    await Deno.symlink(secondTarget, linkPath);
+  });
+  try {
+    const applied = await applyPythonDocumentOperations(
+      linkPath,
+      loaded.document.revision,
+      [{ type: "update_node_body", nodeId: "n_test", code: "x = 2" }],
+    );
+    assertEquals(applied.ok, false);
+    if (!applied.ok) assertEquals(applied.issues[0].kind, "stale_document");
+    assertEquals(await Deno.readTextFile(firstTarget), operationTestSource(1));
+    assertEquals(await Deno.readTextFile(secondTarget), operationTestSource(9));
+    assertEquals(
+      await Deno.realPath(linkPath),
+      await Deno.realPath(secondTarget),
+    );
+  } finally {
+    setBeforeDocumentPublishForTests(null);
+  }
+});
+
+Deno.test("save rejects a sidecar symlink retargeted before publish", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/active.py`;
+  const sidecarPath = sidecarPathForPythonDocument(documentPath);
+  const firstTarget = `${directory}/metadata-first.json`;
+  const secondTarget = `${directory}/metadata-second.json`;
+  const metadata = (x: number, y: number) =>
+    `${
+      JSON.stringify(
+        {
+          version: 1,
+          nodes: [{ id: "n_test", position: { x, y } }],
+        },
+        null,
+        2,
+      )
+    }\n`;
+  await Deno.writeTextFile(documentPath, operationTestSource(1));
+  await Deno.writeTextFile(firstTarget, metadata(1, 1));
+  await Deno.writeTextFile(secondTarget, metadata(99, 99));
+  await Deno.symlink(firstTarget, sidecarPath);
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load retarget test sidecar.");
+  }
+
+  setBeforeDocumentPublishForTests(async () => {
+    await Deno.remove(sidecarPath);
+    await Deno.symlink(secondTarget, sidecarPath);
+  });
+  try {
+    const applied = await applyPythonDocumentOperations(
+      documentPath,
+      loaded.document.revision,
+      [{
+        type: "move_node",
+        nodeId: "n_test",
+        position: { x: 2, y: 3 },
+      }],
+    );
+    assertEquals(applied.ok, false);
+    if (!applied.ok) assertEquals(applied.issues[0].kind, "stale_document");
+    assertEquals(await Deno.readTextFile(firstTarget), metadata(1, 1));
+    assertEquals(await Deno.readTextFile(secondTarget), metadata(99, 99));
+    assertEquals(
+      await Deno.realPath(sidecarPath),
+      await Deno.realPath(secondTarget),
+    );
+  } finally {
+    setBeforeDocumentPublishForTests(null);
+  }
+});
+
+Deno.test("save rejects a dangling sidecar symlink created before publish", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/active.py`;
+  const sidecarPath = sidecarPathForPythonDocument(documentPath);
+  const missingTarget = `${directory}/metadata-not-created.json`;
+  await Deno.writeTextFile(documentPath, operationTestSource(1));
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load dangling-sidecar test document.");
+  }
+
+  setBeforeDocumentPublishForTests(async () => {
+    await Deno.symlink(missingTarget, sidecarPath);
+  });
+  try {
+    const applied = await applyPythonDocumentOperations(
+      documentPath,
+      loaded.document.revision,
+      [{
+        type: "move_node",
+        nodeId: "n_test",
+        position: { x: 2, y: 3 },
+      }],
+    );
+    assertEquals(applied.ok, false);
+    if (!applied.ok) assertEquals(applied.issues[0].kind, "stale_document");
+    assertEquals((await Deno.lstat(sidecarPath)).isSymlink, true);
+    assertEquals(await Deno.readTextFile(documentPath), operationTestSource(1));
+  } finally {
+    setBeforeDocumentPublishForTests(null);
+  }
+});
+
+Deno.test("loadPythonDocument completes a committed sidecar transaction", async () => {
+  const directory = await Deno.makeTempDir();
+  const requestedPath = `${directory}/recover.py`;
+  const nextSource = operationTestSource(2);
+  const oldSidecar = `${JSON.stringify({ version: 1, nodes: [] }, null, 2)}\n`;
+  const nextSidecar = `${
+    JSON.stringify(
+      {
+        version: 1,
+        nodes: [{ id: "n_test", position: { x: 12, y: 34 } }],
+      },
+      null,
+      2,
+    )
+  }\n`;
+  await Deno.writeTextFile(requestedPath, nextSource);
+  const documentPath = await Deno.realPath(requestedPath);
+  const canonicalDirectory = documentPath.slice(
+    0,
+    documentPath.lastIndexOf("/"),
+  );
+  const sidecarPath = sidecarPathForPythonDocument(documentPath);
+  await Deno.writeTextFile(sidecarPath, oldSidecar);
+
+  const sourceTempPath = `${canonicalDirectory}/.nodebook-source-recovery`;
+  const sidecarTempPath = `${canonicalDirectory}/.nodebook-sidecar-recovery`;
+  await Deno.writeTextFile(sidecarTempPath, nextSidecar);
+  await Deno.writeTextFile(
+    transactionPath(documentPath),
+    `${
+      JSON.stringify(
+        {
+          version: 1,
+          sourcePath: documentPath,
+          sidecarPath,
+          sourceTempPath,
+          sidecarTempPath,
+          newSourceRevision: await sha256(nextSource),
+          oldSidecarRevision: await sha256(oldSidecar),
+          newSidecarRevision: await sha256(nextSidecar),
+        },
+        null,
+        2,
+      )
+    }\n`,
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+  assertEquals(loaded.document.nodes[0].position, { x: 12, y: 34 });
+  assertEquals(await Deno.readTextFile(sidecarPath), nextSidecar);
+  await assertNotFound(transactionPath(documentPath));
+  await assertNotFound(sidecarTempPath);
+});
+
+Deno.test("loadPythonDocument discards a transaction before its commit point", async () => {
+  const directory = await Deno.makeTempDir();
+  const requestedPath = `${directory}/recover.py`;
+  const oldSource = operationTestSource(1);
+  const nextSource = operationTestSource(2);
+  const oldSidecar = `${JSON.stringify({ version: 1, nodes: [] }, null, 2)}\n`;
+  const nextSidecar = `${
+    JSON.stringify(
+      {
+        version: 1,
+        nodes: [{ id: "n_test", position: { x: 12, y: 34 } }],
+      },
+      null,
+      2,
+    )
+  }\n`;
+  await Deno.writeTextFile(requestedPath, oldSource);
+  const documentPath = await Deno.realPath(requestedPath);
+  const canonicalDirectory = documentPath.slice(
+    0,
+    documentPath.lastIndexOf("/"),
+  );
+  const sidecarPath = sidecarPathForPythonDocument(documentPath);
+  const sourceTempPath = `${canonicalDirectory}/.nodebook-source-recovery`;
+  const sidecarTempPath = `${canonicalDirectory}/.nodebook-sidecar-recovery`;
+  await Deno.writeTextFile(sidecarPath, oldSidecar);
+  await Deno.writeTextFile(sourceTempPath, nextSource);
+  await Deno.writeTextFile(sidecarTempPath, nextSidecar);
+  await Deno.writeTextFile(
+    transactionPath(documentPath),
+    `${
+      JSON.stringify(
+        {
+          version: 1,
+          sourcePath: documentPath,
+          sidecarPath,
+          sourceTempPath,
+          sidecarTempPath,
+          newSourceRevision: await sha256(nextSource),
+          oldSidecarRevision: await sha256(oldSidecar),
+          newSidecarRevision: await sha256(nextSidecar),
+        },
+        null,
+        2,
+      )
+    }\n`,
+  );
+
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+  assertEquals(loaded.document.nodes[0].position, undefined);
+  assertEquals(await Deno.readTextFile(documentPath), oldSource);
+  assertEquals(await Deno.readTextFile(sidecarPath), oldSidecar);
+  await assertNotFound(transactionPath(documentPath));
+  await assertNotFound(sourceTempPath);
+  await assertNotFound(sidecarTempPath);
+});
+
+function operationTestSource(value: number): string {
+  return [
+    "from nodebook import node",
+    "",
+    '@node(id="n_test", outputs=["x"])',
+    "def make_x():",
+    `    x = ${value}`,
+    '    return {"x": x}',
+    "",
+  ].join("\n");
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function transactionPath(documentPath: string): string {
+  const separator = documentPath.lastIndexOf("/");
+  const directory = documentPath.slice(0, separator);
+  const name = documentPath.slice(separator + 1);
+  return `${directory}/.${name}.nodebook-transaction.json`;
+}
+
+async function assertNotFound(path: string): Promise<void> {
+  try {
+    await Deno.stat(path);
+    throw new Error(`Expected path to be absent: ${path}`);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+}

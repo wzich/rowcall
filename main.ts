@@ -6,9 +6,9 @@ import {
 } from "./document.ts";
 import {
   applyPythonDocumentOperations,
-  loadPythonDocument,
-  loadPythonDocumentStatus,
-  readPythonDocumentSource,
+  loadPythonDocumentAfterPendingOperations,
+  loadPythonDocumentStatusAfterPendingOperations,
+  readPythonDocumentSourceAtRevision,
 } from "./python_document.ts";
 import {
   clearSourceRuntimeSessionCache,
@@ -329,18 +329,46 @@ async function createNodebookDocument(path: string): Promise<void> {
   await Deno.writeTextFile(path, defaultNewDocumentSource);
 }
 
-async function readActiveDocumentSource(): Promise<string> {
-  return await readPythonDocumentSource(activeDocumentPath);
-}
-
 async function getRunRequestSource(
-  body: { source?: unknown },
+  body: { source?: unknown; expectedRevision?: unknown },
 ): Promise<{ ok: true; source: string } | ApiErrorResponse> {
+  if (
+    body.expectedRevision !== undefined &&
+    typeof body.expectedRevision !== "string"
+  ) {
+    return errorResponse({
+      kind: "invalid_request",
+      message: "expectedRevision must be a string when provided.",
+    });
+  }
   if (typeof body.source === "string") {
     return { ok: true, source: body.source };
   }
 
-  return { ok: true, source: await readActiveDocumentSource() };
+  if (typeof body.expectedRevision === "string") {
+    const result = await readPythonDocumentSourceAtRevision(
+      activeDocumentPath,
+      body.expectedRevision,
+    );
+    if (!result.ok) {
+      return errorResponse({
+        kind: "stale_document",
+        message:
+          "The Python document changed on disk before execution started. Reload before running it.",
+      });
+    }
+    return result;
+  }
+
+  return errorResponse({
+    kind: "invalid_request",
+    message:
+      "Disk-backed run requests require expectedRevision. Load the document and bind the run to its displayed revision, or provide explicit source.",
+  });
+}
+
+function runSourceErrorStatus(result: ApiErrorResponse): 409 | 422 {
+  return result.error.kind === "stale_document" ? 409 : 422;
 }
 
 function sourceBackedInputsError(): ApiErrorResponse {
@@ -638,10 +666,25 @@ function waitForExecutionStreamHeartbeat() {
 
 app.get("/document", async (c) => {
   try {
-    const decoded = await loadPythonDocument(activeDocumentPath);
+    const decoded = await loadPythonDocumentAfterPendingOperations(
+      activeDocumentPath,
+    );
 
     if (!decoded.ok) {
-      return c.json(documentDecodeError(decoded.issues), 422);
+      const readFailed = decoded.issues.some((issue) =>
+        issue.kind === "document_read_error"
+      );
+      return c.json(
+        readFailed
+          ? errorResponse({
+            kind: "file_read_error",
+            message: decoded.issues[0]?.message ??
+              `Unable to read Nodebook document: ${activeDocumentPath}`,
+            issues: decoded.issues,
+          })
+          : documentDecodeError(decoded.issues),
+        readFailed ? 500 : 422,
+      );
     }
 
     return c.json({
@@ -662,7 +705,9 @@ app.get("/document", async (c) => {
 
 app.get("/document/status", async (c) => {
   try {
-    const status = await loadPythonDocumentStatus(activeDocumentPath);
+    const status = await loadPythonDocumentStatusAfterPendingOperations(
+      activeDocumentPath,
+    );
 
     return c.json({
       ok: true,
@@ -726,7 +771,6 @@ app.post("/document/operations", async (c) => {
       activeDocumentPath,
       decoded.request.baseRevision,
       decoded.request.operations,
-      decoded.request.clientBatchId,
     );
     if (!saved.ok) {
       const stale = saved.issues.some((issue) =>
@@ -735,21 +779,28 @@ app.post("/document/operations", async (c) => {
       const writeFailed = saved.issues.some((issue) =>
         issue.kind === "document_write_error"
       );
+      const readFailed = saved.issues.some((issue) =>
+        issue.kind === "document_read_error"
+      );
       return c.json(
         errorResponse({
           kind: stale
             ? "stale_document"
+            : readFailed
+            ? "file_read_error"
             : writeFailed
             ? "document_write_error"
             : "validation_error",
           message: stale
             ? "The Python document changed on disk after it was loaded. Reload before applying edits."
+            : readFailed
+            ? "Unable to read the Nodebook document before applying edits."
             : writeFailed
             ? "Unable to write Nodebook document."
             : "Document operation validation failed",
           issues: saved.issues,
         }),
-        stale ? 409 : writeFailed ? 500 : 422,
+        stale ? 409 : readFailed || writeFailed ? 500 : 422,
       );
     }
 
@@ -757,9 +808,6 @@ app.post("/document/operations", async (c) => {
       ok: true,
       document: formatDocument(saved.document),
       path: activeDocumentPath,
-      ...(decoded.request.clientBatchId
-        ? { clientBatchId: decoded.request.clientBatchId }
-        : {}),
     });
   } catch (error) {
     console.error(
@@ -807,7 +855,7 @@ app.post("/run-node", async (c) => {
     const runId = crypto.randomUUID();
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
-      return c.json(sourceResult, 422);
+      return c.json(sourceResult, runSourceErrorStatus(sourceResult));
     }
     return streamExecutionEvents(
       runId,
@@ -828,7 +876,7 @@ app.post("/run-node", async (c) => {
 
   const sourceResult = await getRunRequestSource(body);
   if (!sourceResult.ok) {
-    return c.json(sourceResult, 422);
+    return c.json(sourceResult, runSourceErrorStatus(sourceResult));
   }
   const result = await runSourceSingleNode(
     sourceResult.source,
@@ -869,7 +917,7 @@ app.post("/run-to-node", async (c) => {
     const runId = crypto.randomUUID();
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
-      return c.json(sourceResult, 422);
+      return c.json(sourceResult, runSourceErrorStatus(sourceResult));
     }
     return streamExecutionEvents(
       runId,
@@ -890,7 +938,7 @@ app.post("/run-to-node", async (c) => {
 
   const sourceResult = await getRunRequestSource(body);
   if (!sourceResult.ok) {
-    return c.json(sourceResult, 422);
+    return c.json(sourceResult, runSourceErrorStatus(sourceResult));
   }
   const result = await runSourceToNode(
     sourceResult.source,
@@ -919,7 +967,7 @@ app.post("/run-graph", async (c) => {
     const runId = crypto.randomUUID();
     const sourceResult = await getRunRequestSource(body);
     if (!sourceResult.ok) {
-      return c.json(sourceResult, 422);
+      return c.json(sourceResult, runSourceErrorStatus(sourceResult));
     }
     return streamExecutionEvents(
       runId,
@@ -938,7 +986,7 @@ app.post("/run-graph", async (c) => {
 
   const sourceResult = await getRunRequestSource(body);
   if (!sourceResult.ok) {
-    return c.json(sourceResult, 422);
+    return c.json(sourceResult, runSourceErrorStatus(sourceResult));
   }
   const result = await runSourceGraph(
     sourceResult.source,
@@ -951,8 +999,7 @@ app.post("/run-graph", async (c) => {
 });
 
 app.post("/runtime-session/clear-cache", async (c) => {
-  await clearSourceRuntimeSessionCache();
-  return c.json({ ok: true });
+  return c.json(await clearSourceRuntimeSessionCache());
 });
 
 app.get("/assets/*", (c) => {
