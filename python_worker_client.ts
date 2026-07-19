@@ -532,7 +532,9 @@ async function signalWorker(
   if (Deno.build.os !== "windows") {
     try {
       const result = await new Deno.Command("/bin/kill", {
-        args: [`-${signal.replace("SIG", "")}`, `-${child.pid}`],
+        // `--` is required by GNU kill to unambiguously treat the negative PID
+        // as a process-group operand rather than another command-line option.
+        args: [`-${signal.replace("SIG", "")}`, "--", `-${child.pid}`],
         stdout: "null",
         stderr: "null",
       }).output();
