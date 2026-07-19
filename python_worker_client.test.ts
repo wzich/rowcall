@@ -172,7 +172,7 @@ time.sleep(60)
 
       await stream.return(undefined);
 
-      assertEquals(await processExists(childPid), false);
+      assertEquals(await waitForProcessExit(childPid), true);
     } finally {
       await client.shutdown();
       configurePythonRuntime({});
@@ -249,7 +249,37 @@ async function processExists(pid: number): Promise<boolean> {
     stdout: "null",
     stderr: "null",
   }).output();
-  return status.success;
+  if (!status.success) return false;
+
+  // Linux keeps a killed process visible to kill(2) while it is a zombie
+  // awaiting reaping. A zombie is no longer executing, so it satisfies the
+  // cancellation guarantee this test is intended to verify.
+  if (Deno.build.os === "linux") {
+    try {
+      const stat = await Deno.readTextFile(`/proc/${pid}/stat`);
+      const commandEnd = stat.lastIndexOf(")");
+      if (commandEnd >= 0 && stat.slice(commandEnd + 2).startsWith("Z ")) {
+        return false;
+      }
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return false;
+      throw error;
+    }
+  }
+
+  return true;
+}
+
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs = 2_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (await processExists(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return true;
 }
 
 Deno.test(
