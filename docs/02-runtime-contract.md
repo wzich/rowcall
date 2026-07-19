@@ -82,13 +82,13 @@ downstream Node, that is a validation error.
 
 ### Run
 
-A Run executes Node code. There are three kinds of Runs:
+A Run executes Node code. There are two execution plans:
 
-- Run single node
-- Run upstream to node
+- Run selected node and its upstream dependencies
 - Run graph
 
-`Run upstream to node` includes the target Node itself.
+The selected-node plan includes the target Node itself and every transitive
+upstream dependency required by that Node.
 
 `Run graph` executes the full Graph by planning from every sink Node and running
 the combined dependency subgraph once.
@@ -106,20 +106,13 @@ editable document models for execution. The Python runtime worker parses,
 validates, plans, and executes source with the active document path as file
 context.
 
-`Run single node` is cache-backed through the Python runtime worker. It is for
-iterative development: it executes only the selected Node, using copied outputs
-from valid cached upstream Nodes. If any required upstream cache entry is
-missing or transitively stale, `Run single node` fails with `cache_miss` instead
-of silently recomputing upstream Nodes.
-
-Cache entries are valid only when the Node code, declared output names, globals,
-and upstream cache keys still match. Failed executions are not cached.
-Successful `Run single node` executions refresh the selected Node's cache entry
-so downstream Nodes can use the latest successful iteration.
-
-The session cache is process-local and in memory only. It is lost when the
-server restarts, and it can be cleared explicitly with
-`POST /runtime-session/clear-cache`.
+The invited beta has no execution cache. Every selected-node run parses the
+current source and freshly executes the complete upstream dependency plan
+through the selected Node. The legacy `POST /run-node` route is a compatibility
+alias for that same plan and retains `run_node` response labeling, but it does
+not execute a distinct single-node plan or reuse prior outputs.
+`POST /runtime-session/clear-cache` likewise remains a compatibility endpoint
+and reports that caching is disabled.
 
 The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
@@ -132,16 +125,22 @@ run endpoints receive `invalid_request` instead of having those inputs ignored.
 ## Document Operations
 
 The browser-facing write API applies operation batches rather than replacing a
-whole document projection. `POST /document/operations` accepts a base revision,
-optional client batch ID, and ordered operations such as node body/output
-updates, node/function additions and deletions, edge changes, globals edits, and
-sidecar metadata changes. The server rejects stale base revisions, calls the
-Python runtime worker's `apply_operations` operation to rewrite source, writes
-the returned Python source and `.nodebook.json` metadata, and reloads the
-canonical document response. Graph and output operations normalize standard
-editor-authored downstream function signatures to match direct upstream outputs.
-Custom-return nodes are rejected when an operation would change their authored
-input dependency surface.
+whole document projection. `POST /document/operations` accepts a base revision
+and ordered operations such as node body/output updates, node/function additions
+and deletions, edge changes, globals edits, and sidecar metadata changes. The
+request has no idempotency key and must not be replayed after an uncertain
+response; reload the document first. The server rejects stale base revisions,
+calls the Python runtime worker's `apply_operations` operation to rewrite
+source, writes the returned Python source and `.nodebook.json` metadata, and
+reloads the canonical document response. Graph and output operations normalize
+standard editor-authored downstream function signatures to match direct upstream
+outputs. Documents with unsupported return structures fail validation before an
+operation batch can be applied.
+
+External `GET /document` and `GET /document/status` reads are ordered after all
+document operations already accepted by the server. An explicit reload after an
+uncertain save therefore waits for that save's terminal state instead of
+returning an earlier snapshot that the save could subsequently replace.
 
 The app-visible document revision includes both Python source and normalized
 sidecar metadata so UI-only edits such as node position changes participate in
@@ -190,6 +189,12 @@ Streaming is supported by:
 - `POST /run-node`
 - `POST /run-to-node`
 - `POST /run-graph`
+
+Disk-backed HTTP runs must include the `expectedRevision` returned by the loaded
+document. The server reads and checks that same snapshot before starting
+execution, and returns `stale_document` if the displayed revision no longer
+matches. A caller that intentionally supplies an explicit `source` string does
+not need `expectedRevision`.
 
 The stream uses text frames with an event name and JSON payload:
 

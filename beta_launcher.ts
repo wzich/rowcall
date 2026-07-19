@@ -195,25 +195,44 @@ to use Nodebook's starter environment.
 const formatHelpText = `Nodebook Python Document Format
 
 Nodebook documents are normal Python files. A node is a Python function
-decorated with @node. The decorator declares stable output names, and the
-function returns a dict with those output names.
+decorated with @node. The decorator declares stable output names. Every output
+must exist as a same-named local variable (parameters already count). Assign
+computed outputs in the function body, then end with one generated return
+dictionary.
 
 Example:
   from nodebook import node
 
   @node(id="n_load", outputs=["numbers"])
   def load_numbers():
-      return {"numbers": [1, 2, 3]}
+      numbers = [1, 2, 3]
+      return {"numbers": numbers}
 
   @node(id="n_total", outputs=["total"])
   def total_numbers(numbers):
-      return {"total": sum(numbers)}
+      total = sum(numbers)
+      return {"total": total}
 
   total_numbers.depends_on(load_numbers)
 
+Return requirements:
+  - Use exactly one return statement, last in the node function.
+  - Return a dictionary literal.
+  - Return every declared output exactly once, in declared order.
+  - Map each output name directly to its same-named variable.
+  - Use return {} when outputs=[]; do not return expressions inline.
+
+Invalid:
+  return {"total": sum(numbers)}
+
+Valid:
+  total = sum(numbers)
+  return {"total": total}
+
 Edges are explicit: depends_on says which upstream nodes may provide inputs.
 Function parameters consume upstream outputs by name. Run nodebook validate
-<path> to check IDs, outputs, edges, and parameter binding.
+<path> after every edit to check returns, IDs, outputs, edges, and parameter
+binding.
 `;
 
 const runHelpText = `Usage:
@@ -231,6 +250,7 @@ const validateHelpText = `Usage:
   nodebook validate <folder-or-document.py> [--json] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
+See nodebook help format for the required node and return structure.
 
 Examples:
   nodebook validate my-work
@@ -552,7 +572,7 @@ export async function runBetaCommand(
   }
 }
 
-function helpTextForTopic(topic: string | undefined): string {
+export function helpTextForTopic(topic: string | undefined): string {
   switch (topic) {
     case undefined:
       return helpText;

@@ -9,7 +9,6 @@ import {
   getPythonEnvironmentInfo,
   resolvePythonCommand,
   runSourceGraph,
-  runSourceSingleNode,
   runSourceToNode,
   shutdownSourceRuntimeSession,
   streamSourceRunGraph,
@@ -61,17 +60,19 @@ function helloSource(): string {
   ].join("\n");
 }
 
-function cacheSource(value: number): string {
+function targetSource(value: number): string {
   return [
     "from nodebook import node",
     "",
     '@node(id="root", outputs=["input_value"])',
     "def root():",
-    `    return {"input_value": ${value}}`,
+    `    input_value = ${value}`,
+    '    return {"input_value": input_value}',
     "",
     '@node(id="single", outputs=["result"])',
     "def single(input_value):",
-    '    return {"result": input_value + 2}',
+    "    result = input_value + 2",
+    '    return {"result": result}',
     "",
     "single.depends_on(root)",
     "",
@@ -184,7 +185,8 @@ sourceRuntimeTest(
         "",
         '@node(id="only", outputs=["value"])',
         "def only():",
-        '    return {"value": "disk"}',
+        '    value = "disk"',
+        '    return {"value": value}',
         "",
       ].join("\n"),
     );
@@ -193,7 +195,8 @@ sourceRuntimeTest(
       "",
       '@node(id="only", outputs=["value"])',
       "def only():",
-      '    return {"value": "dirty"}',
+      '    value = "dirty"',
+      '    return {"value": value}',
       "",
     ].join("\n");
 
@@ -222,10 +225,13 @@ sourceRuntimeTest(
       '@node(id="a", outputs=["x"])',
       "def a():",
       "    raise ValueError('boom')",
+      "    x = None",
+      '    return {"x": x}',
       "",
       '@node(id="b", outputs=["y"])',
       "def b(x):",
-      '    return {"y": x + 1}',
+      "    y = x + 1",
+      '    return {"y": y}',
       "",
       "b.depends_on(a)",
       "",
@@ -259,26 +265,14 @@ sourceRuntimeTest(
 );
 
 sourceRuntimeTest(
-  "runSourceSingleNode requires and refreshes valid upstream cache",
+  "runSourceSingleNode executes fresh through upstream dependencies",
   async () => {
-    const documentPath = `${await Deno.makeTempDir()}/cache_source.py`;
-    const source = cacheSource(40);
+    const documentPath = `${await Deno.makeTempDir()}/target_source.py`;
+    const source = targetSource(40);
 
-    const missing = await runSourceSingleNode(source, documentPath, "single");
-    assertEquals(missing.ok, false);
-    assertObjectMatch(missing.error ?? {}, { kind: "cache_miss" });
-
-    await collectEvents(
-      streamSourceRunToNode(
-        "source-run-cache-seed",
-        source,
-        documentPath,
-        "single",
-      ),
-    );
     const events = await collectEvents(
       streamSourceRunSingleNode(
-        "source-run-cache-single",
+        "source-run-fresh-target",
         source,
         documentPath,
         "single",
@@ -290,13 +284,15 @@ sourceRuntimeTest(
       "run_plan",
       "node_started",
       "node_completed",
+      "node_started",
+      "node_completed",
       "run_completed",
     ]);
     const finalEvent = events.at(-1);
     assertExists(finalEvent);
     assertEquals(finalEvent.type, "run_completed");
     if (finalEvent.type === "run_completed") {
-      assertEquals(finalEvent.response.executedNodeIds, ["single"]);
+      assertEquals(finalEvent.response.executedNodeIds, ["root", "single"]);
       assertEquals(
         finalEvent.response.finalOutputsByNode.single.result.jsonValue,
         42,

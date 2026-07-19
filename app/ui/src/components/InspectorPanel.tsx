@@ -10,7 +10,7 @@ import type {
 import { python } from "@codemirror/lang-python";
 import { keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { AlertTriangle, Check, Play, Route, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Play, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
@@ -132,10 +132,10 @@ type InspectorPanelProps = {
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
-  onRunNode: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
   onRunGraph: () => void;
   onSelectionClear: () => void;
+  actionsBlocked?: boolean;
 };
 
 function CodeList(
@@ -318,7 +318,7 @@ function MissingPreviewCard({ name }: { name: string }) {
         </span>
       </div>
       <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-        Run upstream to prepare and preview this input.
+        Run through the step to prepare and preview this input.
       </p>
     </div>
   );
@@ -1210,7 +1210,7 @@ function NodeInspector({
   onCodeChange,
   onOutputsChange,
   onNodeSelect,
-  onRunNode,
+  onRunToNode,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
@@ -1221,7 +1221,7 @@ function NodeInspector({
   onCodeChange: (nodeId: string, code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onNodeSelect: (nodeId: string) => void;
-  onRunNode: (nodeId: string) => void;
+  onRunToNode: (nodeId: string) => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
@@ -1258,14 +1258,14 @@ function NodeInspector({
             return true;
           }
 
-          onRunNode(selectedNode.id);
+          onRunToNode(selectedNode.id);
           return true;
         },
       },
     ]),
-  ], [actionsDisabled, onRunNode, selectedNode.id]);
+  ], [actionsDisabled, onRunToNode, selectedNode.id]);
   const inputStatus = getInputStatusLabel(selectedNode, runStatus);
-  const shouldShowCachedOutputPreviews = !hasCurrentRunOutputs(
+  const shouldShowPriorOutputPreviews = !hasCurrentRunOutputs(
     selectedNode.id,
     executionState,
   );
@@ -1422,7 +1422,7 @@ function NodeInspector({
           )}
       </section>
 
-      {shouldShowCachedOutputPreviews && (
+      {shouldShowPriorOutputPreviews && (
         <OutputPreviewSection previews={selectedNode.outputPreviews} />
       )}
 
@@ -1451,14 +1451,14 @@ function getInputStatusLabel(
   }
 
   if (runStatus === "stale") {
-    return "Cached inputs may be stale. Run upstream to rebuild this step's inputs.";
+    return "Inputs may be stale. Run through this step to rebuild its required upstream inputs.";
   }
 
   if (previewCount === inputCount) {
-    return "Run step will use cached upstream inputs.";
+    return "Run through this step to rebuild upstream inputs before executing it.";
   }
 
-  return "Run upstream to prepare this step's inputs, or run step if cached inputs are already available.";
+  return "Run through this step to execute its required upstream steps first.";
 }
 
 function hasCurrentRunOutputs(
@@ -1959,18 +1959,19 @@ export function InspectorPanel({
   onOutputsChange,
   onTraceEnabledChange,
   onDeleteNode,
-  onRunNode,
   onRunToNode,
   onRunGraph,
   onSelectionClear,
+  actionsBlocked = false,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
   const isGraphRunning = graphExecutionState?.status === "running";
   const isNodeNameReadOnly = readOnly || !selectedNode?.editable;
   const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
-  const areNodeActionsDisabled = isSelectedNodeRunning || isGraphRunning;
-  const isGraphActionDisabled = isGraphRunning;
+  const areNodeActionsDisabled = actionsBlocked || isSelectedNodeRunning ||
+    isGraphRunning;
+  const isGraphActionDisabled = actionsBlocked || isGraphRunning;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
@@ -2101,27 +2102,16 @@ export function InspectorPanel({
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
                   disabled={areNodeActionsDisabled}
-                  onClick={() => onRunNode(selectedNode.id)}
+                  onClick={() => onRunToNode(selectedNode.id)}
                 >
                   <Play
                     aria-hidden="true"
                     className="h-4 w-4"
                     strokeWidth={2.25}
                   />
-                  {isAnyRunBlockingNodeActions ? "Running..." : "Run step"}
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:border-zinc-800 dark:disabled:text-zinc-600"
-                  disabled={areNodeActionsDisabled}
-                  onClick={() => onRunToNode(selectedNode.id)}
-                >
-                  <Route
-                    aria-hidden="true"
-                    className="h-4 w-4"
-                    strokeWidth={2.25}
-                  />
-                  Run upstream
+                  {isAnyRunBlockingNodeActions
+                    ? "Running..."
+                    : "Run through step"}
                 </button>
                 <button
                   type="button"
@@ -2177,7 +2167,7 @@ export function InspectorPanel({
                 onCodeChange={onCodeChange}
                 onOutputsChange={onOutputsChange}
                 onNodeSelect={onNodeSelect}
-                onRunNode={onRunNode}
+                onRunToNode={onRunToNode}
               />
             )
             : (

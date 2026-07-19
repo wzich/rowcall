@@ -46,7 +46,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
   const isRunning = data.runStatus === "running";
   const runToNodeTitle = data.runToNodeDisabled
     ? "Run unavailable"
-    : "Run upstream to this step";
+    : "Run this step and required upstream steps fresh";
   const description = data.description?.trim();
   const outputOptionsByName = new Map(
     data.outputOptions.map((option) => [option.name, option]),
@@ -86,7 +86,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
             {data.onRunToNode && (
               <button
                 type="button"
-                aria-label={`Run upstream to ${data.label}`}
+                aria-label={`Run through ${data.label}`}
                 title={runToNodeTitle}
                 disabled={data.runToNodeDisabled}
                 className="nodrag nopan flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:border-zinc-800 dark:disabled:text-zinc-600"

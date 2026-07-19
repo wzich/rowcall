@@ -183,15 +183,30 @@ export async function* streamSourceRunGraph(
   );
 }
 
-export async function clearSourceRuntimeSessionCache(): Promise<void> {
+export type RuntimeCacheCompatibilityStatus = {
+  ok: true;
+  clearedEntries: 0;
+  cachingDisabled: true;
+};
+
+export async function clearSourceRuntimeSessionCache(): Promise<
+  RuntimeCacheCompatibilityStatus
+> {
   const event = await sourceRuntimeWorker.requestFinalEvent(
     "clear_session_cache",
   );
-  if (event.type !== "session_cache_cleared" || event.ok === false) {
+  if (
+    event.type !== "session_cache_cleared" || event.ok !== true ||
+    event.clearedEntries !== 0 || event.cachingDisabled !== true
+  ) {
     throw new Error(
-      workerErrorMessage(event, "Failed to clear Python worker cache"),
+      workerErrorMessage(
+        event,
+        "Python worker returned an invalid cache-disabled compatibility status",
+      ),
     );
   }
+  return { ok: true, clearedEntries: 0, cachingDisabled: true };
 }
 
 export async function shutdownSourceRuntimeSession(): Promise<void> {

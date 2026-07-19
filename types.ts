@@ -69,13 +69,21 @@ export type ValidationIssue = {
     | "invalid_json"
     | "missing_field"
     | "wrong_type"
+    | "missing_node"
+    | "unsupported_node_syntax"
     | "duplicate_node_id"
+    | "invalid_node_id"
+    | "invalid_output"
+    | "duplicate_output"
+    | "duplicate_edge"
     | "missing_node_reference"
     | "cycle"
+    | "document_read_error"
     | "document_write_error"
     | "conflicting_outputs"
     | "invalid_operation"
     | "invalid_python"
+    | "invalid_node_return"
     | "stale_document"
     | "duplicate_function_name"
     | "unsupported_python"
@@ -94,10 +102,21 @@ export type ExecutionError = {
     | "runtime_error"
     | "node_not_found"
     | "internal_error"
-    | "cache_miss"
+    | "validation_error"
+    | "planning_error"
+    | "missing_module"
+    | "import_freshness_error"
     | "invalid_request";
   message: string;
   nodeId?: string;
+  issues?: ValidationIssue[];
+  phase?: "runtime_preparation" | "document_globals" | "node_execution";
+  missingModule?: string;
+  pythonExecutable?: string;
+  stdout?: string;
+  stderr?: string;
+  warnings?: string[];
+  error?: string;
 };
 
 export type ExecutionStepTrace = {

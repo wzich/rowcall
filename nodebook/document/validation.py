@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import keyword
 from collections import defaultdict
 
 from .models import DocumentEdge, ExecutableDocument, ValidationIssue, ValidationResult
@@ -11,7 +12,9 @@ def validate_document(document: ExecutableDocument) -> ValidationResult:
     issues: list[ValidationIssue] = []
     _validate_duplicate_node_ids(document, issues)
     _validate_duplicate_function_names(document, issues)
+    _validate_node_metadata(document, issues)
     _validate_edge_endpoints(document, issues)
+    _validate_duplicate_edges(document, issues)
     _validate_cycles(document, issues)
     _validate_conflicting_upstream_outputs(document, issues)
     _validate_node_parameters_satisfied(document, issues)
@@ -84,6 +87,64 @@ def _validate_duplicate_function_names(document: ExecutableDocument, issues: lis
                 )
             )
         seen.add(node.function_name)
+
+
+def _validate_node_metadata(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
+    for index, node in enumerate(document.nodes):
+        if not node.id.strip():
+            issues.append(
+                ValidationIssue(
+                    kind="invalid_node_id",
+                    message="Node IDs must not be empty or whitespace",
+                    node_id=node.id,
+                    path=f"nodes[{index}].id",
+                )
+            )
+        seen_outputs: set[str] = set()
+        for output_index, output in enumerate(node.outputs):
+            if (
+                not output.isidentifier()
+                or keyword.iskeyword(output)
+                or output.startswith("__nodebook_")
+            ):
+                issues.append(
+                    ValidationIssue(
+                        kind="invalid_output",
+                        message=(
+                            f"Output '{output}' on node '{node.id}' must be a valid "
+                            "Python variable name and must not use the reserved "
+                            "'__nodebook_' prefix"
+                        ),
+                        node_id=node.id,
+                        path=f"nodes[{index}].outputs[{output_index}]",
+                    )
+                )
+            if output in seen_outputs:
+                issues.append(
+                    ValidationIssue(
+                        kind="duplicate_output",
+                        message=f"Node '{node.id}' declares output '{output}' more than once",
+                        node_id=node.id,
+                        path=f"nodes[{index}].outputs[{output_index}]",
+                    )
+                )
+            seen_outputs.add(output)
+
+
+def _validate_duplicate_edges(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
+    seen: set[tuple[str, str]] = set()
+    for index, edge in enumerate(document.edges):
+        key = (edge.from_node, edge.to_node)
+        if key in seen:
+            issues.append(
+                ValidationIssue(
+                    kind="duplicate_edge",
+                    message=f"Edge from '{edge.from_node}' to '{edge.to_node}' is duplicated",
+                    edge_index=index,
+                    path=f"edges[{index}]",
+                )
+            )
+        seen.add(key)
 
 
 def _validate_edge_endpoints(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:

@@ -22,28 +22,13 @@ from nodebook import node
 @node(id="hello", outputs=["message"])
 def hello():
     print("hello stdout")
-    return {"message": "hello"}
+    message = "hello"
+    return {"message": message}
 
 @node(id="world", outputs=["text"])
 def world(message):
-    return {"text": message + " world"}
-
-world.depends_on(hello)
-""".lstrip()
-
-
-GLOBALS_SOURCE = """
-from nodebook import node
-
-PREFIX = "hello"
-
-@node(id="hello", outputs=["message"])
-def hello():
-    return {"message": PREFIX}
-
-@node(id="world", outputs=["text"])
-def world(message):
-    return {"text": message + " world"}
+    text = message + " world"
+    return {"text": text}
 
 world.depends_on(hello)
 """.lstrip()
@@ -170,11 +155,13 @@ from nodebook import node
 
 @node(id="same", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 
 @node(id="same", outputs=["y"])
 def second():
-    return {"y": 2}
+    y = 2
+    return {"y": y}
 """.lstrip()
 
         events = self.run_lines(
@@ -329,71 +316,30 @@ world.depends_on(hello)
             ["run_started", "run_plan", "node_started", "node_completed", "run_completed"],
         )
 
-    def test_session_run_node_uses_cache_and_executes_only_target(self) -> None:
+    def test_session_run_node_executes_fresh_through_upstream_nodes(self) -> None:
         session = RuntimeSession()
 
-        seed = session.run_to_node(HELLO_SOURCE, DOCUMENT_PATH, "world")
         single = session.run_node(
-            HELLO_SOURCE.replace('message + " world"', 'message + " again"'),
+            HELLO_SOURCE.replace('message = "hello"', 'message = "fresh"'),
             DOCUMENT_PATH,
             "world",
         )
 
-        self.assertTrue(seed["ok"])
         self.assertTrue(single["ok"])
         self.assertEqual(single["runType"], "run_node")
-        self.assertEqual(single["executedNodeIds"], ["world"])
-        self.assertNotIn("hello", single["resultsByNode"])
-        self.assertEqual(single["finalOutputsByNode"]["world"]["text"]["jsonValue"], "hello again")
+        self.assertEqual(single["executedNodeIds"], ["hello", "world"])
+        self.assertEqual(single["finalOutputsByNode"]["world"]["text"]["jsonValue"], "fresh world")
 
-    def test_session_run_node_rejects_missing_or_stale_upstream_cache(self) -> None:
+    def test_session_clear_cache_reports_that_caching_is_disabled(self) -> None:
         session = RuntimeSession()
 
-        missing = session.run_node(HELLO_SOURCE, DOCUMENT_PATH, "world")
-        self.assertFalse(missing["ok"])
-        self.assertEqual(missing["error"]["kind"], "cache_miss")
-        self.assertIn("missing", missing["error"]["message"])
-
-        seed = session.run_to_node(HELLO_SOURCE, DOCUMENT_PATH, "world")
-        self.assertTrue(seed["ok"])
-        stale = session.run_node(
-            HELLO_SOURCE.replace('return {"message": "hello"}', 'return {"message": "hi"}'),
-            DOCUMENT_PATH,
-            "world",
-        )
-        self.assertFalse(stale["ok"])
-        self.assertEqual(stale["error"]["kind"], "cache_miss")
-        self.assertIn("stale", stale["error"]["message"])
-        self.assertIn("node hello", stale["error"]["message"])
-
-    def test_session_run_node_rejects_stale_upstream_cache_after_globals_only_edit(self) -> None:
-        session = RuntimeSession()
-
-        seed = session.run_to_node(GLOBALS_SOURCE, DOCUMENT_PATH, "world")
-        stale = session.run_node(
-            GLOBALS_SOURCE.replace('PREFIX = "hello"', 'PREFIX = "hi"'),
-            DOCUMENT_PATH,
-            "world",
+        self.assertEqual(
+            session.clear_session_cache(),
+            {"ok": True, "clearedEntries": 0, "cachingDisabled": True},
         )
 
-        self.assertTrue(seed["ok"])
-        self.assertFalse(stale["ok"])
-        self.assertEqual(stale["error"]["kind"], "cache_miss")
-        self.assertIn("stale", stale["error"]["message"])
-        self.assertIn("node hello", stale["error"]["message"])
-
-    def test_session_clear_cache_reports_cleared_entries(self) -> None:
+    def test_worker_run_node_emits_fresh_upstream_events(self) -> None:
         session = RuntimeSession()
-        seed = session.run_to_node(HELLO_SOURCE, DOCUMENT_PATH, "world")
-
-        self.assertTrue(seed["ok"])
-        self.assertEqual(session.clear_session_cache(), {"ok": True, "clearedEntries": 2})
-        self.assertEqual(session.clear_session_cache(), {"ok": True, "clearedEntries": 0})
-
-    def test_worker_run_node_emits_single_node_events(self) -> None:
-        session = RuntimeSession()
-        seed = session.run_to_node(HELLO_SOURCE, DOCUMENT_PATH, "world")
-        self.assertTrue(seed["ok"])
 
         events = self.run_lines(
             [
@@ -407,13 +353,28 @@ world.depends_on(hello)
 
         self.assertEqual(
             [event["type"] for event in events],
-            ["run_started", "run_plan", "node_started", "node_completed", "run_completed"],
+            [
+                "run_started",
+                "run_plan",
+                "node_started",
+                "node_completed",
+                "node_started",
+                "node_completed",
+                "run_completed",
+            ],
         )
-        self.assertEqual(events[1]["plan"]["steps"], [{"nodeId": "world", "dependsOn": ["hello"]}])
-        self.assertEqual(events[2]["nodeId"], "world")
-        self.assertEqual(events[3]["result"]["outputs"]["text"]["jsonValue"], "hello world")
+        self.assertEqual(
+            events[1]["plan"]["steps"],
+            [
+                {"nodeId": "hello", "dependsOn": []},
+                {"nodeId": "world", "dependsOn": ["hello"]},
+            ],
+        )
+        self.assertEqual(events[2]["nodeId"], "hello")
+        self.assertEqual(events[4]["nodeId"], "world")
+        self.assertEqual(events[5]["result"]["outputs"]["text"]["jsonValue"], "hello world")
         self.assertEqual(events[-1]["response"]["runType"], "run_node")
-        self.assertEqual(events[-1]["response"]["executedNodeIds"], ["world"])
+        self.assertEqual(events[-1]["response"]["executedNodeIds"], ["hello", "world"])
 
     def test_worker_malformed_request_returns_error_and_continues(self) -> None:
         events = self.run_raw_lines(
@@ -433,6 +394,14 @@ world.depends_on(hello)
         self.assertEqual(events[0]["error"]["kind"], "malformed_json")
         self.assertEqual(events[1]["type"], "validate_source_completed")
         self.assertEqual(events[1]["id"], "r2")
+
+    def test_worker_error_messages_are_bounded(self) -> None:
+        events = self.run_lines([request("x" * 100_000)])
+
+        message = events[0]["error"]["message"]
+        self.assertEqual(events[0]["error"]["kind"], "unknown_operation")
+        self.assertLessEqual(len(message.encode("utf-8")), 16 * 1024)
+        self.assertTrue(message.endswith("[error message truncated]"))
 
     def test_worker_shutdown_returns_event_and_exits(self) -> None:
         events = self.run_lines([request("shutdown", request_id="bye")])

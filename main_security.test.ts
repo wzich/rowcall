@@ -8,6 +8,7 @@ import {
 } from "./main.ts";
 import {
   loadPythonDocument,
+  setBeforeDocumentWriteForTests,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
 
@@ -95,6 +96,23 @@ Deno.test("PUT /document is no longer a document write route", async () => {
   assertEquals(response.status === 404 || response.status === 405, true);
 });
 
+Deno.test("cache compatibility route explicitly reports caching disabled", async () => {
+  const response = await app.fetch(
+    request("/runtime-session/clear-cache", {
+      method: "POST",
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    ok: true,
+    clearedEntries: 0,
+    cachingDisabled: true,
+  });
+});
+
 Deno.test("GET /document/status returns document status revisions", async () => {
   const documentPath = await writeRouteTestDocument("status_success.py");
   setActiveDocumentPathForTests(documentPath);
@@ -180,7 +198,46 @@ Deno.test("GET /document/status reports invalid external Python without a 422", 
   assertEquals(body.status.issues[0].kind, "invalid_python");
 });
 
-Deno.test("POST /document/operations applies operations and echoes client batch", async () => {
+Deno.test("run requests reject a document revision changed after UI freshness", async () => {
+  const documentPath = await writeRouteTestDocument("run_stale.py");
+  setActiveDocumentPathForTests(documentPath);
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load stale run route test document.");
+  }
+
+  await Deno.writeTextFile(
+    documentPath,
+    (await Deno.readTextFile(documentPath)).replace("x = 1", "x = 2"),
+  );
+  const response = await app.fetch(
+    jsonRequest("/run-to-node", {
+      nodeId: "n_test",
+      expectedRevision: loaded.document.revision,
+    }),
+  );
+
+  assertEquals(response.status, 409);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "stale_document");
+});
+
+Deno.test("disk-backed run requests require an expected revision", async () => {
+  const documentPath = await writeRouteTestDocument("run_unbound.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const response = await app.fetch(
+    jsonRequest("/run-graph", {}),
+  );
+
+  assertEquals(response.status, 422);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "invalid_request");
+});
+
+Deno.test("POST /document/operations applies operations", async () => {
   const documentPath = await writeRouteTestDocument("operations_success.py");
   setActiveDocumentPathForTests(documentPath);
 
@@ -193,7 +250,6 @@ Deno.test("POST /document/operations applies operations and echoes client batch"
   const response = await app.fetch(
     jsonRequest("/document/operations", {
       baseRevision: loaded.document.revision,
-      clientBatchId: "batch-1",
       operations: [
         {
           type: "update_node_body",
@@ -212,7 +268,6 @@ Deno.test("POST /document/operations applies operations and echoes client batch"
   assertEquals(response.status, 200);
   const body = await response.json();
   assertEquals(body.ok, true);
-  assertEquals(body.clientBatchId, "batch-1");
   assertEquals(body.path, documentPath);
   assertEquals(body.document.nodes[0].id, "n_test");
   assertEquals(body.document.nodes[0].code, "x = 2");
@@ -235,6 +290,100 @@ Deno.test("POST /document/operations applies operations and echoes client batch"
     await Deno.readTextFile(sidecarPathForPythonDocument(documentPath)),
   );
   assertEquals(sidecar.nodes[0].position, { x: 12, y: 34 });
+});
+
+Deno.test("document reads wait for an already-enqueued save outcome", async () => {
+  const documentPath = await writeRouteTestDocument(
+    "operations_read_barrier.py",
+  );
+  setActiveDocumentPathForTests(documentPath);
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok || !loaded.document.revision) {
+    throw new Error("Failed to load document read barrier test document.");
+  }
+
+  // Prime status so an unbarriered status request would return the old cached
+  // snapshot promptly while the save is paused before acquiring its file lock.
+  const primedStatus = await app.fetch(
+    request("/document/status", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+  assertEquals(primedStatus.status, 200);
+
+  let enteredWrite!: () => void;
+  const writeWasEntered = new Promise<void>((resolve) => {
+    enteredWrite = resolve;
+  });
+  let releaseWrite!: () => void;
+  const writeMayContinue = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  setBeforeDocumentWriteForTests(() => {
+    enteredWrite();
+    return writeMayContinue;
+  });
+
+  try {
+    const savePromise = app.fetch(
+      jsonRequest("/document/operations", {
+        baseRevision: loaded.document.revision,
+        operations: [{
+          type: "update_node_body",
+          nodeId: "n_test",
+          code: "x = 2",
+        }],
+      }),
+    );
+    await writeWasEntered;
+
+    let documentReadSettled = false;
+    let statusReadSettled = false;
+    const documentReadPromise = Promise.resolve(app.fetch(
+      request("/document", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    )).then((response) => {
+      documentReadSettled = true;
+      return response;
+    });
+    const statusReadPromise = Promise.resolve(app.fetch(
+      request("/document/status", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    )).then((response) => {
+      statusReadSettled = true;
+      return response;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assertEquals(documentReadSettled, false);
+    assertEquals(statusReadSettled, false);
+
+    releaseWrite();
+    const [saveResponse, documentResponse, statusResponse] = await Promise.all([
+      savePromise,
+      documentReadPromise,
+      statusReadPromise,
+    ]);
+    assertEquals(saveResponse.status, 200);
+    assertEquals(documentResponse.status, 200);
+    assertEquals(statusResponse.status, 200);
+
+    const saved = await saveResponse.json();
+    const read = await documentResponse.json();
+    const status = await statusResponse.json();
+    assertEquals(saved.document.nodes[0].code, "x = 2");
+    assertEquals(read.document.nodes[0].code, "x = 2");
+    assertEquals(read.document.revision, saved.document.revision);
+    assertEquals(status.status.revision, saved.document.revision);
+  } finally {
+    releaseWrite?.();
+    setBeforeDocumentWriteForTests(null);
+  }
 });
 
 Deno.test("POST /document/operations maps stale base revisions to 409", async () => {

@@ -7,6 +7,7 @@ import { nodebookFetch } from "./auth.ts";
 export type RunExecutionRequest = {
   nodeId: string;
   source?: string;
+  expectedRevision?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
   signal?: AbortSignal;
@@ -14,6 +15,7 @@ export type RunExecutionRequest = {
 
 export type RunGraphRequest = {
   source?: string;
+  expectedRevision?: string;
   trace?: boolean;
   onEvent?: (event: ExecutionStreamEvent) => void;
   signal?: AbortSignal;
@@ -27,10 +29,11 @@ export class RunExecutionRequestError extends Error {
 }
 
 async function runExecution(
-  path: "/run-node" | "/run-to-node",
+  path: "/run-to-node",
   {
     nodeId,
     source,
+    expectedRevision,
     trace = false,
     onEvent,
     signal,
@@ -45,6 +48,7 @@ async function runExecution(
     body: JSON.stringify({
       nodeId,
       ...(source !== undefined ? { source } : {}),
+      ...(expectedRevision !== undefined ? { expectedRevision } : {}),
       trace,
     }),
     signal,
@@ -66,7 +70,7 @@ async function runExecution(
 }
 
 async function runGraphExecution(
-  { source, trace = false, onEvent, signal }: RunGraphRequest,
+  { source, expectedRevision, trace = false, onEvent, signal }: RunGraphRequest,
 ): Promise<ExecutionResponse> {
   const response = await nodebookFetch("/run-graph", {
     method: "POST",
@@ -76,6 +80,7 @@ async function runGraphExecution(
     },
     body: JSON.stringify({
       ...(source !== undefined ? { source } : {}),
+      ...(expectedRevision !== undefined ? { expectedRevision } : {}),
       trace,
     }),
     signal,
@@ -150,12 +155,6 @@ function parseExecutionEventFrame(frame: string): ExecutionStreamEvent | null {
   }
 
   return JSON.parse(dataLines.join("\n")) as ExecutionStreamEvent;
-}
-
-export function runNode(
-  request: RunExecutionRequest,
-): Promise<ExecutionResponse> {
-  return runExecution("/run-node", request);
 }
 
 export function runToNode(

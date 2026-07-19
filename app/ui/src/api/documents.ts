@@ -27,7 +27,6 @@ export type LoadDocumentSuccess = {
   ok: true;
   document: NodebookDocumentV1;
   path: string;
-  clientBatchId?: string;
 };
 
 export type DocumentStatus = {
@@ -83,7 +82,6 @@ export type DocumentOperation =
 
 export type ApplyDocumentOperationsRequest = {
   baseRevision: string;
-  clientBatchId?: string;
   operations: DocumentOperation[];
 };
 
@@ -92,12 +90,23 @@ export type ApplyDocumentOperationsResult =
   | DocumentApiError;
 
 export class DocumentApiRequestError extends Error {
+  readonly kind: string;
   readonly issues: DocumentValidationIssue[];
+  readonly status: number;
 
-  constructor(message: string, issues: DocumentValidationIssue[] = []) {
+  constructor(
+    message: string,
+    options: {
+      kind: string;
+      issues?: DocumentValidationIssue[];
+      status: number;
+    },
+  ) {
     super(message);
     this.name = "DocumentApiRequestError";
-    this.issues = issues;
+    this.kind = options.kind;
+    this.issues = options.issues ?? [];
+    this.status = options.status;
   }
 }
 
@@ -108,7 +117,11 @@ export async function loadDocument(): Promise<LoadDocumentSuccess> {
   if (!result.ok) {
     throw new DocumentApiRequestError(
       result.error.message,
-      result.error.issues,
+      {
+        kind: result.error.kind,
+        issues: result.error.issues,
+        status: response.status,
+      },
     );
   }
 
@@ -122,7 +135,11 @@ export async function loadDocumentStatus(): Promise<LoadDocumentStatusSuccess> {
   if (!result.ok) {
     throw new DocumentApiRequestError(
       result.error.message,
-      result.error.issues,
+      {
+        kind: result.error.kind,
+        issues: result.error.issues,
+        status: response.status,
+      },
     );
   }
 
@@ -132,12 +149,10 @@ export async function loadDocumentStatus(): Promise<LoadDocumentStatusSuccess> {
 export async function applyDocumentOperations(
   baseRevision: string,
   operations: DocumentOperation[],
-  clientBatchId?: string,
 ): Promise<LoadDocumentSuccess> {
   const request: ApplyDocumentOperationsRequest = {
     baseRevision,
     operations,
-    ...(clientBatchId ? { clientBatchId } : {}),
   };
   const response = await nodebookFetch(`${activeDocumentPath}/operations`, {
     method: "POST",
@@ -149,7 +164,11 @@ export async function applyDocumentOperations(
   if (!result.ok) {
     throw new DocumentApiRequestError(
       result.error.message,
-      result.error.issues,
+      {
+        kind: result.error.kind,
+        issues: result.error.issues,
+        status: response.status,
+      },
     );
   }
 

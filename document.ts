@@ -72,7 +72,6 @@ export type DecodeDocumentOperationsRequestResult =
     ok: true;
     request: {
       baseRevision: string;
-      clientBatchId?: string;
       operations: DocumentOperation[];
     };
     issues: [];
@@ -94,7 +93,6 @@ export function decodeDocumentOperationsRequest(
   }
 
   const baseRevision = record["baseRevision"];
-  const clientBatchId = record["clientBatchId"];
   const operationsValue = record["operations"];
 
   if (typeof baseRevision !== "string") {
@@ -103,15 +101,6 @@ export function decodeDocumentOperationsRequest(
       message: "`baseRevision` must be a string.",
       field: "baseRevision",
       path: "baseRevision",
-    });
-  }
-
-  if (clientBatchId !== undefined && typeof clientBatchId !== "string") {
-    issues.push({
-      kind: "wrong_type",
-      message: "`clientBatchId` must be a string.",
-      field: "clientBatchId",
-      path: "clientBatchId",
     });
   }
 
@@ -142,7 +131,6 @@ export function decodeDocumentOperationsRequest(
     request: {
       baseRevision,
       operations,
-      ...(typeof clientBatchId === "string" ? { clientBatchId } : {}),
     },
     issues: [],
   };

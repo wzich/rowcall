@@ -1,11 +1,27 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import {
   buildLauncherInvocation,
   createExampleProject,
   createNewDocument,
+  helpTextForTopic,
   parseBetaCommand,
   resolveExistingDocumentPath,
 } from "./beta_launcher.ts";
+
+Deno.test("format help teaches the strict generated return structure", () => {
+  const help = helpTextForTopic("format");
+
+  assertStringIncludes(help, "numbers = [1, 2, 3]");
+  assertStringIncludes(help, 'return {"numbers": numbers}');
+  assertStringIncludes(help, "Use exactly one return statement");
+  assertStringIncludes(help, "do not return expressions inline");
+  assertStringIncludes(help, "nodebook validate");
+});
 
 Deno.test("parseBetaCommand maps help and version utility commands", () => {
   assertEquals(parseBetaCommand([]), { kind: "help" });

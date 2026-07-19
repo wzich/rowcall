@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,16 +13,12 @@ from .executor import NodeEventCallback, build_plan, execute_source
 PROTOCOL_VERSION = 1
 
 
-@dataclass
 class RuntimeSession:
     """Stateful runtime boundary used by the NDJSON worker.
 
-    Execution remains stateless for now, but this class owns the place where
-    future cache and session-scoped runtime behavior can be added without
-    changing the worker protocol.
+    Execution is intentionally fresh and stateless. The class remains as the
+    worker protocol facade, but it does not retain node outputs between runs.
     """
-
-    cache: dict[str, Any] = field(default_factory=dict)
 
     def load_document(self, document_path: str | Path) -> dict[str, Any]:
         resolved_path = self._resolve_document_path(document_path)
@@ -133,8 +128,6 @@ class RuntimeSession:
             source,
             self._resolve_document_path(document_path),
             trace=trace,
-            cache=self.cache,
-            cache_mode="refresh",
             root_inputs=inputs,
             on_node_event=on_node_event,
         )
@@ -154,8 +147,6 @@ class RuntimeSession:
             self._resolve_document_path(document_path),
             target=target,
             trace=trace,
-            cache=self.cache,
-            cache_mode="refresh",
             root_inputs=inputs,
             on_node_event=on_node_event,
         )
@@ -176,16 +167,13 @@ class RuntimeSession:
             target=target,
             trace=trace,
             run_type="run_node",
-            cache=self.cache,
-            cache_mode="single_node",
             root_inputs=inputs,
             on_node_event=on_node_event,
         )
 
     def clear_session_cache(self) -> dict[str, Any]:
-        cleared_entries = len(self.cache)
-        self.cache.clear()
-        return {"ok": True, "clearedEntries": cleared_entries}
+        """Compatibility response for pre-beta clients; no cache is retained."""
+        return {"ok": True, "clearedEntries": 0, "cachingDisabled": True}
 
     def _resolve_document_path(self, document_path: str | Path) -> Path:
         return Path(document_path).expanduser().resolve()

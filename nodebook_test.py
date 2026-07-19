@@ -9,7 +9,9 @@ class NodebookPackageTest(unittest.TestCase):
     def test_node_decorator_attaches_metadata_without_wrapping_function(self):
         @node(id="n_test", outputs=["x", "y"])
         def make_values():
-            return {"x": 1, "y": 2}
+            x = 1
+            y = 2
+            return {"x": x, "y": y}
 
         self.assertEqual(make_values(), {"x": 1, "y": 2})
         self.assertEqual(make_values.__nodebook_id__, "n_test")
@@ -18,11 +20,13 @@ class NodebookPackageTest(unittest.TestCase):
     def test_depends_on_records_upstream_functions_and_returns_downstream(self):
         @node(id="n_parent", outputs=["x"])
         def parent():
-            return {"x": 1}
+            x = 1
+            return {"x": x}
 
         @node(id="n_child", outputs=["y"])
         def child(x):
-            return {"y": x + 1}
+            y = x + 1
+            return {"y": y}
 
         result = child.depends_on(parent)
 

@@ -127,6 +127,22 @@ export type PythonWorkerEvent = {
   [key: string]: unknown;
 };
 
+const WORKER_TERMINATION_GRACE_MS = 500;
+const WORKER_EXIT_WAIT_MS = 2_000;
+const POSIX_WORKER_BOOTSTRAP = [
+  "import os, runpy",
+  "os.setsid()",
+  "runpy.run_module('nodebook.runtime.worker', run_name='__main__')",
+].join(";");
+
+export function pythonWorkerCommandArgs(
+  os: typeof Deno.build.os = Deno.build.os,
+): string[] {
+  return os === "windows"
+    ? ["-m", "nodebook.runtime.worker"]
+    : ["-c", POSIX_WORKER_BOOTSTRAP];
+}
+
 class AsyncEventQueue<T> implements AsyncIterable<T> {
   private values: T[] = [];
   private waiting:
@@ -194,7 +210,7 @@ export class PythonWorkerClient {
   private activeQueue: AsyncEventQueue<PythonWorkerEvent> | null = null;
   private stdoutDone: Promise<void> | null = null;
   private stderrDone: Promise<void> | null = null;
-  private stderrText = "";
+  private workerGeneration = 0;
   private operationChain: Promise<void> = Promise.resolve();
   private readonly encoder = new TextEncoder();
 
@@ -272,25 +288,18 @@ export class PythonWorkerClient {
       this.child = null;
       this.writer = null;
 
-      if (writer) {
-        await writer.close().catch(() => {});
-      }
+      const writerClosed = writer?.close().catch(() => {});
       if (child) {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // Process may already have exited after stdin closed.
-        }
-        await child.status.catch(() => {});
+        await terminateWorkerProcess(child);
       }
+      if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
 
-      await Promise.allSettled([
+      await settleWithDeadline([
         this.stdoutDone ?? Promise.resolve(),
         this.stderrDone ?? Promise.resolve(),
       ]);
       this.stdoutDone = null;
       this.stderrDone = null;
-      this.stderrText = "";
     } finally {
       release();
     }
@@ -332,7 +341,7 @@ export class PythonWorkerClient {
     if (this.child && this.writer) return;
 
     const command = new Deno.Command(await resolvePythonCommand(), {
-      args: ["-m", "nodebook.runtime.worker"],
+      args: pythonWorkerCommandArgs(),
       stdin: "piped",
       stdout: "piped",
       stderr: "piped",
@@ -341,14 +350,23 @@ export class PythonWorkerClient {
 
     this.child = command.spawn();
     this.writer = this.child.stdin.getWriter();
-    this.stderrText = "";
-    this.stdoutDone = this.readStdout(this.child, this.child.stdout);
-    this.stderrDone = this.readStderr(this.child.stderr);
+    const child = this.child;
+    const generation = ++this.workerGeneration;
+    const diagnostics = { stderrText: "" };
+    this.stdoutDone = this.readStdout(
+      child,
+      child.stdout,
+      generation,
+      diagnostics,
+    );
+    this.stderrDone = this.readStderr(child.stderr, diagnostics);
   }
 
   private async readStdout(
     child: Deno.ChildProcess,
     stream: ReadableStream<Uint8Array>,
+    generation: number,
+    diagnostics: { stderrText: string },
   ): Promise<void> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -363,49 +381,57 @@ export class PythonWorkerClient {
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          this.handleLine(line);
+          this.handleLine(line, child, generation);
         }
 
         if (done) break;
       }
 
       if (buffer.trim().length > 0) {
-        this.handleLine(buffer);
+        this.handleLine(buffer, child, generation);
       }
 
-      this.failActiveOperation(
-        new Error(
-          `Python worker ended unexpectedly. stderr: ${this.stderrText}`,
-        ),
-      );
-      if (this.child === child) {
+      if (this.isCurrentWorker(child, generation)) {
+        this.failActiveOperation(
+          new Error(
+            `Python worker ended unexpectedly. stderr: ${diagnostics.stderrText}`,
+          ),
+        );
         this.child = null;
         this.writer = null;
       }
     } catch (error) {
-      this.failActiveOperation(error);
-      if (this.child === child) {
+      if (this.isCurrentWorker(child, generation)) {
+        this.failActiveOperation(error);
         this.child = null;
         this.writer = null;
       }
     }
   }
 
-  private async readStderr(stream: ReadableStream<Uint8Array>): Promise<void> {
+  private async readStderr(
+    stream: ReadableStream<Uint8Array>,
+    diagnostics: { stderrText: string },
+  ): Promise<void> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
     while (true) {
       const { value, done } = await reader.read();
-      this.stderrText += decoder.decode(value, { stream: !done });
-      if (this.stderrText.length > 8_000) {
-        this.stderrText = this.stderrText.slice(-8_000);
+      diagnostics.stderrText += decoder.decode(value, { stream: !done });
+      if (diagnostics.stderrText.length > 8_000) {
+        diagnostics.stderrText = diagnostics.stderrText.slice(-8_000);
       }
       if (done) break;
     }
   }
 
-  private handleLine(line: string): void {
+  private handleLine(
+    line: string,
+    child: Deno.ChildProcess,
+    generation: number,
+  ): void {
+    if (!this.isCurrentWorker(child, generation)) return;
     if (line.trim().length === 0) return;
     if (!this.activeQueue) {
       throw new Error(
@@ -428,6 +454,13 @@ export class PythonWorkerClient {
     this.activeQueue = null;
   }
 
+  private isCurrentWorker(
+    child: Deno.ChildProcess,
+    generation: number,
+  ): boolean {
+    return this.child === child && this.workerGeneration === generation;
+  }
+
   private async cancelActiveOperation(
     queue: AsyncEventQueue<PythonWorkerEvent>,
   ): Promise<void> {
@@ -445,24 +478,76 @@ export class PythonWorkerClient {
     this.writer = null;
     this.stdoutDone = null;
     this.stderrDone = null;
-    this.stderrText = "";
 
-    if (writer) {
-      await writer.close().catch(() => {});
-    }
+    const writerClosed = writer?.close().catch(() => {});
     if (child) {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // The worker may already have exited after stdin closed.
-      }
-      await child.status.catch(() => {});
+      await terminateWorkerProcess(child);
     }
+    if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
 
-    await Promise.allSettled([
+    await settleWithDeadline([
       stdoutDone ?? Promise.resolve(),
       stderrDone ?? Promise.resolve(),
     ]);
+  }
+}
+
+async function terminateWorkerProcess(child: Deno.ChildProcess): Promise<void> {
+  const status = child.status.catch(() => null);
+  await signalWorker(child, "SIGTERM");
+
+  await raceWithDelay(status, WORKER_TERMINATION_GRACE_MS);
+
+  // On POSIX, signal the group even if the worker already exited: a descendant
+  // may have ignored SIGTERM while keeping the process group alive.
+  await signalWorker(child, "SIGKILL");
+  await raceWithDelay(status, WORKER_EXIT_WAIT_MS);
+}
+
+async function raceWithDelay(
+  promise: Promise<unknown>,
+  delayMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, delayMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function settleWithDeadline(promises: Promise<unknown>[]): Promise<void> {
+  await raceWithDelay(Promise.allSettled(promises), WORKER_EXIT_WAIT_MS);
+}
+
+async function signalWorker(
+  child: Deno.ChildProcess,
+  signal: Deno.Signal,
+): Promise<void> {
+  if (Deno.build.os !== "windows") {
+    try {
+      const result = await new Deno.Command("/bin/kill", {
+        // `--` is required by GNU kill to unambiguously treat the negative PID
+        // as a process-group operand rather than another command-line option.
+        args: [`-${signal.replace("SIG", "")}`, "--", `-${child.pid}`],
+        stdout: "null",
+        stderr: "null",
+      }).output();
+      if (result.success) return;
+    } catch {
+      // A custom test/development command may not have entered its own group.
+    }
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // The worker may already have exited after stdin closed.
   }
 }
 

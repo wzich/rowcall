@@ -144,7 +144,7 @@ double.depends_on(load)
         self.assertIn("def double():", detached.source)
         self.assertNotIn("double.depends_on(load)", detached.source)
 
-    def test_reject_editing_custom_return_node(self) -> None:
+    def test_reject_editing_node_with_invalid_return(self) -> None:
         source = """
 from nodebook import node
 
@@ -159,8 +159,8 @@ def make_x():
 
         self.assertFalse(result.ok)
         self.assertEqual(result.source, source)
-        self.assertIn("unsupported_python", [issue.kind for issue in result.issues])
-        self.assertIn("Custom-return node n_test", result.issues[-1].message)
+        self.assertEqual(result.issues[0].kind, "invalid_node_return")
+        self.assertIn("exactly one return statement", result.issues[0].message)
 
     def test_preserve_unrelated_top_level_code_when_updating_outputs(self) -> None:
         source = """
@@ -326,6 +326,27 @@ double.depends_on(load)
         self.assertIn("def double(value):", result.source)
         self.assertIn('    return {"value": value}', result.source)
 
+    def test_apply_operations_rejects_missing_output_binding_in_final_source(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "load", "code": "pass"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.source)
+        self.assertEqual(result.issues[0].kind, "invalid_node_return")
+        self.assertIn("must be a local variable or parameter", result.issues[0].message)
+
     def test_apply_operations_add_edge_normalizes_downstream_signature(self) -> None:
         source = """
 from nodebook import node
@@ -490,7 +511,7 @@ VALUE = 1
         )
         compile(result.source, str(DOCUMENT_PATH), "exec")
 
-    def test_apply_operations_rejects_signature_change_for_custom_return_node(self) -> None:
+    def test_apply_operations_rejects_invalid_returns_before_edge_removal(self) -> None:
         source = """
 from nodebook import node
 
@@ -516,21 +537,13 @@ use_x.depends_on(load)
 
         self.assertFalse(result.ok)
         self.assertIsNone(result.source)
-        self.assertIn(
-            {
-                "kind": "unsupported_python",
-                "message": (
-                    "Custom-return node custom cannot have its input "
-                    "dependencies changed by graph operations."
-                ),
-                "nodeId": "custom",
-                "operationIndex": 0,
-                "operationType": "remove_edge",
-            },
-            [issue.to_dict() for issue in result.issues],
-        )
+        issue = result.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertEqual(issue.node_id, "custom")
+        self.assertIn("exactly one return statement", issue.message)
+        self.assertIsNone(issue.operation_index)
 
-    def test_apply_operations_rejects_custom_return_downstream_edge_change(self) -> None:
+    def test_apply_operations_rejects_invalid_returns_before_edge_addition(self) -> None:
         source = """
 from nodebook import node
 
@@ -553,21 +566,12 @@ def use_x(x):
         )
 
         self.assertFalse(result.ok)
-        self.assertIn(
-            {
-                "kind": "unsupported_python",
-                "message": (
-                    "Custom-return node custom cannot have its input "
-                    "dependencies changed by graph operations."
-                ),
-                "nodeId": "custom",
-                "operationIndex": 0,
-                "operationType": "add_edge",
-            },
-            [issue.to_dict() for issue in result.issues],
-        )
+        issue = result.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertEqual(issue.node_id, "custom")
+        self.assertIsNone(issue.operation_index)
 
-    def test_apply_operations_rejects_custom_return_downstream_output_and_delete_changes(self) -> None:
+    def test_apply_operations_rejects_invalid_returns_before_other_changes(self) -> None:
         source = """
 from nodebook import node
 
@@ -596,26 +600,14 @@ use_x.depends_on(load)
             [{"type": "delete_node", "nodeId": "load"}],
         )
 
-        for result, operation_type in [
-            (changed_outputs, "update_node_outputs"),
-            (deleted_upstream, "delete_node"),
-        ]:
+        for result in [changed_outputs, deleted_upstream]:
             self.assertFalse(result.ok)
-            self.assertIn(
-                {
-                    "kind": "unsupported_python",
-                    "message": (
-                        "Custom-return node custom cannot have its input "
-                        "dependencies changed by graph operations."
-                    ),
-                    "nodeId": "custom",
-                    "operationIndex": 0,
-                    "operationType": operation_type,
-                },
-                [issue.to_dict() for issue in result.issues],
-            )
+            issue = result.issues[0]
+            self.assertEqual(issue.kind, "invalid_node_return")
+            self.assertEqual(issue.node_id, "custom")
+            self.assertIsNone(issue.operation_index)
 
-    def test_apply_operations_rejects_rename_for_custom_return_node(self) -> None:
+    def test_apply_operations_rejects_invalid_returns_before_rename(self) -> None:
         source = """
 from nodebook import node
 
@@ -638,19 +630,10 @@ def use_x():
 
         self.assertFalse(result.ok)
         self.assertIsNone(result.source)
-        self.assertIn(
-            {
-                "kind": "unsupported_python",
-                "message": (
-                    "Custom-return node custom cannot be renamed by Python "
-                    "source rewrite APIs."
-                ),
-                "nodeId": "custom",
-                "operationIndex": 0,
-                "operationType": "rename_node_function",
-            },
-            [issue.to_dict() for issue in result.issues],
-        )
+        issue = result.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertEqual(issue.node_id, "custom")
+        self.assertIsNone(issue.operation_index)
 
     def test_apply_operations_returns_metadata_updates(self) -> None:
         source = """

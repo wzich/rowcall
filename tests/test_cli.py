@@ -51,7 +51,8 @@ from nodebook import node
 
 @node(id="n_start", outputs=["value"])
 def start():
-    return {"value": 1}
+    value = 1
+    return {"value": value}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -75,11 +76,13 @@ from nodebook import node
 
 @node(id="a", outputs=["value"])
 def first():
-    return {"value": 1}
+    value = 1
+    return {"value": value}
 
 @node(id="a", outputs=["other"])
 def second():
-    return {"other": 2}
+    other = 2
+    return {"other": other}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -98,6 +101,60 @@ def second():
             "duplicate_node_id", [issue["kind"] for issue in payload["issues"]]
         )
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_validate_rejects_inline_return_expression_with_precise_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad_return.py"
+            path.write_text(
+                """
+from nodebook import node
+
+@node(id="total", outputs=["total"])
+def total_numbers(numbers):
+    return {"total": sum(numbers)}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(
+                ["validate", str(path), "--json"], stdout=stdout, stderr=stderr
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        issue = next(
+            issue for issue in payload["issues"]
+            if issue["kind"] == "invalid_node_return"
+        )
+        self.assertEqual(issue["nodeId"], "total")
+        self.assertIn("same-named variable 'total'", issue["message"])
+        self.assertIn("not the expression 'sum(numbers)'", issue["message"])
+        self.assertIn("nodebook help format", issue["message"])
+
+    def test_run_console_prints_precise_return_validation_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad_return.py"
+            path.write_text(
+                """
+from nodebook import node
+
+@node(id="total", outputs=["total"])
+def total_numbers():
+    return {"total": 1}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(["run", str(path)], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("invalid_node_return", stderr.getvalue())
+        self.assertIn("not the expression '1'", stderr.getvalue())
+        self.assertIn("nodebook help format", stderr.getvalue())
 
     def test_run_success_json_with_python_module_entrypoint(self) -> None:
         result = subprocess.run(
@@ -138,7 +195,8 @@ from nodebook import node
 
 @node(id="n_start", outputs=["value"])
 def start():
-    return {"value": 2}
+    value = 2
+    return {"value": value}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -167,7 +225,8 @@ from nodebook import node
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -197,7 +256,8 @@ from nodebook import node
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -228,7 +288,8 @@ from nodebook import node
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
             )
             stdout = io.StringIO()

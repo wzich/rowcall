@@ -76,12 +76,12 @@ to the browser. The contract between nodes remains explicit and inspectable.
 
 ### Manual Execution
 
-Nodes run when you ask them to. The initial version supports running a single
-node, running upstream to a target node, and running a whole graph. The public
-headless CLI validates and runs Python documents directly, with full-graph runs
-as the default and targeted upstream runs available through an exact node ID or
-Python function name. There is no automatic reactive re-execution in the initial
-version.
+Nodes run when you ask them to. The invited beta supports freshly running the
+complete dependency plan through a selected node or running a whole graph. The
+public headless CLI validates and runs Python documents directly, with
+full-graph runs as the default and targeted upstream runs available through an
+exact node ID or Python function name. There is no automatic reactive
+re-execution in the initial version.
 
 ---
 
@@ -111,11 +111,11 @@ These are not in scope for the POC but inform design decisions made today.
 branching from shared nodes into their own exploration paths. Like Figma for
 computation.
 
-**Caching** — node outputs are cached by a hash of the node's code and upstream
-cache keys. Re-running a single unchanged Node with unchanged upstream inputs
-can reuse valid upstream Python objects while still only exposing declared
-outputs to downstream Nodes. Full graph and upstream-to-node runs remain the
-fresh recomputation path.
+**Caching** — a future version may cache node outputs using the node's code and
+upstream cache keys. A carefully designed cache could reuse valid upstream
+Python objects while still only exposing declared outputs to downstream Nodes.
+The invited beta does not implement this; all runs recompute their complete
+plans afresh.
 
 **AI features** — nodes can collapse into AI-generated one-line descriptions of
 what they do (easy given explicit inputs/outputs). Code inside a node can be

@@ -69,11 +69,10 @@ type CanvasProps = {
   onConnectNodes?: (fromNode: string, toNode: string) => void;
   onDeleteEdges?: (edgeIds: string[]) => string[];
   onDeleteNode?: (nodeId: string) => void;
-  onNodePositionChange: (nodeId: string, position: GraphPosition) => void;
+  onNodePositionChange?: (nodeId: string, position: GraphPosition) => void;
   onNodeSelect: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
-  onRunStep?: (nodeId: string) => void;
   onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
@@ -99,7 +98,6 @@ export function Canvas({
   onNodeSelect,
   onOutputsChange,
   onRunToNode,
-  onRunStep,
   onSaveDocument,
   outputsReadOnly = false,
   runToNodeDisabled = false,
@@ -152,7 +150,6 @@ export function Canvas({
       selectedNodeId,
       onOutputsChange,
       onRunToNode,
-      onRunStep,
       onSaveDocument,
       outputsReadOnly,
       runToNodeDisabled,
@@ -172,7 +169,7 @@ export function Canvas({
     changes,
   ) => {
     const removedNodeIds = getRemovedNodeIds(changes);
-    if (removedNodeIds.length === 0 || !onDeleteNode) {
+    if (removedNodeIds.length === 0) {
       onNodesChange(changes);
       return;
     }
@@ -183,6 +180,9 @@ export function Canvas({
     if (nonRemoveChanges.length > 0) {
       onNodesChange(nonRemoveChanges);
     }
+    if (!onDeleteNode) {
+      return;
+    }
     for (const nodeId of removedNodeIds) {
       onDeleteNode(nodeId);
     }
@@ -191,14 +191,14 @@ export function Canvas({
     _event,
     node,
   ) => {
-    onNodePositionChange(node.id, node.position);
+    onNodePositionChange?.(node.id, node.position);
   }, [onNodePositionChange]);
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     const removedEdgeIds = changes
       .filter((change) => change.type === "remove")
       .map((change) => change.id);
     const acceptedRemovedEdgeIds = removedEdgeIds.length > 0
-      ? onDeleteEdges?.(removedEdgeIds) ?? removedEdgeIds
+      ? onDeleteEdges?.(removedEdgeIds) ?? []
       : [];
     const acceptedRemovedEdgeIdSet = new Set(acceptedRemovedEdgeIds);
     const acceptedChanges = changes.filter((change) =>
@@ -240,10 +240,10 @@ export function Canvas({
 
     if (
       event.shiftKey && event.key === "Enter" && selectedNodeId &&
-      (onRunStep || onRunToNode) && !runToNodeDisabled
+      onRunToNode && !runToNodeDisabled
     ) {
       event.preventDefault();
-      void (onRunStep ?? onRunToNode)?.(selectedNodeId);
+      void onRunToNode(selectedNodeId);
       return;
     }
 
@@ -269,7 +269,6 @@ export function Canvas({
     onAddChildNode,
     onAddNode,
     onRunToNode,
-    onRunStep,
     onSaveDocument,
     selectedNodeId,
     runToNodeDisabled,
@@ -293,6 +292,7 @@ export function Canvas({
         onEdgeDoubleClick={onDeleteEdges ? handleEdgeDoubleClick : undefined}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
+        nodesDraggable={Boolean(onNodePositionChange)}
         onPaneClick={handlePaneClick}
         deleteKeyCode={null}
         autoPanOnNodeDrag={false}
