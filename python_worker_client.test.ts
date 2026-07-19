@@ -255,15 +255,14 @@ async function processExists(pid: number): Promise<boolean> {
   // awaiting reaping. A zombie is no longer executing, so it satisfies the
   // cancellation guarantee this test is intended to verify.
   if (Deno.build.os === "linux") {
-    try {
-      const stat = await Deno.readTextFile(`/proc/${pid}/stat`);
-      const commandEnd = stat.lastIndexOf(")");
-      if (commandEnd >= 0 && stat.slice(commandEnd + 2).startsWith("Z ")) {
-        return false;
-      }
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return false;
-      throw error;
+    const processState = await new Deno.Command("ps", {
+      args: ["-o", "stat=", "-p", String(pid)],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!processState.success) return false;
+    if (new TextDecoder().decode(processState.stdout).trim().startsWith("Z")) {
+      return false;
     }
   }
 
