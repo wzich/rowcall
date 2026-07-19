@@ -36,7 +36,26 @@ def load_document(path: str | Path) -> ParseResult:
     return parse_source(document_path.read_text(), document_path)
 
 
-def parse_source(source: str, document_path: str | Path) -> ParseResult:
+def parse_source(
+    source: str,
+    document_path: str | Path,
+) -> ParseResult:
+    return _parse_source(source, document_path, validate_output_bindings=True)
+
+
+def _parse_source_for_rewrite(
+    source: str,
+    document_path: str | Path,
+) -> ParseResult:
+    return _parse_source(source, document_path, validate_output_bindings=False)
+
+
+def _parse_source(
+    source: str,
+    document_path: str | Path,
+    *,
+    validate_output_bindings: bool,
+) -> ParseResult:
     path = Path(document_path).expanduser().resolve()
     try:
         module = ast.parse(source, filename=str(path))
@@ -53,7 +72,13 @@ def parse_source(source: str, document_path: str | Path) -> ParseResult:
     decorator_kinds = _classify_node_decorators(module)
     _validate_nodebook_imports(module, issues)
     _diagnose_unsupported_node_syntax(module, decorator_kinds, issues)
-    decoded_nodes = _decode_nodes(module, lines, decorator_kinds, issues)
+    decoded_nodes = _decode_nodes(
+        module,
+        lines,
+        decorator_kinds,
+        issues,
+        validate_output_bindings=validate_output_bindings,
+    )
     edges = _decode_edges(module, decoded_nodes, issues)
     excluded = _excluded_source_lines(module, [node.function_def for node in decoded_nodes], lines)
     globals_code = _source_without_lines(lines, excluded).strip()
@@ -112,6 +137,8 @@ def _decode_nodes(
     lines: list[str],
     decorator_kinds: dict[int, str],
     issues: list[ValidationIssue],
+    *,
+    validate_output_bindings: bool,
 ) -> list[_DecodedNode]:
     decoded: list[_DecodedNode] = []
     node_function_names: set[str] = set()
@@ -146,6 +173,14 @@ def _decode_nodes(
         _validate_function_shape(function_def, node_id, issues)
         _validate_node_decorators(function_def, node_id, issues)
         _validate_no_direct_node_calls(function_def, node_id, node_function_names, issues)
+        if decoded_node.outputs is not None:
+            _validate_node_return(
+                function_def,
+                node_id,
+                decoded_node.outputs,
+                issues,
+                validate_output_bindings=validate_output_bindings,
+            )
 
     return decoded
 
@@ -519,6 +554,204 @@ def _validate_function_shape(function_def: ast.FunctionDef, node_id: str, issues
             )
 
 
+def _validate_node_return(
+    function_def: ast.FunctionDef,
+    node_id: str,
+    outputs: tuple[str, ...],
+    issues: list[ValidationIssue],
+    *,
+    validate_output_bindings: bool,
+) -> None:
+    returns = _node_level_returns(function_def)
+    format_hint = " See `nodebook help format` for the required structure."
+
+    if len(returns) != 1:
+        issues.append(
+            ValidationIssue(
+                kind="invalid_node_return",
+                message=(
+                    f"Node '{node_id}' must have exactly one return statement, "
+                    "as the final statement in the function. Make every declared "
+                    "output available as a same-named variable, then return the generated "
+                    f"output dictionary.{format_hint}"
+                ),
+                node_id=node_id,
+                path=_statement_path(function_def),
+            )
+        )
+        return
+
+    return_statement = returns[0]
+    if not function_def.body or function_def.body[-1] is not return_statement:
+        issues.append(
+            ValidationIssue(
+                kind="invalid_node_return",
+                message=(
+                    f"Node '{node_id}' must place its only return statement last. "
+                    "Assign every declared output first, then end the function with "
+                    f"the generated output dictionary.{format_hint}"
+                ),
+                node_id=node_id,
+                path=_statement_path(return_statement),
+            )
+        )
+        return
+
+    returned = return_statement.value
+    if not isinstance(returned, ast.Dict):
+        issues.append(
+            ValidationIssue(
+                kind="invalid_node_return",
+                message=(
+                    f"Node '{node_id}' must return a dictionary literal whose keys "
+                    "and same-named variable values exactly match outputs="
+                    f"{list(outputs)!r}.{format_hint}"
+                ),
+                node_id=node_id,
+                path=_statement_path(return_statement),
+            )
+        )
+        return
+
+    returned_keys: list[str] = []
+    for key in returned.keys:
+        key_text = _literal_string(key) if key is not None else None
+        if key_text is None:
+            issues.append(
+                ValidationIssue(
+                    kind="invalid_node_return",
+                    message=(
+                        f"Node '{node_id}' must use literal output names in its "
+                        "return dictionary; dictionary expansion and computed keys "
+                        f"are not supported.{format_hint}"
+                    ),
+                    node_id=node_id,
+                    path=_statement_path(return_statement),
+                )
+            )
+            return
+        returned_keys.append(key_text)
+
+    if tuple(returned_keys) != outputs:
+        issues.append(
+            ValidationIssue(
+                kind="invalid_node_return",
+                message=(
+                    f"Node '{node_id}' returns outputs {returned_keys!r}, but its "
+                    f"decorator declares {list(outputs)!r}. Return every declared "
+                    f"output exactly once in the declared order.{format_hint}"
+                ),
+                node_id=node_id,
+                path=_statement_path(return_statement),
+            )
+        )
+        return
+
+    local_bindings = (
+        _node_local_bindings(function_def) if validate_output_bindings else None
+    )
+    for output, value in zip(outputs, returned.values):
+        if isinstance(value, ast.Name) and value.id == output:
+            if local_bindings is not None and output not in local_bindings:
+                issues.append(
+                    ValidationIssue(
+                        kind="invalid_node_return",
+                        message=(
+                            f"Output '{output}' on node '{node_id}' must be a local "
+                            "variable or parameter, but this name resolves outside "
+                            f"the node function. Assign '{output}' in the node body "
+                            f"before returning it.{format_hint}"
+                        ),
+                        node_id=node_id,
+                        path=_path_for(value.lineno, value.col_offset + 1),
+                    )
+                )
+            continue
+        expression = ast.unparse(value)
+        issues.append(
+            ValidationIssue(
+                kind="invalid_node_return",
+                message=(
+                    f"Output '{output}' on node '{node_id}' must be returned from "
+                    f"the same-named variable '{output}', not the expression "
+                    f"'{expression}'. Assign the expression to '{output}' before "
+                    f"the return, then use `{output!r}: {output}`.{format_hint}"
+                ),
+                node_id=node_id,
+                path=_path_for(value.lineno, value.col_offset + 1),
+            )
+        )
+
+
+def _node_level_returns(function_def: ast.FunctionDef) -> list[ast.Return]:
+    returns: list[ast.Return] = []
+
+    class ReturnVisitor(ast.NodeVisitor):
+        def visit_Return(self, node: ast.Return) -> None:
+            returns.append(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            return
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            return
+
+    visitor = ReturnVisitor()
+    for statement in function_def.body:
+        visitor.visit(statement)
+    return returns
+
+
+def _node_local_bindings(function_def: ast.FunctionDef) -> set[str]:
+    bindings = {
+        argument.arg
+        for argument in [
+            *function_def.args.posonlyargs,
+            *function_def.args.args,
+            *function_def.args.kwonlyargs,
+        ]
+    }
+    for statement in function_def.body[:-1]:
+        bindings.update(_bound_names(statement))
+
+    global_names: set[str] = set()
+    nonlocal_names: set[str] = set()
+
+    class DeclarationVisitor(ast.NodeVisitor):
+        def visit_Global(self, node: ast.Global) -> None:
+            global_names.update(node.names)
+
+        def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+            nonlocal_names.update(node.names)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            return
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            return
+
+    visitor = DeclarationVisitor()
+    for statement in function_def.body[:-1]:
+        visitor.visit(statement)
+
+    bindings.difference_update(global_names)
+    bindings.difference_update(nonlocal_names)
+    bindings.discard(_WILDCARD_IMPORT_BINDING)
+    return bindings
+
+
 def _validate_no_direct_node_calls(
     function_def: ast.FunctionDef,
     node_id: str,
@@ -811,12 +1044,13 @@ def _parameter_names(function_def: ast.FunctionDef) -> tuple[str, ...]:
 
 
 def _has_standard_generated_return(function_def: ast.FunctionDef, outputs: tuple[str, ...]) -> bool:
-    if sum(isinstance(child, ast.Return) for child in ast.walk(function_def)) != 1:
+    returns = _node_level_returns(function_def)
+    if len(returns) != 1:
         return False
     if not function_def.body:
         return False
     final_statement = function_def.body[-1]
-    if not isinstance(final_statement, ast.Return):
+    if final_statement is not returns[0]:
         return False
     if not isinstance(final_statement.value, ast.Dict):
         return False

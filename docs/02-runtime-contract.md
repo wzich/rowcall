@@ -134,8 +134,8 @@ calls the Python runtime worker's `apply_operations` operation to rewrite
 source, writes the returned Python source and `.nodebook.json` metadata, and
 reloads the canonical document response. Graph and output operations normalize
 standard editor-authored downstream function signatures to match direct upstream
-outputs. Custom-return nodes are rejected when an operation would change their
-authored input dependency surface.
+outputs. Documents with unsupported return structures fail validation before an
+operation batch can be applied.
 
 External `GET /document` and `GET /document/status` reads are ordered after all
 document operations already accepted by the server. An explicit reload after an

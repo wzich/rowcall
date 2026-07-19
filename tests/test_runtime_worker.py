@@ -22,11 +22,13 @@ from nodebook import node
 @node(id="hello", outputs=["message"])
 def hello():
     print("hello stdout")
-    return {"message": "hello"}
+    message = "hello"
+    return {"message": message}
 
 @node(id="world", outputs=["text"])
 def world(message):
-    return {"text": message + " world"}
+    text = message + " world"
+    return {"text": text}
 
 world.depends_on(hello)
 """.lstrip()
@@ -153,11 +155,13 @@ from nodebook import node
 
 @node(id="same", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 
 @node(id="same", outputs=["y"])
 def second():
-    return {"y": 2}
+    y = 2
+    return {"y": y}
 """.lstrip()
 
         events = self.run_lines(
@@ -316,7 +320,7 @@ world.depends_on(hello)
         session = RuntimeSession()
 
         single = session.run_node(
-            HELLO_SOURCE.replace('return {"message": "hello"}', 'return {"message": "fresh"}'),
+            HELLO_SOURCE.replace('message = "hello"', 'message = "fresh"'),
             DOCUMENT_PATH,
             "world",
         )

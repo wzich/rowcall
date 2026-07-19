@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DocumentNode, ExecutableDocument, ParseResult, ValidationIssue
-from .parser import parse_source
+from .parser import _parse_source_for_rewrite, parse_source
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,28 @@ def apply_document_operations(
 
         validated_operations.append((index, operation))
 
+    initial_parse = parse_source(source, document_path)
+    can_add_first_node = any(
+        operation.get("type") == "add_node" for _, operation in validated_operations
+    )
+    initial_issues = tuple(
+        issue
+        for issue in initial_parse.issues
+        if not (can_add_first_node and issue.kind == "missing_node")
+    )
+    if initial_issues:
+        blocking_parse = ParseResult(
+            ok=False,
+            document=initial_parse.document,
+            issues=initial_issues,
+        )
+        return OperationRewriteResult(
+            ok=False,
+            source=None,
+            parse_result=blocking_parse,
+            sidecar_metadata=None,
+        )
+
     coalesced_operations = _coalesce_document_operations(validated_operations)
 
     for original_index, operation in coalesced_operations:
@@ -94,9 +116,35 @@ def apply_document_operations(
     return OperationRewriteResult(ok=True, source=current_source, parse_result=parsed, sidecar_metadata=current_metadata)
 
 
-def update_node_body(source: str, document_path: str | Path, node_id: str, body_code: str) -> RewriteResult:
-    parsed = parse_source(source, document_path)
-    if not parsed.document:
+def update_node_body(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    body_code: str,
+) -> RewriteResult:
+    return _update_node_body(
+        source,
+        document_path,
+        node_id,
+        body_code,
+        validate_output_bindings=True,
+    )
+
+
+def _update_node_body(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    body_code: str,
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
+    parsed = _parse_rewrite_source(
+        source,
+        document_path,
+        validate_output_bindings,
+    )
+    if not parsed.ok or not parsed.document:
         return RewriteResult(source=source, parse_result=parsed)
 
     node = _find_node(parsed.document.nodes, node_id)
@@ -117,12 +165,44 @@ def update_node_body(source: str, document_path: str | Path, node_id: str, body_
         node.source_range.return_end_line,
         [*body_lines, return_line],
     )
-    return _finish_rewrite(lines, newline, final_newline, document_path)
+    return _finish_rewrite(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=validate_output_bindings,
+    )
 
 
-def update_node_outputs(source: str, document_path: str | Path, node_id: str, outputs: list[str] | tuple[str, ...]) -> RewriteResult:
-    parsed = parse_source(source, document_path)
-    if not parsed.document:
+def update_node_outputs(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    outputs: list[str] | tuple[str, ...],
+) -> RewriteResult:
+    return _update_node_outputs(
+        source,
+        document_path,
+        node_id,
+        outputs,
+        validate_output_bindings=True,
+    )
+
+
+def _update_node_outputs(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    outputs: list[str] | tuple[str, ...],
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
+    parsed = _parse_rewrite_source(
+        source,
+        document_path,
+        validate_output_bindings,
+    )
+    if not parsed.ok or not parsed.document:
         return RewriteResult(source=source, parse_result=parsed)
 
     node = _find_node(parsed.document.nodes, node_id)
@@ -157,15 +237,77 @@ def update_node_outputs(source: str, document_path: str | Path, node_id: str, ou
         [_render_return_line(next_outputs, node.source_range.indent or "    ")],
     )
     _replace_lines(lines, decorator_range[0], decorator_range[1], [_render_decorator(node.id, next_outputs)])
-    return _finish_rewrite_with_normalized_signatures(lines, newline, final_newline, document_path)
+    return _finish_rewrite_with_normalized_signatures(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=validate_output_bindings,
+    )
 
 
-def add_edge(source: str, document_path: str | Path, from_node_id: str, to_node_id: str) -> RewriteResult:
-    return _rewrite_edges(source, document_path, add=(from_node_id, to_node_id), remove=None)
+def add_edge(
+    source: str,
+    document_path: str | Path,
+    from_node_id: str,
+    to_node_id: str,
+) -> RewriteResult:
+    return _add_edge(
+        source,
+        document_path,
+        from_node_id,
+        to_node_id,
+        validate_output_bindings=True,
+    )
 
 
-def remove_edge(source: str, document_path: str | Path, from_node_id: str, to_node_id: str) -> RewriteResult:
-    return _rewrite_edges(source, document_path, add=None, remove=(from_node_id, to_node_id))
+def _add_edge(
+    source: str,
+    document_path: str | Path,
+    from_node_id: str,
+    to_node_id: str,
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
+    return _rewrite_edges(
+        source,
+        document_path,
+        add=(from_node_id, to_node_id),
+        remove=None,
+        validate_output_bindings=validate_output_bindings,
+    )
+
+
+def remove_edge(
+    source: str,
+    document_path: str | Path,
+    from_node_id: str,
+    to_node_id: str,
+) -> RewriteResult:
+    return _remove_edge(
+        source,
+        document_path,
+        from_node_id,
+        to_node_id,
+        validate_output_bindings=True,
+    )
+
+
+def _remove_edge(
+    source: str,
+    document_path: str | Path,
+    from_node_id: str,
+    to_node_id: str,
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
+    return _rewrite_edges(
+        source,
+        document_path,
+        add=None,
+        remove=(from_node_id, to_node_id),
+        validate_output_bindings=validate_output_bindings,
+    )
 
 
 def _coalesce_document_operations(
@@ -229,7 +371,13 @@ def _apply_one_operation(
         body_code = _text_field(operation, "bodyCode", "body_code", "code")
         if node_id is None or body_code is None:
             return _invalid_operation("update_node_body requires nodeId and bodyCode.")
-        result = update_node_body(source, document_path, node_id, body_code)
+        result = _update_node_body(
+            source,
+            document_path,
+            node_id,
+            body_code,
+            validate_output_bindings=False,
+        )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "update_node_outputs":
@@ -237,21 +385,39 @@ def _apply_one_operation(
         outputs = operation.get("outputs")
         if node_id is None or not isinstance(outputs, list) or not all(isinstance(item, str) for item in outputs):
             return _invalid_operation("update_node_outputs requires nodeId and outputs list.")
-        result = update_node_outputs(source, document_path, node_id, tuple(outputs))
+        result = _update_node_outputs(
+            source,
+            document_path,
+            node_id,
+            tuple(outputs),
+            validate_output_bindings=False,
+        )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "add_edge":
         pair = _edge_pair(operation)
         if pair is None:
             return _invalid_operation("add_edge requires fromNode and toNode.")
-        result = add_edge(source, document_path, pair[0], pair[1])
+        result = _add_edge(
+            source,
+            document_path,
+            pair[0],
+            pair[1],
+            validate_output_bindings=False,
+        )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "remove_edge":
         pair = _edge_pair(operation)
         if pair is None:
             return _invalid_operation("remove_edge requires fromNode and toNode.")
-        result = remove_edge(source, document_path, pair[0], pair[1])
+        result = _remove_edge(
+            source,
+            document_path,
+            pair[0],
+            pair[1],
+            validate_output_bindings=False,
+        )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "update_globals":
@@ -280,7 +446,7 @@ def _apply_one_operation(
         node_id = _text_field(operation, "nodeId", "node_id")
         if node_id is None:
             return _invalid_operation(f"{operation_type} requires nodeId.")
-        parsed = parse_source(source, document_path)
+        parsed = _parse_source_for_rewrite(source, document_path)
         if not parsed.document:
             return _first_issue(parsed, "Document could not be parsed.")
         if _find_node(parsed.document.nodes, node_id) is None:
@@ -296,9 +462,14 @@ def _rewrite_edges(
     *,
     add: tuple[str, str] | None,
     remove: tuple[str, str] | None,
+    validate_output_bindings: bool,
 ) -> RewriteResult:
-    parsed = parse_source(source, document_path)
-    if not parsed.document:
+    parsed = _parse_rewrite_source(
+        source,
+        document_path,
+        validate_output_bindings,
+    )
+    if not parsed.ok or not parsed.document:
         return RewriteResult(source=source, parse_result=parsed)
 
     document = parsed.document
@@ -332,7 +503,13 @@ def _rewrite_edges(
             lines.append("")
         lines.extend(graph_lines)
 
-    return _finish_rewrite_with_normalized_signatures(lines, newline, final_newline, document_path)
+    return _finish_rewrite_with_normalized_signatures(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=validate_output_bindings,
+    )
 
 
 def _replace_globals(
@@ -341,7 +518,7 @@ def _replace_globals(
     globals_code: str,
     metadata: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
-    parsed = parse_source(source, document_path)
+    parsed = _parse_source_for_rewrite(source, document_path)
     if not parsed.document:
         return _first_issue(parsed, "Document could not be parsed.")
 
@@ -354,7 +531,13 @@ def _replace_globals(
         next_lines.extend(kept_lines)
     else:
         next_lines = kept_lines
-    result = _finish_rewrite(_trim_blank_runs(next_lines), newline, final_newline, document_path)
+    result = _finish_rewrite(
+        _trim_blank_runs(next_lines),
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=False,
+    )
     return _source_result_or_issue(result, metadata)
 
 
@@ -367,7 +550,7 @@ def _rename_node_function(
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
     if not function_name.isidentifier() or keyword.iskeyword(function_name):
         return ValidationIssue(kind="unsupported_python", message=f"Function name '{function_name}' is invalid.", node_id=node_id)
-    parsed = parse_source(source, document_path)
+    parsed = _parse_source_for_rewrite(source, document_path)
     if not parsed.document:
         return _first_issue(parsed, "Document could not be parsed.")
     node = _find_node(parsed.document.nodes, node_id)
@@ -390,7 +573,13 @@ def _rename_node_function(
     lines = _strip_graph_lines(source, lines)
     graph_lines = _render_graph_lines_with_names(parsed.document.nodes, [(edge.from_node, edge.to_node) for edge in parsed.document.edges], {node_id: function_name})
     _append_graph(lines, graph_lines)
-    result = _finish_rewrite(lines, newline, final_newline, document_path)
+    result = _finish_rewrite(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=False,
+    )
     return _source_result_or_issue(result, metadata)
 
 
@@ -400,7 +589,7 @@ def _add_node(
     operation: dict[str, Any],
     metadata: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
-    parsed = parse_source(source, document_path)
+    parsed = _parse_source_for_rewrite(source, document_path)
     if not parsed.document:
         return _first_issue(parsed, "Document could not be parsed.")
     node_operation = operation.get("node")
@@ -433,7 +622,13 @@ def _add_node(
     graph_lines = _render_graph_lines(parsed.document.nodes, [(edge.from_node, edge.to_node) for edge in parsed.document.edges])
     _append_graph(lines, graph_lines)
     next_metadata = _apply_metadata_fields(metadata, node_id, node_payload)
-    result = _finish_rewrite(lines, newline, final_newline, document_path)
+    result = _finish_rewrite(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=False,
+    )
     return _source_result_or_issue(result, next_metadata)
 
 
@@ -443,7 +638,7 @@ def _delete_node(
     node_id: str,
     metadata: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
-    parsed = parse_source(source, document_path)
+    parsed = _parse_source_for_rewrite(source, document_path)
     if not parsed.document:
         return _first_issue(parsed, "Document could not be parsed.")
     node = _find_node(parsed.document.nodes, node_id)
@@ -468,7 +663,13 @@ def _delete_node(
     next_metadata = copy.deepcopy(metadata)
     if isinstance(next_metadata.get("nodes"), dict):
         next_metadata["nodes"].pop(node_id, None)
-    result = _finish_rewrite_with_normalized_signatures(_trim_blank_runs(lines), newline, final_newline, document_path)
+    result = _finish_rewrite_with_normalized_signatures(
+        _trim_blank_runs(lines),
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=False,
+    )
     return _source_result_or_issue(result, next_metadata)
 
 
@@ -651,9 +852,33 @@ def _replace_lines(lines: list[str], start_line: int, end_line: int, replacement
     lines[start_line - 1 : end_line] = replacement
 
 
-def _finish_rewrite(lines: list[str], newline: str, final_newline: bool, document_path: str | Path) -> RewriteResult:
+def _parse_rewrite_source(
+    source: str,
+    document_path: str | Path,
+    validate_output_bindings: bool,
+) -> ParseResult:
+    if validate_output_bindings:
+        return parse_source(source, document_path)
+    return _parse_source_for_rewrite(source, document_path)
+
+
+def _finish_rewrite(
+    lines: list[str],
+    newline: str,
+    final_newline: bool,
+    document_path: str | Path,
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
     rewritten = _join_source(lines, newline, final_newline)
-    return RewriteResult(source=rewritten, parse_result=parse_source(rewritten, document_path))
+    return RewriteResult(
+        source=rewritten,
+        parse_result=_parse_rewrite_source(
+            rewritten,
+            document_path,
+            validate_output_bindings,
+        ),
+    )
 
 
 def _finish_rewrite_with_normalized_signatures(
@@ -661,9 +886,15 @@ def _finish_rewrite_with_normalized_signatures(
     newline: str,
     final_newline: bool,
     document_path: str | Path,
+    *,
+    validate_output_bindings: bool,
 ) -> RewriteResult:
     rewritten = _join_source(lines, newline, final_newline)
-    parsed = parse_source(rewritten, document_path)
+    parsed = _parse_rewrite_source(
+        rewritten,
+        document_path,
+        validate_output_bindings,
+    )
     if parsed.document is None:
         return RewriteResult(source=rewritten, parse_result=parsed)
 
@@ -674,7 +905,13 @@ def _finish_rewrite_with_normalized_signatures(
         return RewriteResult(source=rewritten, parse_result=parsed)
 
     normalized_lines, normalized_newline, normalized_final_newline = _split_source(normalized)
-    return _finish_rewrite(normalized_lines, normalized_newline, normalized_final_newline, document_path)
+    return _finish_rewrite(
+        normalized_lines,
+        normalized_newline,
+        normalized_final_newline,
+        document_path,
+        validate_output_bindings=validate_output_bindings,
+    )
 
 
 def _normalize_function_signatures(

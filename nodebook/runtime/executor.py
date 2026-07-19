@@ -173,16 +173,11 @@ def invalidate_document_local_imports(document_dir: Path) -> None:
             continue
         top_level_name = name.partition(".")[0]
         top_level_module = sys.modules.get(top_level_name)
-        top_level_origin = getattr(
-            getattr(top_level_module, "__spec__", None),
-            "origin",
-            None,
-        )
+        top_level_origin = _module_spec_origin(top_level_module)
         if top_level_origin in {"built-in", "frozen"}:
             continue
-        filename = getattr(module, "__file__", None)
         try:
-            lexical_path = Path(os.path.abspath(filename)) if filename else None
+            lexical_path = _absolute_module_path(_static_module_attribute(module, "__file__"))
             module_paths = _module_paths(module)
             previous_paths = previous_document_modules.get(name)
             loaded_from_previous_document = (
@@ -228,8 +223,7 @@ def _remove_safely_derived_bytecode(module: Any, loaded_path: Path | None) -> No
     necessary so eviction from ``sys.modules`` does not make the next fresh
     run unable to import the helper at all.
     """
-    cached = getattr(module, "__cached__", None)
-    cached_path = Path(os.path.abspath(cached)) if cached else None
+    cached_path = _absolute_module_path(_static_module_attribute(module, "__cached__"))
     source_path: Path | None = None
     if loaded_path is not None and loaded_path.suffix == ".py":
         source_path = loaded_path
@@ -269,24 +263,50 @@ def _remove_safely_derived_bytecode(module: Any, loaded_path: Path | None) -> No
 
 def _module_paths(module: Any) -> frozenset[Path]:
     """Return lexical and resolved origins, including namespace package paths."""
-    locations: list[str] = []
-    filename = getattr(module, "__file__", None)
-    if filename:
-        locations.append(filename)
-    package_locations = getattr(
-        getattr(module, "__spec__", None),
-        "submodule_search_locations",
-        None,
-    )
-    if package_locations:
-        locations.extend(package_locations)
-
     paths: set[Path] = set()
+    filename = _absolute_module_path(_static_module_attribute(module, "__file__"))
+    if filename is not None:
+        paths.add(filename)
+        paths.add(filename.resolve())
+
+    spec = _static_module_attribute(module, "__spec__")
+    try:
+        package_locations = getattr(spec, "submodule_search_locations", None)
+        locations = tuple(package_locations) if package_locations is not None else ()
+    except Exception:
+        locations = ()
     for location in locations:
-        lexical_path = Path(os.path.abspath(location))
+        lexical_path = _absolute_module_path(location)
+        if lexical_path is None:
+            continue
         paths.add(lexical_path)
         paths.add(lexical_path.resolve())
     return frozenset(paths)
+
+
+def _static_module_attribute(module: Any, name: str) -> Any:
+    """Read real module metadata without invoking a dynamic ``__getattr__``."""
+    try:
+        return vars(module).get(name)
+    except Exception:
+        return None
+
+
+def _module_spec_origin(module: Any) -> Any:
+    spec = _static_module_attribute(module, "__spec__")
+    try:
+        return getattr(spec, "origin", None)
+    except Exception:
+        return None
+
+
+def _absolute_module_path(value: Any) -> Path | None:
+    """Accept only unambiguous absolute paths from third-party module metadata."""
+    try:
+        path = Path(os.fsdecode(os.fspath(value)))
+    except Exception:
+        return None
+    return path if path.is_absolute() else None
 
 
 def remember_document_local_imports(document_dir: Path) -> None:

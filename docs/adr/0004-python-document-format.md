@@ -69,14 +69,15 @@ explicit edges declare which upstream nodes may provide values. At runtime,
 Nodebook gathers outputs from directly connected upstream nodes and passes
 matching values into the downstream function. For standard editor-authored
 nodes, UI graph/output edits may normalize downstream function signatures to
-match direct upstream outputs. Custom-return nodes are left as authored; graph
-operations that would change their input dependency surface are rejected.
+match direct upstream outputs.
 
 Declared outputs are represented in the decorator and returned as a dictionary.
-For normal Nodebook-authored nodes, the editor may generate the return
-dictionary from the output declarations. Dictionary keys will usually match
-local variable names, but the format leaves room for future output rename or
-patching behavior.
+The return shape is deliberately strict: a node has exactly one return statement
+as its final statement; it returns a dictionary literal; and its keys and values
+match the declared outputs in order, with every value referencing a same-named
+local variable; parameters already count as locals. Nodes with no outputs end
+with `return {}`. This constrained grammar keeps CLI execution and source
+rewrites aligned with the visual editor.
 
 ```python
 @node(id="n_ab12cd", outputs=["clean_df", "row_count"])
@@ -93,12 +94,10 @@ ordinary UI-authored nodes.
 
 Nodebook-authored files remain normal Python files. Users and agents may edit
 them directly. If raw edits change wrappers, signatures, or return statements,
-Nodebook validates the file on load and either accepts the custom shape or
-produces actionable validation errors. The beta implementation detects and
-preserves custom returns, but it does not offer full UI editing for them. Nodes
-with custom return control flow are custom-managed nodes: they remain visible
-and runnable, but UI actions that would require safely regenerating return
-statements or changing input dependencies are disabled.
+Nodebook validates the file on load and rejects unsupported shapes with
+actionable validation errors. The installed CLI exposes the authoring contract
+through `nodebook help format`; agents should run `nodebook validate` after
+editing a document.
 
 Top-level imports, constants, helper functions, and classes are allowed. The UI
 should eventually expose code outside node functions through a "Globals" section
@@ -158,8 +157,8 @@ The implemented split uses these boundaries:
    that node; the invited beta has no execution cache.
 5. Normal UI-authored edits are sent as operation batches. The Python document
    package owns source rewrites for node bodies, output declarations, function
-   names, node additions/deletions, graph edges, and globals. Custom returns are
-   preserved or flagged with specific validation errors.
+   names, node additions/deletions, graph edges, and globals. Unsupported return
+   structures fail validation before the document can be edited or run.
 6. `.nodebook.json` sidecars remain UI-only metadata. They are not required to
    validate or run a Python document, but the app-facing revision includes
    normalized sidecar metadata so position/title/description edits participate
@@ -185,8 +184,3 @@ The implemented split uses these boundaries:
 - Keep proactive external-change detection independent from save-conflict
   protection. Status polling improves the local collaboration UX, but
   `POST /document/operations` still rejects stale base revisions before writing.
-
-## Open Questions
-
-- Should custom-managed nodes get a one-way "normalize this node" action that
-  rewrites custom returns into the standard generated return dictionary shape?

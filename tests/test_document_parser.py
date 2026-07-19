@@ -80,7 +80,8 @@ from nodebook import node
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 
 node = lambda **kwargs: lambda fn: fn
 
@@ -138,7 +139,8 @@ INFO = vars(Config)
 
 @node(id="a", outputs=["x"])
 def a():
-    return {"x": INFO["value"]}
+    x = INFO["value"]
+    return {"x": x}
 ''',
             Path("/tmp/object_vars.py"),
         )
@@ -155,7 +157,8 @@ from nodebook import node
 
 @node(id="a", outputs=["x"])
 def a():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 '''.lstrip(),
             Path("/tmp/comprehension_named_expression.py"),
         )
@@ -167,7 +170,8 @@ from nodebook import node
 
 @node(id="a", outputs=["x"])
 def a():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 '''.lstrip(),
             Path("/tmp/comprehension_target.py"),
         )
@@ -327,7 +331,8 @@ from nodebook import node
 @node(id="show", outputs=["x"])
 def show():
     nb.display({"seen": True})
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/import_nodebook.py"))
@@ -354,7 +359,7 @@ def show_value():
         self.assertEqual(result.issues[0].kind, "unsupported_python")
         self.assertEqual(result.issues[0].message, "from nodebook imports may not use aliases")
 
-    def test_literal_return_dict_is_custom_return_not_generated_body(self) -> None:
+    def test_rejects_expression_in_return_dictionary_with_precise_fix(self) -> None:
         source = """
 from nodebook import node
 
@@ -365,13 +370,172 @@ def show_value():
 
         result = parse_source(source, Path("/tmp/literal_return.py"))
 
-        self.assertTrue(result.ok)
-        self.assertIsNotNone(result.document)
+        self.assertFalse(result.ok)
+        self.assertEqual(len(result.issues), 1)
+        issue = result.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertEqual(issue.node_id, "show")
+        self.assertEqual(issue.path, "5:18")
+        self.assertIn("same-named variable 'x'", issue.message)
+        self.assertIn("not the expression '1'", issue.message)
+        self.assertIn("Assign the expression to 'x' before the return", issue.message)
+        self.assertIn("nodebook help format", issue.message)
+
+    def test_rejects_return_keys_that_do_not_match_declared_outputs(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="show", outputs=["x", "y"])
+def show_value():
+    x = 1
+    y = 2
+    return {"y": y, "x": x}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/mismatched_return.py"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(len(result.issues), 1)
+        issue = result.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertIn("returns outputs ['y', 'x']", issue.message)
+        self.assertIn("declares ['x', 'y']", issue.message)
+
+    def test_reports_every_inline_return_expression_in_one_validation(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="load", outputs=["path", "shape"])
+def load():
+    original_path = "image.jpg"
+    image = object()
+    return {"path": str(original_path), "shape": image.shape}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/multiple_inline_outputs.py"))
+
+        self.assertFalse(result.ok)
+        return_issues = [
+            issue for issue in result.issues if issue.kind == "invalid_node_return"
+        ]
+        self.assertEqual([issue.node_id for issue in return_issues], ["load", "load"])
+        self.assertIn("not the expression 'str(original_path)'", return_issues[0].message)
+        self.assertIn("not the expression 'image.shape'", return_issues[1].message)
+
+    def test_allows_an_input_parameter_to_be_returned_as_an_output(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="source", outputs=["value"])
+def source():
+    value = 1
+    return {"value": value}
+
+@node(id="passthrough", outputs=["value"])
+def passthrough(value):
+    return {"value": value}
+
+passthrough.depends_on(source)
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/parameter_output.py"))
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+
+    def test_rejects_module_global_returned_as_a_node_output(self) -> None:
+        source = """
+from nodebook import node
+
+result = 41
+
+@node(id="global", outputs=["result"])
+def use_global():
+    return {"result": result}
+""".lstrip()
+
+        parsed = parse_source(source, Path("/tmp/global_output.py"))
+
+        self.assertFalse(parsed.ok)
+        issue = parsed.issues[0]
+        self.assertEqual(issue.kind, "invalid_node_return")
+        self.assertEqual(issue.node_id, "global")
+        self.assertEqual(issue.path, "7:23")
+        self.assertIn("must be a local variable or parameter", issue.message)
+        self.assertIn("resolves outside the node function", issue.message)
+
+    def test_rejects_global_declaration_as_a_node_output_binding(self) -> None:
+        source = """
+from nodebook import node
+
+result = 41
+
+@node(id="global", outputs=["result"])
+def update_global():
+    global result
+    result += 1
+    return {"result": result}
+""".lstrip()
+
+        parsed = parse_source(source, Path("/tmp/global_declaration_output.py"))
+
+        self.assertFalse(parsed.ok)
+        self.assertEqual(parsed.issues[0].kind, "invalid_node_return")
+
+    def test_nested_scope_binding_does_not_define_a_node_output(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="nested", outputs=["result"])
+def nested():
+    def helper():
+        result = 41
+        return result
+    helper()
+    return {"result": result}
+""".lstrip()
+
+        parsed = parse_source(source, Path("/tmp/nested_output.py"))
+
+        self.assertFalse(parsed.ok)
+        self.assertEqual(parsed.issues[0].kind, "invalid_node_return")
+
+    def test_rejects_multiple_or_conditional_node_returns(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="choose", outputs=["x"])
+def choose(flag):
+    if flag:
+        x = 1
+        return {"x": x}
+    x = 2
+    return {"x": x}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/multiple_returns.py"))
+
+        self.assertFalse(result.ok)
+        issue = next(item for item in result.issues if item.kind == "invalid_node_return")
+        self.assertIn("exactly one return statement", issue.message)
+
+    def test_nested_helper_return_does_not_make_node_return_custom(self) -> None:
+        source = """
+from nodebook import node
+
+@node(id="show", outputs=["x"])
+def show_value():
+    def helper():
+        return 1
+    x = helper()
+    return {"x": x}
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/nested_return.py"))
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.document is not None
-        node = result.document.nodes[0]
-        self.assertTrue(node.custom_return)
-        self.assertFalse(node.editable)
-        self.assertEqual(node.display_code, 'return {"x": 1}')
+        self.assertTrue(result.document.nodes[0].editable)
+        self.assertFalse(result.document.nodes[0].custom_return)
 
     def test_rejects_unsupported_from_nodebook_import_names(self) -> None:
         source = """

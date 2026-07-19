@@ -25,7 +25,8 @@ from nodebook import node
 @node(id="load", outputs=["value"])
 def load():
     from {helper_name} import VALUE
-    return {{"value": VALUE}}
+    value = VALUE
+    return {{"value": value}}
 '''.lstrip()
 
                 first = run_source(source, root / "doc.py")
@@ -69,7 +70,8 @@ from nodebook import node
 @node(id="load", outputs=["value"])
 def load():
     from {helper_name} import VALUE
-    return {{"value": VALUE}}
+    value = VALUE
+    return {{"value": value}}
 '''.lstrip()
 
             first = run_source(source, root / "doc.py")
@@ -78,6 +80,58 @@ def load():
             self.assertTrue(helper_bytecode.exists())
             self.assertEqual(first["finalOutputsByNode"]["load"]["value"]["jsonValue"], "from bytecode")
             self.assertEqual(second["finalOutputsByNode"]["load"]["value"]["jsonValue"], "from bytecode")
+
+    def test_dynamic_module_metadata_does_not_break_repeated_runs(self) -> None:
+        proxy_name = "nodebook_dynamic_module_proxy"
+        relative_proxy_name = "nodebook_relative_module_proxy"
+        source = f'''
+import sys
+import types
+
+class DynamicModule(types.ModuleType):
+    def __getattr__(self, name):
+        self.metadata_reads.append(name)
+        if name == "__file__":
+            return "_ops.py"
+        if name == "__cached__":
+            return object()
+        raise AttributeError(name)
+
+dynamic_proxy = DynamicModule({proxy_name!r})
+dynamic_proxy.metadata_reads = []
+sys.modules[{proxy_name!r}] = dynamic_proxy
+
+relative_proxy = types.ModuleType({relative_proxy_name!r})
+relative_proxy.__file__ = "_ops.py"
+relative_proxy.__cached__ = object()
+sys.modules[{relative_proxy_name!r}] = relative_proxy
+
+from nodebook import node
+
+@node(id="load", outputs=["value"])
+def load():
+    value = "ok"
+    return {{"value": value}}
+'''.lstrip()
+
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                document_path = Path(directory) / "doc.py"
+                session = RuntimeSession()
+
+                first = session.run_graph(source, document_path)
+                second = session.run_graph(source, document_path)
+
+            self.assertTrue(first["ok"])
+            self.assertTrue(second["ok"])
+            self.assertEqual(
+                second["finalOutputsByNode"]["load"]["value"]["jsonValue"],
+                "ok",
+            )
+            self.assertEqual(sys.modules[proxy_name].metadata_reads, [])
+        finally:
+            sys.modules.pop(proxy_name, None)
+            sys.modules.pop(relative_proxy_name, None)
 
     def test_document_local_module_shadows_preloaded_top_level_module(self) -> None:
         original_json_modules = {
@@ -106,7 +160,8 @@ from nodebook import node
 @node(id="load", outputs=["value"])
 def load():
     from json.decoder import VALUE
-    return {"value": VALUE}
+    value = VALUE
+    return {"value": value}
 '''.lstrip()
 
                 first = run_source(source, first_root / "doc.py")
@@ -144,7 +199,8 @@ from nodebook import node
 @node(id="load", outputs=["value"])
 def load():
     from {helper_name}.values import VALUE
-    return {{"value": VALUE}}
+    value = VALUE
+    return {{"value": value}}
 '''.lstrip()
 
                 first = run_source(source, first_root / "doc.py")
@@ -178,7 +234,8 @@ from nodebook import node
 @node(id="load", outputs=["value"])
 def load():
     from {helper_name} import VALUE
-    return {{"value": VALUE}}
+    value = VALUE
+    return {{"value": value}}
 '''.lstrip()
             session = RuntimeSession()
 
@@ -202,7 +259,8 @@ def loud():
     print("e" * (1024 * 1024 + 100), file=sys.stderr)
     for value in range(105):
         display(value)
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 '''.lstrip()
         result = run_source(source, Path("/tmp/loud.py"))
 
@@ -226,7 +284,8 @@ class Noisy:
 
 @node(id="make", outputs=["value"])
 def make():
-    return {"value": Noisy()}
+    value = Noisy()
+    return {"value": value}
 '''.lstrip()
         result = run_source(source, Path("/tmp/noisy_preview.py"))
 
@@ -242,6 +301,8 @@ from nodebook import node
 @node(id="bad", outputs=["value"])
 def bad():
     raise RuntimeError("🔥" * 100_000)
+    value = None
+    return {"value": value}
 '''.lstrip()
 
         result = run_source(source, Path("/tmp/huge_error.py"), trace=True)
@@ -288,15 +349,18 @@ from nodebook import node
 
 @node(id="a", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 
 @node(id="b", outputs=["y"])
 def second(x):
-    return {"y": x + 1}
+    y = x + 1
+    return {"y": y}
 
 @node(id="c", outputs=["z"])
 def third(y):
-    return {"z": y + 1}
+    z = y + 1
+    return {"z": z}
 
 second.depends_on(first)
 third.depends_on(second)
@@ -363,11 +427,13 @@ COUNTER.write_text(str(previous + 1))
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": previous + 1}
+    x = previous + 1
+    return {"x": x}
 
 @node(id="second", outputs=["y"])
 def second(x):
-    return {"y": x + 1}
+    y = x + 1
+    return {"y": y}
 
 second.depends_on(first)
 """.lstrip()
@@ -386,7 +452,8 @@ from nodebook import node
 
 @node(id="first", outputs=["x"])
 def first():
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
 
         result = run_source(source, Path("/tmp/missing_globals.py"))
@@ -408,7 +475,8 @@ from nodebook import node
 @node(id="first", outputs=["x"])
 def first():
     import definitely_missing_nodebook_node_package
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 """.lstrip()
 
         result = run_source(source, Path("/tmp/missing_node.py"))
@@ -433,7 +501,8 @@ from nodebook import display, node
 def talk():
     print("hello stdout")
     display({"seen": True})
-    return {"value": 3}
+    value = 3
+    return {"value": value}
 """.lstrip()
 
         result = run_source(source, Path("/tmp/display.py"), trace=True)
@@ -453,7 +522,8 @@ from nodebook import node
 @node(id="value", outputs=["x"])
 def value():
     print(chr(0xD800))
-    return {"x": 1}
+    x = 1
+    return {"x": x}
 '''.lstrip()
         repr_source = '''
 from nodebook import node
@@ -464,7 +534,8 @@ class Value:
 
 @node(id="value", outputs=["x"])
 def value():
-    return {"x": Value()}
+    x = Value()
+    return {"x": x}
 '''.lstrip()
         error_source = '''
 from nodebook import node
@@ -476,6 +547,8 @@ class Broken(Exception):
 @node(id="value", outputs=["x"])
 def value():
     raise Broken()
+    x = None
+    return {"x": x}
 '''.lstrip()
 
         stdout_result = run_source(stdout_source, Path("/tmp/surrogate_stdout.py"))
@@ -509,7 +582,8 @@ from nodebook import node
 @node(id="talk", outputs=["value"])
 def talk():
     nb.display({"seen": True})
-    return {"value": 3}
+    value = 3
+    return {"value": value}
 """.lstrip()
 
         result = run_source(source, Path("/tmp/display_alias.py"), trace=True)
@@ -519,7 +593,7 @@ def talk():
         self.assertEqual(node_result["displays"][0]["value"]["jsonValue"], {"seen": True})
         self.assertEqual(node_result["outputEvents"][0]["kind"], "display")
 
-    def test_fails_when_declared_output_is_missing(self) -> None:
+    def test_rejects_return_that_omits_declared_output(self) -> None:
         source = """
 from nodebook import node
 
@@ -531,9 +605,11 @@ def bad():
         result = run_source(source, Path("/tmp/bad.py"))
 
         self.assertFalse(result["ok"])
-        self.assertEqual(result["executedNodeIds"], ["bad"])
-        self.assertEqual(result["error"]["nodeId"], "bad")
-        self.assertIn("declared outputs", result["resultsByNode"]["bad"]["error"])
+        self.assertEqual(result["executedNodeIds"], [])
+        self.assertEqual(result["error"]["kind"], "validation_error")
+        issue = result["error"]["issues"][0]
+        self.assertEqual(issue["kind"], "invalid_node_return")
+        self.assertIn("decorator declares ['value']", issue["message"])
 
 
 if __name__ == "__main__":

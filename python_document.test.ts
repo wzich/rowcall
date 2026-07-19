@@ -277,7 +277,7 @@ Deno.test("loadPythonDocument applies map-shaped sidecar node metadata", async (
   );
 });
 
-Deno.test("loadPythonDocument preserves custom return nodes", async () => {
+Deno.test("loadPythonDocument rejects custom return nodes", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/custom.py`;
 
@@ -296,19 +296,20 @@ Deno.test("loadPythonDocument preserves custom return nodes", async () => {
   );
 
   const decoded = await loadPythonDocument(documentPath);
-  if (!decoded.ok) {
-    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
-  }
 
-  assertEquals(decoded.document.nodes[0].customReturn, true);
-  assertEquals(
-    decoded.document.nodes[0].code,
-    [
-      "if True:",
-      '    return {"x": 1}',
-      'return {"x": 0}',
-    ].join("\n"),
-  );
+  assertEquals(decoded.ok, false);
+  if (!decoded.ok) {
+    assertEquals(decoded.issues[0].kind, "invalid_node_return");
+    assertEquals(decoded.issues[0].nodeId, "n_custom");
+    assertEquals(
+      decoded.issues[0].message.includes("exactly one return statement"),
+      true,
+    );
+    assertEquals(
+      decoded.issues[0].message.includes("nodebook help format"),
+      true,
+    );
+  }
 });
 
 Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {
@@ -322,12 +323,14 @@ Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {
       "",
       '@node(id="n_a", outputs=["x"])',
       "def make_x():",
-      '    return {"x": 1}',
+      "    x = 1",
+      '    return {"x": x}',
       "",
       '@node(id="n_b", outputs=["y"])',
       "def make_y():",
       "    result = make_x()",
-      '    return {"y": result["x"]}',
+      '    y = result["x"]',
+      '    return {"y": y}',
       "",
     ].join("\n"),
   );

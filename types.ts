@@ -83,6 +83,7 @@ export type ValidationIssue = {
     | "conflicting_outputs"
     | "invalid_operation"
     | "invalid_python"
+    | "invalid_node_return"
     | "stale_document"
     | "duplicate_function_name"
     | "unsupported_python"

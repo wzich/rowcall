@@ -312,7 +312,21 @@ def write_run_error(
     kind = str(error.get("kind") or "error")
     message = str(error.get("message") or "Unknown error")
 
-    if kind == "missing_module":
+    if kind == "validation_error":
+        stream.write(f"{kind}: {message}\n")
+        issues = error.get("issues")
+        if isinstance(issues, list):
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                issue_kind = str(issue.get("kind") or "validation_issue")
+                issue_path = issue.get("path")
+                location = f" ({issue_path})" if issue_path else ""
+                issue_message = str(
+                    issue.get("message") or "Unknown validation issue"
+                )
+                stream.write(f"- {issue_kind}{location}: {issue_message}\n")
+    elif kind == "missing_module":
         missing_module = str(error.get("missingModule") or "unknown")
         phase = error.get("phase")
         node_id = error.get("nodeId")
