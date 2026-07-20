@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
-import { Moon, Save, Sun } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Moon, Save, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyDocumentOperations,
@@ -20,6 +20,7 @@ import {
 import {
   type ExecutionDisplayState,
   type GraphInspectorModel,
+  type InspectorNavigationRequest,
   InspectorPanel,
   type NodeInspectorBadge,
   type NodeInspectorSelection,
@@ -41,6 +42,7 @@ import {
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
+import type { RunNotification } from "./query/executionPresentation.ts";
 import { classifySaveFailure } from "./saveOutcome.ts";
 import {
   canApplyLoadedDocument,
@@ -56,6 +58,7 @@ const themeStorageKey = "nodebook:theme";
 const documentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
+const successfulRunNoticeMs = 3_000;
 
 export type ThemeMode = "light" | "dark";
 
@@ -107,6 +110,12 @@ function getInitialThemeMode(): ThemeMode {
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [inspectorNavigationRequest, setInspectorNavigationRequest] = useState<
+    InspectorNavigationRequest | null
+  >(null);
+  const [canvasFocusRequest, setCanvasFocusRequest] = useState<
+    { nodeId: string; requestId: number } | null
+  >(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
   const [editableDocument, setEditableDocument] = useState<
     NodebookDocumentV1 | null
@@ -177,9 +186,11 @@ export default function App() {
     executionStateByNodeId,
     graphExecutionState,
     nodeRunStatuses,
+    runNotification,
     applyExecutionStreamEvent,
     clearActiveRun,
     clearExecutionSession,
+    dismissRunNotification,
     forgetNodes,
     isCurrentSource,
     markGraphExecutionRunning,
@@ -197,6 +208,18 @@ export default function App() {
   const isSelectedNodeRunning = selectedNodeId
     ? executionStateByNodeId[selectedNodeId]?.status === "running"
     : false;
+
+  useEffect(() => {
+    if (runNotification?.tone !== "success") {
+      return;
+    }
+
+    const timeoutId = setTimeout(
+      () => dismissRunNotification(runNotification.id),
+      successfulRunNoticeMs,
+    );
+    return () => clearTimeout(timeoutId);
+  }, [dismissRunNotification, runNotification]);
 
   useEffect(() => {
     editableDocumentRef.current = editableDocument;
@@ -1241,6 +1264,32 @@ export default function App() {
     });
   }
 
+  function handleRunNotificationClick(notification: RunNotification) {
+    const destination = notification.destination;
+    if (destination.kind === "node") {
+      setSelectedNodeId(destination.nodeId);
+      setCanvasFocusRequest((current) => ({
+        nodeId: destination.nodeId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      return;
+    }
+
+    showInspectorTarget(
+      destination.kind === "document_globals"
+        ? "document_globals"
+        : "run_result",
+    );
+  }
+
+  function showInspectorTarget(target: InspectorNavigationRequest["target"]) {
+    setSelectedNodeId(null);
+    setInspectorNavigationRequest((current) => ({
+      target,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+  }
+
   return (
     <div
       className={[
@@ -1345,6 +1394,14 @@ export default function App() {
           </button>
         </div>
       </header>
+      {runNotification && (
+        <RunNotificationCard
+          notification={runNotification}
+          nodeLabelsById={graphInspectorDetails?.nodeLabelsById ?? {}}
+          onOpen={() => handleRunNotificationClick(runNotification)}
+          onDismiss={() => dismissRunNotification(runNotification.id)}
+        />
+      )}
       {externalDocumentNotice.kind === "dirty" && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100">
           <p className="min-w-0 flex-1">
@@ -1490,6 +1547,7 @@ export default function App() {
                 key={documentCanvasKey}
                 graph={editableGraph}
                 selectedNodeId={selectedNodeId}
+                focusNodeRequest={canvasFocusRequest}
                 nodeRunStatuses={nodeRunStatuses}
                 nodePreviews={nodePreviews}
                 nodeInputPreviews={nodeInputPreviews}
@@ -1546,11 +1604,85 @@ export default function App() {
               onRunGraph={handleRunGraph}
               onSelectionClear={() => setSelectedNodeId(null)}
               actionsBlocked={saveStatus === "outcome_unknown"}
+              navigationRequest={inspectorNavigationRequest}
+              onShowDocumentGlobals={() =>
+                showInspectorTarget("document_globals")}
             />
             <ShortcutHintPanel />
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function RunNotificationCard({
+  notification,
+  nodeLabelsById,
+  onOpen,
+  onDismiss,
+}: {
+  notification: RunNotification;
+  nodeLabelsById: Record<string, string>;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const isDanger = notification.tone === "danger";
+  const nodeLabel = notification.destination.kind === "node"
+    ? nodeLabelsById[notification.destination.nodeId]
+    : null;
+  const summary = nodeLabel ? `${nodeLabel} failed` : notification.summary;
+
+  return (
+    <div
+      role={isDanger ? "alert" : "status"}
+      aria-live={isDanger ? "assertive" : "polite"}
+      className={[
+        "fixed bottom-4 right-4 z-50 flex w-[min(20rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
+        isDanger
+          ? "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
+          : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100",
+      ].join(" ")}
+    >
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left hover:bg-black/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-current"
+        aria-label={`${notification.title}. ${summary}. ${
+          isDanger ? "View error details" : "View run details"
+        }`}
+        onClick={onOpen}
+      >
+        {isDanger
+          ? (
+            <AlertTriangle
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )
+          : (
+            <CheckCircle2
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )}
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">
+            {notification.title}
+          </span>
+          <span className="block truncate text-xs opacity-80">{summary}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label="Dismiss run notification"
+        title="Dismiss"
+        className="m-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-black/10 focus:outline-none focus:ring-2 focus:ring-current"
+        onClick={onDismiss}
+      >
+        <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+      </button>
     </div>
   );
 }

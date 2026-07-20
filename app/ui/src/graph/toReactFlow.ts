@@ -53,6 +53,7 @@ export type NodeRunVisualStatus =
   | "queued"
   | "running"
   | "blocked"
+  | "blocked_globals"
   | "completed"
   | "failed";
 

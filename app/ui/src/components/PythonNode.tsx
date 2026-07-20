@@ -31,6 +31,10 @@ const statusStyles: Record<
     dot: "bg-red-300",
     label: "Did not run because an upstream step failed",
   },
+  blocked_globals: {
+    dot: "bg-red-300",
+    label: "Did not run because Document Globals failed",
+  },
   completed: {
     dot: "bg-emerald-500",
     label: "Ran successfully",

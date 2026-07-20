@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
@@ -8,6 +8,11 @@ import type {
   GraphExecutionDisplayState,
 } from "../components/InspectorPanel.tsx";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
+import {
+  createRunNotification,
+  getNodeRunVisualStatusFromResponse,
+  type RunNotification,
+} from "./executionPresentation.ts";
 
 export function useExecutionSession(
   selectedSourceValue: string,
@@ -22,10 +27,16 @@ export function useExecutionSession(
   const [nodeRunStatuses, setNodeRunStatuses] = useState<
     Record<string, NodeRunVisualStatus>
   >({});
+  const [runNotification, setRunNotification] = useState<
+    RunNotification | null
+  >(null);
   const selectedSourceValueRef = useRef(selectedSourceValue);
   selectedSourceValueRef.current = selectedSourceValue;
   const activeRunIdRef = useRef<string | null>(null);
   const activeRunAbortControllerRef = useRef<AbortController | null>(null);
+  const activePlanNodeIdsRef = useRef<string[]>([]);
+  const notificationIdRef = useRef(0);
+  const notifiedResponseRef = useRef<ExecutionResponse | null>(null);
 
   function getCurrentSourceValue(): string {
     return options.getCurrentSourceValue?.() ?? selectedSourceValueRef.current;
@@ -78,6 +89,9 @@ export function useExecutionSession(
     }
 
     if (event.type === "run_plan") {
+      activePlanNodeIdsRef.current = event.plan.steps.map((step) =>
+        step.nodeId
+      );
       setNodeRunStatuses(
         Object.fromEntries(
           event.plan.steps.map((step) => [step.nodeId, "queued" as const]),
@@ -125,16 +139,13 @@ export function useExecutionSession(
       storeGraphExecutionResponse(event.response);
       storeExecutionResponseForNodeIds(
         event.response,
-        event.response.runType === "run_graph"
-          ? Object.keys(event.response.resultsByNode)
+        activePlanNodeIdsRef.current.length > 0
+          ? activePlanNodeIdsRef.current
           : [
             ...event.response.executedNodeIds,
             event.response.targetNodeId,
           ].filter((nodeId): nodeId is string => Boolean(nodeId)),
       );
-      if (event.type === "run_failed") {
-        resetUnfinishedRunStatuses();
-      }
     }
   }
 
@@ -178,18 +189,6 @@ export function useExecutionSession(
     });
   }
 
-  function getNodeRunVisualStatusFromResponse(
-    response: ExecutionResponse,
-    nodeId: string,
-  ): NodeRunVisualStatus {
-    const result = response.resultsByNode[nodeId];
-    if (result) {
-      return result.ok ? "completed" : "failed";
-    }
-
-    return response.ok ? "completed" : "blocked";
-  }
-
   function storeExecutionRequestErrorForNode(
     error: unknown,
     targetNodeId: string,
@@ -230,6 +229,9 @@ export function useExecutionSession(
     const controller = new AbortController();
     activeRunAbortControllerRef.current = controller;
     activeRunIdRef.current = null;
+    activePlanNodeIdsRef.current = [];
+    notifiedResponseRef.current = null;
+    setRunNotification(null);
     return controller;
   }
 
@@ -237,6 +239,7 @@ export function useExecutionSession(
     if (activeRunAbortControllerRef.current === controller) {
       activeRunAbortControllerRef.current = null;
       activeRunIdRef.current = null;
+      activePlanNodeIdsRef.current = [];
       return true;
     }
     return false;
@@ -246,6 +249,7 @@ export function useExecutionSession(
     activeRunAbortControllerRef.current?.abort();
     activeRunAbortControllerRef.current = null;
     activeRunIdRef.current = null;
+    activePlanNodeIdsRef.current = [];
   }
 
   function storeGraphExecutionResponse(response: ExecutionResponse) {
@@ -253,6 +257,13 @@ export function useExecutionSession(
       status: "completed",
       response,
     });
+    if (notifiedResponseRef.current !== response) {
+      notifiedResponseRef.current = response;
+      notificationIdRef.current += 1;
+      setRunNotification(
+        createRunNotification(response, notificationIdRef.current),
+      );
+    }
   }
 
   function storeGraphExecutionRequestError(error: unknown) {
@@ -262,13 +273,32 @@ export function useExecutionSession(
         ? error.message
         : "The request failed before Python execution completed.",
     });
+    resetUnfinishedRunStatuses();
+    notificationIdRef.current += 1;
+    setRunNotification({
+      id: notificationIdRef.current,
+      tone: "danger",
+      title: "Run couldn't start",
+      summary: "Execution request failed",
+      destination: { kind: "graph" },
+    });
   }
+
+  const dismissRunNotification = useCallback((notificationId?: number) => {
+    setRunNotification((current) =>
+      notificationId === undefined || current?.id === notificationId
+        ? null
+        : current
+    );
+  }, []);
 
   function clearExecutionSession() {
     abortActiveRun();
     setExecutionStateByNodeId({});
     setGraphExecutionState(null);
     setNodeRunStatuses({});
+    setRunNotification(null);
+    notifiedResponseRef.current = null;
   }
 
   function markNodesStale(nodeIds: Iterable<string>) {
@@ -314,9 +344,11 @@ export function useExecutionSession(
     executionStateByNodeId,
     graphExecutionState,
     nodeRunStatuses,
+    runNotification,
     applyExecutionStreamEvent,
     clearActiveRun,
     clearExecutionSession,
+    dismissRunNotification,
     isCurrentSource,
     forgetNodes,
     markGraphExecutionRunning,

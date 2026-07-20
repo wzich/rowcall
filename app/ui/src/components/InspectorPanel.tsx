@@ -109,6 +109,11 @@ export type GraphExecutionDisplayState = Extract<
   | { status: "request_error" }
 >;
 
+export type InspectorNavigationRequest = {
+  target: "document_globals" | "run_result";
+  requestId: number;
+};
+
 type InspectorPanelProps = {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection | null;
@@ -136,6 +141,8 @@ type InspectorPanelProps = {
   onRunGraph: () => void;
   onSelectionClear: () => void;
   actionsBlocked?: boolean;
+  navigationRequest?: InspectorNavigationRequest | null;
+  onShowDocumentGlobals?: () => void;
 };
 
 function CodeList(
@@ -678,6 +685,7 @@ function RunResult({
 
   if (!nodeResult && !response.ok) {
     const failedNodeId = response.error?.nodeId;
+    const globalsFailed = response.error?.phase === "document_globals";
     const subject = response.runType === "run_to_node" &&
         response.targetNodeId === selectedNode.id
       ? "Target"
@@ -691,7 +699,9 @@ function RunResult({
         <p className="mt-2 text-sm font-medium text-red-800">Run failed</p>
         <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
           <p className="text-sm font-medium text-red-800">
-            {failedNodeId
+            {globalsFailed
+              ? `${subject} did not run because Document Globals failed.`
+              : failedNodeId
               ? (
                 <>
                   {subject} did not run because{" "}
@@ -701,6 +711,11 @@ function RunResult({
               )
               : `${subject} did not run because an upstream node failed.`}
           </p>
+          {globalsFailed && response.error?.message && (
+            <p className="mt-1 text-sm text-red-700">
+              {response.error.message}
+            </p>
+          )}
         </div>
         <NodeTraceResult
           step={traceStep}
@@ -820,13 +835,45 @@ function GraphInspector({
   onNodeSelect: (nodeId: string) => void;
   onGlobalsCodeChange: (code: string) => void;
 }) {
+  const globalsError = graphExecutionState?.status === "completed" &&
+      !graphExecutionState.response.ok &&
+      graphExecutionState.response.error?.phase === "document_globals"
+    ? graphExecutionState.response.error
+    : null;
+
   return (
     <div className="space-y-4">
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
+      <div data-inspector-target="run_result">
+        <GraphRunResult
+          executionState={graphExecutionState}
+          nodeLabelsById={graph.nodeLabelsById}
+          onNodeSelect={onNodeSelect}
+        />
+      </div>
+
+      <section
+        data-inspector-target="document_globals"
+        className={[
+          "border-t pt-4",
+          globalsError
+            ? "rounded border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40"
+            : "border-zinc-200",
+        ].join(" ")}
+      >
+        <h3
+          className={[
+            "text-xs font-semibold uppercase",
+            globalsError ? "text-red-800 dark:text-red-300" : "text-zinc-500",
+          ].join(" ")}
+        >
           Document Globals
         </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
+        <div
+          className={[
+            "mt-2 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
+            globalsError ? "border-red-300" : "border-zinc-200",
+          ].join(" ")}
+        >
           <CodeMirror
             value={graph.globalsCode}
             extensions={[python()]}
@@ -843,6 +890,18 @@ function GraphInspector({
             theme={themeMode}
           />
         </div>
+        {globalsError && (
+          <div className="mt-2 text-sm text-red-800 dark:text-red-200">
+            <p className="font-medium">
+              {globalsError.message || "Document Globals failed."}
+            </p>
+            {globalsError.pythonExecutable && (
+              <p className="mt-1 truncate font-mono text-xs opacity-80">
+                Python: {globalsError.pythonExecutable}
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       <dl className="grid grid-cols-2 gap-3">
@@ -914,12 +973,6 @@ function GraphInspector({
           />
         </section>
       )}
-
-      <GraphRunResult
-        executionState={graphExecutionState}
-        nodeLabelsById={graph.nodeLabelsById}
-        onNodeSelect={onNodeSelect}
-      />
     </div>
   );
 }
@@ -1211,6 +1264,7 @@ function NodeInspector({
   onOutputsChange,
   onNodeSelect,
   onRunToNode,
+  onShowDocumentGlobals,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
@@ -1222,6 +1276,7 @@ function NodeInspector({
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onNodeSelect: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
+  onShowDocumentGlobals?: () => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
@@ -1248,6 +1303,9 @@ function NodeInspector({
     executionState,
     runStatus,
   );
+  const isBlockedByDocumentGlobals = executionState?.status === "completed" &&
+    !executionState.response.ok &&
+    executionState.response.error?.phase === "document_globals";
   const extensions = useMemo(() => [
     python(),
     keymap.of([
@@ -1306,6 +1364,9 @@ function NodeInspector({
           outputReplacement={outputReplacement}
           outputReplacementDisabled={readOnly || !selectedNode.editable}
           onOutputReplacement={handleOutputReplacement}
+          onViewError={isBlockedByDocumentGlobals
+            ? onShowDocumentGlobals
+            : undefined}
         />
       </section>
 
@@ -1511,6 +1572,7 @@ function NodeRunBanner({
   outputReplacement,
   outputReplacementDisabled,
   onOutputReplacement,
+  onViewError,
 }: {
   summary: NodeRunSummary;
   inputStatus: string;
@@ -1518,6 +1580,7 @@ function NodeRunBanner({
   outputReplacement: { from: string; to: string } | null;
   outputReplacementDisabled: boolean;
   onOutputReplacement: () => void;
+  onViewError?: () => void;
 }) {
   const hasWarningIssue = preflightIssues.some((issue) =>
     issue.severity === "warning"
@@ -1547,6 +1610,15 @@ function NodeRunBanner({
           <p className="font-medium">{summary.title}</p>
           <p className="mt-0.5 text-xs opacity-80">{summary.detail}</p>
           <p className="mt-1 text-xs opacity-70">{inputStatus}</p>
+          {onViewError && (
+            <button
+              type="button"
+              className="mt-2 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
+              onClick={onViewError}
+            >
+              View Document Globals
+            </button>
+          )}
           {preflightIssues.length > 0 && (
             <ul className="mt-2 space-y-1 text-xs">
               {preflightIssues.map((issue) => (
@@ -1643,7 +1715,17 @@ function getNodeRunSummary(
     }
 
     if (!executionState.response.ok) {
-      const failedNodeId = executionState.response.error?.nodeId;
+      const error = executionState.response.error;
+      const failedNodeId = error?.nodeId;
+      if (error?.phase === "document_globals") {
+        return {
+          variant: "danger",
+          title: "Blocked by Document Globals",
+          detail: error.missingModule
+            ? `The ${error.missingModule} package is unavailable in the active Python runtime.`
+            : error.message,
+        };
+      }
       return {
         variant: "danger",
         title: runStatus === "blocked" ? "Step did not run" : "Run failed",
@@ -1669,6 +1751,14 @@ function getNodeRunSummary(
       variant: "danger",
       title: "Step did not run",
       detail: "An upstream step failed before this step could run.",
+    };
+  }
+
+  if (runStatus === "blocked_globals") {
+    return {
+      variant: "danger",
+      title: "Blocked by Document Globals",
+      detail: "Document Globals failed before this step could run.",
     };
   }
 
@@ -1963,6 +2053,8 @@ export function InspectorPanel({
   onRunGraph,
   onSelectionClear,
   actionsBlocked = false,
+  navigationRequest,
+  onShowDocumentGlobals,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
@@ -1973,6 +2065,7 @@ export function InspectorPanel({
     isGraphRunning;
   const isGraphActionDisabled = actionsBlocked || isGraphRunning;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const handledNavigationRequestIdRef = useRef<number | null>(null);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
   const [inspectorWidth, setInspectorWidth] = useState(
@@ -1987,6 +2080,24 @@ export function InspectorPanel({
   useEffect(() => {
     scrollContainerRef.current?.scrollTo({ top: 0 });
   }, [selectedNode?.id]);
+
+  useEffect(() => {
+    if (
+      !navigationRequest || selectedNode ||
+      handledNavigationRequestIdRef.current === navigationRequest.requestId
+    ) {
+      return;
+    }
+
+    handledNavigationRequestIdRef.current = navigationRequest.requestId;
+    const frameId = requestAnimationFrame(() => {
+      const target = scrollContainerRef.current?.querySelector(
+        `[data-inspector-target="${navigationRequest.target}"]`,
+      );
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [navigationRequest, selectedNode]);
 
   useEffect(() => {
     setNodeNameDraft(selectedNode?.displayName ?? "");
@@ -2168,6 +2279,7 @@ export function InspectorPanel({
                 onOutputsChange={onOutputsChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}
+                onShowDocumentGlobals={onShowDocumentGlobals}
               />
             )
             : (

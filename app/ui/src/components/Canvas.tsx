@@ -58,6 +58,7 @@ type CanvasProps = {
   themeMode: ThemeMode;
   graph: RuntimeGraph;
   selectedNodeId: string | null;
+  focusNodeRequest?: { nodeId: string; requestId: number } | null;
   nodeRunStatuses: Record<string, NodeRunVisualStatus>;
   nodePreviews: Record<string, NodeCanvasPreview>;
   nodeInputPreviews: Record<string, Array<{ name: string; type?: string }>>;
@@ -83,6 +84,7 @@ export function Canvas({
   themeMode,
   graph,
   selectedNodeId,
+  focusNodeRequest,
   nodeRunStatuses,
   nodePreviews,
   nodeInputPreviews,
@@ -310,6 +312,7 @@ export function Canvas({
           onAddNode={onAddNode}
         />
         <InitialFitView nodeCount={renderedNodes.length} />
+        <FocusNode request={focusNodeRequest} />
         <Background
           color={themeMode === "dark" ? "#3f3f46" : "#d4d4d8"}
           gap={18}
@@ -324,6 +327,39 @@ export function Canvas({
       </ReactFlow>
     </div>
   );
+}
+
+function FocusNode({
+  request,
+}: {
+  request?: { nodeId: string; requestId: number } | null;
+}) {
+  const { getNode, getZoom, setCenter } = useReactFlow();
+
+  useEffect(() => {
+    if (!request) {
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      const node = getNode(request.nodeId);
+      if (!node) {
+        return;
+      }
+
+      const width = node.measured?.width ?? node.width ?? 360;
+      const height = node.measured?.height ?? node.height ?? 180;
+      void setCenter(
+        node.position.x + width / 2,
+        node.position.y + height / 2,
+        { duration: 250, zoom: getZoom() },
+      );
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [getNode, getZoom, request, setCenter]);
+
+  return null;
 }
 
 function getOutputTypePreviews(
