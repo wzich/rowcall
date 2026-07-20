@@ -13,6 +13,10 @@ import {
   getNodeRunVisualStatusFromResponse,
   type RunNotification,
 } from "./executionPresentation.ts";
+import {
+  preserveCompletedExecutionStatesForEdit,
+  preserveUnaffectedExecutionStates,
+} from "./executionSessionState.ts";
 
 export function useExecutionSession(
   selectedSourceValue: string,
@@ -301,19 +305,31 @@ export function useExecutionSession(
     notifiedResponseRef.current = null;
   }
 
+  function prepareForDocumentEdit() {
+    abortActiveRun();
+    setExecutionStateByNodeId((current) =>
+      preserveCompletedExecutionStatesForEdit(current)
+    );
+    setGraphExecutionState(null);
+    resetUnfinishedRunStatuses();
+    setRunNotification(null);
+    notifiedResponseRef.current = null;
+  }
+
   function markNodesStale(nodeIds: Iterable<string>) {
     const staleNodeIds = new Set(nodeIds);
     if (staleNodeIds.size === 0) {
       return;
     }
 
+    setExecutionStateByNodeId((current) =>
+      preserveUnaffectedExecutionStates(current, staleNodeIds)
+    );
+
     setNodeRunStatuses((current) => {
       const next = { ...current };
 
       for (const nodeId of staleNodeIds) {
-        if (next[nodeId] === "queued" || next[nodeId] === "running") {
-          continue;
-        }
         next[nodeId] = "stale";
       }
 
@@ -354,6 +370,7 @@ export function useExecutionSession(
     markGraphExecutionRunning,
     markNodesStale,
     markNodeExecutionRunning,
+    prepareForDocumentEdit,
     resetUnfinishedRunStatuses,
     startRunAbortController,
     storeExecutionRequestErrorForNode,

@@ -195,6 +195,7 @@ export default function App() {
     isCurrentSource,
     markGraphExecutionRunning,
     markNodesStale,
+    prepareForDocumentEdit,
     resetUnfinishedRunStatuses,
     startRunAbortController,
     storeExecutionRequestErrorForNode,
@@ -242,6 +243,7 @@ export default function App() {
       };
       editableDocumentRef.current = nextDocument;
       setEditableDocument(nextDocument);
+      clearExecutionSession();
       baseRevisionRef.current = graph.revision ?? "";
       pendingOperationsRef.current = [];
       setPendingOperationCount(0);
@@ -636,7 +638,7 @@ export default function App() {
     if (saveOutcomeUnknownRef.current) {
       return;
     }
-    clearExecutionSession();
+    prepareForDocumentEdit();
     if (firstUnsavedEditAtRef.current === null) {
       const now = Date.now();
       firstUnsavedEditAtRef.current = now;
@@ -648,7 +650,7 @@ export default function App() {
       setSaveStatus("idle");
       setSaveError(null);
     }
-  }, [clearExecutionSession, syncDocumentSourceValue]);
+  }, [prepareForDocumentEdit, syncDocumentSourceValue]);
 
   const commitEditableDocument = useCallback(
     (nextDocument: NodebookDocumentV1) => {
