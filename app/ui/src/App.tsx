@@ -26,7 +26,10 @@ import {
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
 import { toReactFlowGraph } from "./graph/toReactFlow.ts";
-import type { NodeCanvasPreview } from "./graph/toReactFlow.ts";
+import type {
+  NodeCanvasPreview,
+  NodeRunVisualStatus,
+} from "./graph/toReactFlow.ts";
 import {
   type NodebookDocumentV1,
   toRuntimeGraph,
@@ -536,9 +539,13 @@ export default function App() {
   const nodeInputPreviews = useMemo(
     () =>
       editableGraph
-        ? getNodeCanvasInputPreviewsById(editableGraph, executionStateByNodeId)
+        ? getNodeCanvasInputPreviewsById(
+          editableGraph,
+          executionStateByNodeId,
+          nodeRunStatuses,
+        )
         : {},
-    [editableGraph, executionStateByNodeId],
+    [editableGraph, executionStateByNodeId, nodeRunStatuses],
   );
   const nodeOutputOptions = useMemo(
     () => getNodeOutputOptionsById(editableGraph),
@@ -622,6 +629,7 @@ export default function App() {
         editableGraph,
         node.id,
         executionStateByNodeId,
+        nodeRunStatuses,
       ),
       outputPreviews: getOutputPreviewsForNode(
         node.id,
@@ -632,7 +640,13 @@ export default function App() {
       nodeLabelsById: getNodeLabelsById(editableGraph),
       badges,
     };
-  }, [editableGraph, executionStateByNodeId, graphNodeDetails, selectedNodeId]);
+  }, [
+    editableGraph,
+    executionStateByNodeId,
+    graphNodeDetails,
+    nodeRunStatuses,
+    selectedNodeId,
+  ]);
 
   const markDocumentEdited = useCallback(() => {
     if (saveOutcomeUnknownRef.current) {
@@ -2075,11 +2089,17 @@ function resultToCanvasPreview(
 function getNodeCanvasInputPreviewsById(
   graph: RuntimeGraph,
   executionStateByNodeId: Record<string, ExecutionDisplayState>,
+  nodeRunStatuses: Record<string, NodeRunVisualStatus>,
 ): Record<string, Array<{ name: string; type?: string }>> {
   return Object.fromEntries(
     graph.nodes.map((node) => [
       node.id,
-      getNodeInputGroups(graph, node.id, executionStateByNodeId)
+      getNodeInputGroups(
+        graph,
+        node.id,
+        executionStateByNodeId,
+        nodeRunStatuses,
+      )
         .flatMap((group) =>
           Object.entries(group.values).map(([name, preview]) => ({
             name,
@@ -2094,10 +2114,12 @@ function getNodeInputGroups(
   graph: RuntimeGraph,
   nodeId: string,
   executionStateByNodeId: Record<string, ExecutionDisplayState>,
+  nodeRunStatuses: Record<string, NodeRunVisualStatus>,
 ): Array<{
   nodeId: string;
   label: string;
   values: Record<string, ValuePreview | null>;
+  status: NodeRunVisualStatus;
 }> {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
 
@@ -2124,6 +2146,7 @@ function getNodeInputGroups(
         nodeId: upstream.id,
         label: getNodeDisplayTitle(upstream),
         values,
+        status: nodeRunStatuses[upstream.id] ?? "idle",
       }];
     });
 }

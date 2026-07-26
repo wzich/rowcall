@@ -71,7 +71,10 @@ export type NodeInspectorInputGroup = {
   nodeId: string;
   label: string;
   values: Record<string, ValuePreview | null>;
+  status?: NodeRunVisualStatus;
 };
+
+type NodeInspectorMode = "develop" | "overview" | "results";
 
 export type GraphInspectorModel = {
   nodeCount: number;
@@ -1258,24 +1261,39 @@ function NodeInspector({
   selectedNode,
   executionState,
   runStatus,
+  mode,
   readOnly,
   actionsDisabled,
   onCodeChange,
   onOutputsChange,
+  onNodeMetadataChange,
   onNodeSelect,
   onRunToNode,
+  onModeChange,
+  traceEnabled,
+  onTraceEnabledChange,
+  onDeleteNode,
   onShowDocumentGlobals,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
+  mode: NodeInspectorMode;
   readOnly: boolean;
   actionsDisabled: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
+  onNodeMetadataChange: (
+    nodeId: string,
+    metadata: { description?: string },
+  ) => void;
   onNodeSelect: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
+  onModeChange: (mode: NodeInspectorMode) => void;
+  traceEnabled: boolean;
+  onTraceEnabledChange: (value: boolean) => void;
+  onDeleteNode?: (nodeId: string) => void;
   onShowDocumentGlobals?: () => void;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
@@ -1327,6 +1345,40 @@ function NodeInspector({
     selectedNode.id,
     executionState,
   );
+  const inputOptions = useMemo(
+    () => flattenInputPreviews(selectedNode.inputGroups),
+    [selectedNode.inputGroups],
+  );
+  const outputPreviewOptions = useMemo(
+    () =>
+      selectedNode.outputs.map((name) => ({
+        name,
+        preview: selectedNode.outputPreviews[name] ?? null,
+      })),
+    [selectedNode.outputPreviews, selectedNode.outputs],
+  );
+  const [selectedInputName, setSelectedInputName] = useState(
+    () => getPreferredPreviewName(inputOptions),
+  );
+  const [selectedOutputName, setSelectedOutputName] = useState(
+    () => getPreferredPreviewName(outputPreviewOptions),
+  );
+
+  useEffect(() => {
+    setSelectedInputName((current) =>
+      inputOptions.some((option) => option.name === current)
+        ? current
+        : getPreferredPreviewName(inputOptions)
+    );
+  }, [inputOptions, selectedNode.id]);
+
+  useEffect(() => {
+    setSelectedOutputName((current) =>
+      outputPreviewOptions.some((option) => option.name === current)
+        ? current
+        : getPreferredPreviewName(outputPreviewOptions)
+    );
+  }, [outputPreviewOptions, selectedNode.id]);
 
   const handleOutputReplacement = () => {
     if (!outputReplacement || readOnly || !selectedNode.editable) return;
@@ -1354,140 +1406,930 @@ function NodeInspector({
     );
   };
 
+  const handleExposeOutput = (name: string) => {
+    if (
+      readOnly || !selectedNode.editable || selectedNode.outputs.includes(name)
+    ) {
+      return;
+    }
+    onOutputsChange(selectedNode.id, [...selectedNode.outputs, name]);
+    setSelectedOutputName(name);
+  };
+
+  const exposableOutputs = outputOptions.filter((option) =>
+    option.source !== "missing" && !selectedNode.outputs.includes(option.name)
+  );
+
+  if (mode === "overview") {
+    return (
+      <NodeOverview
+        selectedNode={selectedNode}
+        outputOptions={outputOptions}
+        outputsReadOnly={outputsReadOnly}
+        actionsDisabled={actionsDisabled}
+        onOutputToggle={handleOutputToggle}
+        onNodeMetadataChange={onNodeMetadataChange}
+        onNodeSelect={onNodeSelect}
+        onDeleteNode={onDeleteNode}
+      />
+    );
+  }
+
+  if (mode === "results") {
+    return (
+      <NodeResults
+        selectedNode={selectedNode}
+        executionState={executionState}
+        runStatus={runStatus}
+        runSummary={runSummary}
+        inputStatus={inputStatus}
+        preflightIssues={preflightIssues}
+        outputReplacement={outputReplacement}
+        outputReplacementDisabled={readOnly || !selectedNode.editable}
+        onOutputReplacement={handleOutputReplacement}
+        onViewError={isBlockedByDocumentGlobals
+          ? onShowDocumentGlobals
+          : undefined}
+        traceEnabled={traceEnabled}
+        onTraceEnabledChange={onTraceEnabledChange}
+        shouldShowPriorOutputPreviews={shouldShowPriorOutputPreviews}
+      />
+    );
+  }
+
   return (
-    <div className="space-y-5">
-      <section>
+    <NodeDevelop
+      themeMode={themeMode}
+      selectedNode={selectedNode}
+      executionState={executionState}
+      runStatus={runStatus}
+      codeReadOnly={codeReadOnly}
+      extensions={extensions}
+      inputOptions={inputOptions}
+      outputOptions={outputPreviewOptions}
+      exposableOutputs={exposableOutputs}
+      selectedInputName={selectedInputName}
+      selectedOutputName={selectedOutputName}
+      runSummary={runSummary}
+      preflightIssues={preflightIssues}
+      outputReplacement={outputReplacement}
+      outputReplacementDisabled={readOnly || !selectedNode.editable}
+      onInputSelect={setSelectedInputName}
+      onOutputSelect={setSelectedOutputName}
+      onExposeOutput={handleExposeOutput}
+      onCodeChange={onCodeChange}
+      onOutputReplacement={handleOutputReplacement}
+      onShowDocumentGlobals={isBlockedByDocumentGlobals
+        ? onShowDocumentGlobals
+        : undefined}
+      onShowResults={() => onModeChange("results")}
+    />
+  );
+}
+
+type InspectorPreviewOption = {
+  name: string;
+  preview: ValuePreview | null;
+  sourceNodeId?: string;
+  sourceLabel?: string;
+  status?: NodeRunVisualStatus;
+};
+
+function flattenInputPreviews(
+  groups: NodeInspectorInputGroup[],
+): InspectorPreviewOption[] {
+  return groups.flatMap((group) =>
+    Object.entries(group.values).map(([name, preview]) => ({
+      name,
+      preview,
+      sourceNodeId: group.nodeId,
+      sourceLabel: group.label,
+      status: group.status,
+    }))
+  );
+}
+
+function getPreferredPreviewName(options: InspectorPreviewOption[]): string {
+  return options.find((option) => option.preview?.table)?.name ??
+    options[0]?.name ?? "";
+}
+
+function NodeDevelop({
+  themeMode,
+  selectedNode,
+  executionState,
+  runStatus,
+  codeReadOnly,
+  extensions,
+  inputOptions,
+  outputOptions,
+  exposableOutputs,
+  selectedInputName,
+  selectedOutputName,
+  runSummary,
+  preflightIssues,
+  outputReplacement,
+  outputReplacementDisabled,
+  onInputSelect,
+  onOutputSelect,
+  onExposeOutput,
+  onCodeChange,
+  onOutputReplacement,
+  onShowDocumentGlobals,
+  onShowResults,
+}: {
+  themeMode: ThemeMode;
+  selectedNode: NodeInspectorSelection;
+  executionState: ExecutionDisplayState | null;
+  runStatus: NodeRunVisualStatus;
+  codeReadOnly: boolean;
+  extensions: Array<
+    ReturnType<typeof python> | ReturnType<typeof keymap.of>
+  >;
+  inputOptions: InspectorPreviewOption[];
+  outputOptions: InspectorPreviewOption[];
+  exposableOutputs: OutputOption[];
+  selectedInputName: string;
+  selectedOutputName: string;
+  runSummary: NodeRunSummary;
+  preflightIssues: PreflightIssue[];
+  outputReplacement: { from: string; to: string } | null;
+  outputReplacementDisabled: boolean;
+  onInputSelect: (name: string) => void;
+  onOutputSelect: (name: string) => void;
+  onExposeOutput: (name: string) => void;
+  onCodeChange: (nodeId: string, code: string) => void;
+  onOutputReplacement: () => void;
+  onShowDocumentGlobals?: () => void;
+  onShowResults: () => void;
+}) {
+  const selectedInput =
+    inputOptions.find((option) => option.name === selectedInputName) ?? null;
+  const selectedOutput =
+    outputOptions.find((option) => option.name === selectedOutputName) ?? null;
+  const outputIssue = getDevelopOutputIssue(
+    selectedNode,
+    executionState,
+    runStatus,
+    runSummary,
+    preflightIssues,
+  );
+
+  return (
+    <div className="h-full min-h-[500px] overflow-hidden bg-white dark:bg-zinc-900">
+      <div className="flex h-full flex-col">
+        <ValuePeek
+          label="Inputs"
+          direction="input"
+          className="h-[24%] min-h-28"
+          options={inputOptions}
+          selectedName={selectedInputName}
+          selectedOption={selectedInput}
+          status={selectedInput?.status ?? "idle"}
+          emptyLabel="This source step has no upstream inputs."
+          onSelect={onInputSelect}
+        />
+
+        <section className="flex min-h-52 flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
+              Code
+            </h3>
+            <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+              Shift ↵ run
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
+            <div data-shortcut-scope="editor" className="h-full">
+              <CodeMirror
+                className="h-full"
+                value={selectedNode.code}
+                height="100%"
+                extensions={extensions}
+                readOnly={codeReadOnly}
+                onChange={(value) => onCodeChange(selectedNode.id, value)}
+                basicSetup={{
+                  autocompletion: false,
+                  closeBrackets: true,
+                  foldGutter: true,
+                  highlightActiveLine: false,
+                  highlightActiveLineGutter: false,
+                  lineNumbers: true,
+                }}
+                theme={themeMode}
+              />
+            </div>
+          </div>
+        </section>
+
+        <ValuePeek
+          label="Outputs"
+          direction="output"
+          className="h-[32%] min-h-36"
+          options={outputOptions}
+          selectedName={selectedOutputName}
+          selectedOption={selectedOutput}
+          status={runStatus}
+          emptyLabel="Expose a value to preview it here."
+          exposableOutputs={exposableOutputs}
+          exposeDisabled={outputReplacementDisabled}
+          issue={outputIssue}
+          outputReplacement={outputReplacement}
+          outputReplacementDisabled={outputReplacementDisabled}
+          onOutputReplacement={onOutputReplacement}
+          onExpose={onExposeOutput}
+          onShowDocumentGlobals={onShowDocumentGlobals}
+          onSelect={onOutputSelect}
+          onExpand={onShowResults}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ValuePeek({
+  label,
+  direction,
+  className,
+  options,
+  selectedName,
+  selectedOption,
+  status,
+  emptyLabel,
+  exposableOutputs = [],
+  exposeDisabled = false,
+  issue,
+  outputReplacement,
+  outputReplacementDisabled = false,
+  onOutputReplacement,
+  onExpose,
+  onShowDocumentGlobals,
+  onSelect,
+  onExpand,
+}: {
+  label: string;
+  direction: "input" | "output";
+  className: string;
+  options: InspectorPreviewOption[];
+  selectedName: string;
+  selectedOption: InspectorPreviewOption | null;
+  status: NodeRunVisualStatus;
+  emptyLabel: string;
+  exposableOutputs?: OutputOption[];
+  exposeDisabled?: boolean;
+  issue?: DevelopOutputIssue | null;
+  outputReplacement?: { from: string; to: string } | null;
+  outputReplacementDisabled?: boolean;
+  onOutputReplacement?: () => void;
+  onExpose?: (name: string) => void;
+  onShowDocumentGlobals?: () => void;
+  onSelect: (name: string) => void;
+  onExpand?: () => void;
+}) {
+  const state = getPreviewState(status, Boolean(selectedOption?.preview));
+  const isStale = status === "stale";
+
+  return (
+    <section
+      className={`flex shrink-0 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900 ${className}`}
+    >
+      <div className="flex h-12 shrink-0 items-end gap-4 border-b border-zinc-200 bg-zinc-50 px-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex shrink-0 items-center pb-2.5">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
+            {label}
+          </h3>
+        </div>
+        <div className="flex min-w-0 flex-1 items-end gap-4 overflow-x-auto">
+          {options.map((option) => {
+            const selected = option.name === selectedName;
+            return (
+              <button
+                key={option.name}
+                type="button"
+                className={`shrink-0 border-b-2 pb-2.5 font-mono text-xs ${
+                  selected
+                    ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
+                    : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+                onClick={() => onSelect(option.name)}
+              >
+                {option.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex shrink-0 items-center gap-3 pb-2.5">
+          {onExpose && (
+            <ExposeOutputMenu
+              candidates={exposableOutputs}
+              disabled={exposeDisabled}
+              onExpose={onExpose}
+            />
+          )}
+          {state && (
+            <span
+              className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${state.className}`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${state.dotClassName}`}
+              />
+              {state.label}
+            </span>
+          )}
+          {onExpand && (
+            <button
+              type="button"
+              className="text-[11px] font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+              onClick={onExpand}
+            >
+              Expand ↗
+            </button>
+          )}
+        </div>
+      </div>
+
+      {selectedOption && (
+        <PreviewMetadata option={selectedOption} direction={direction} />
+      )}
+
+      <div
+        className={`min-h-0 flex-1 overflow-auto ${
+          isStale ? "opacity-55 grayscale-[0.2]" : ""
+        }`}
+      >
+        {issue
+          ? (
+            <DevelopIssue
+              issue={issue}
+              outputReplacement={outputReplacement}
+              outputReplacementDisabled={outputReplacementDisabled}
+              onOutputReplacement={onOutputReplacement}
+              onShowDocumentGlobals={onShowDocumentGlobals}
+            />
+          )
+          : selectedOption?.preview
+          ? <CompactPreview preview={selectedOption.preview} />
+          : (
+            <div className="flex h-full items-center justify-center px-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
+              {selectedOption
+                ? "Run through this step to create a preview."
+                : emptyLabel}
+            </div>
+          )}
+      </div>
+    </section>
+  );
+}
+
+function ExposeOutputMenu({
+  candidates,
+  disabled,
+  onExpose,
+}: {
+  candidates: OutputOption[];
+  disabled: boolean;
+  onExpose: (name: string) => void;
+}) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const assigned = candidates.filter((candidate) =>
+    candidate.source === "assigned"
+  );
+  const inputs = candidates.filter((candidate) => candidate.source === "input");
+
+  const expose = (name: string) => {
+    detailsRef.current?.removeAttribute("open");
+    onExpose(name);
+  };
+
+  return (
+    <details ref={detailsRef} className="group relative">
+      <summary
+        className={`cursor-pointer list-none text-[11px] font-medium [&::-webkit-details-marker]:hidden ${
+          disabled
+            ? "pointer-events-none text-zinc-300 dark:text-zinc-600"
+            : "text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
+        }`}
+        aria-disabled={disabled}
+      >
+        + Expose
+      </summary>
+      <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded border border-zinc-200 bg-white text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+            Expose a value
+          </p>
+          <p className="mt-0.5 text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
+            Make it available to downstream steps.
+          </p>
+        </div>
+        {candidates.length === 0
+          ? (
+            <p className="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400">
+              Assign a value in the code to expose it.
+            </p>
+          )
+          : (
+            <div className="max-h-52 overflow-y-auto py-1">
+              <ExposeOutputGroup
+                label="Assigned in this step"
+                candidates={assigned}
+                onExpose={expose}
+              />
+              <ExposeOutputGroup
+                label="Pass through an input"
+                candidates={inputs}
+                onExpose={expose}
+              />
+            </div>
+          )}
+      </div>
+    </details>
+  );
+}
+
+function ExposeOutputGroup({
+  label,
+  candidates,
+  onExpose,
+}: {
+  label: string;
+  candidates: OutputOption[];
+  onExpose: (name: string) => void;
+}) {
+  if (candidates.length === 0) return null;
+
+  return (
+    <div className="py-1">
+      <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-zinc-400 dark:text-zinc-500">
+        {label}
+      </p>
+      {candidates.map((candidate) => (
+        <button
+          key={candidate.name}
+          type="button"
+          className="flex w-full items-center px-3 py-2 text-left font-mono text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          onClick={() => onExpose(candidate.name)}
+        >
+          {candidate.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PreviewMetadata({
+  option,
+  direction,
+}: {
+  option: InspectorPreviewOption;
+  direction: "input" | "output";
+}) {
+  const table = option.preview?.table;
+  return (
+    <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-zinc-200 px-4 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+      {direction === "input" && option.sourceLabel && (
+        <>
+          <span>from</span>
+          <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
+            {option.sourceLabel}
+          </span>
+          <span>·</span>
+        </>
+      )}
+      {table
+        ? (
+          <>
+            <span>
+              {table.rowCount.toLocaleString()} rows × {table.columnCount}{" "}
+              columns
+            </span>
+            <span className="ml-auto">First {table.rows.length} rows</span>
+          </>
+        )
+        : (
+          <span className="font-mono">
+            {option.preview?.type ?? "not previewed"}
+          </span>
+        )}
+    </div>
+  );
+}
+
+function CompactPreview({ preview }: { preview: ValuePreview }) {
+  if (!preview.table) {
+    return (
+      <pre className="whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
+        {preview.repr}
+      </pre>
+    );
+  }
+
+  const table = preview.table;
+  return (
+    <table className="min-w-full border-separate border-spacing-0 text-left font-mono text-[10px] text-zinc-800 dark:text-zinc-200">
+      <thead className="sticky top-0 z-[1] bg-zinc-100 dark:bg-zinc-800">
+        <tr>
+          {table.index && (
+            <th className="border-b border-r border-zinc-300 px-3 py-1 font-medium text-zinc-400 dark:border-zinc-700">
+              #
+            </th>
+          )}
+          {table.columns.map((column) => (
+            <th
+              key={column.name}
+              className="whitespace-nowrap border-b border-r border-zinc-300 px-3 py-1 font-semibold text-zinc-600 last:border-r-0 dark:border-zinc-700 dark:text-zinc-300"
+              title={column.dtype}
+            >
+              {column.name}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {table.rows.map((row, rowIndex) => (
+          <tr key={rowIndex}>
+            {table.index && (
+              <td className="whitespace-nowrap border-b border-r border-zinc-100 px-3 py-1 text-zinc-400 dark:border-zinc-800">
+                <CellValue value={table.index[rowIndex] ?? null} />
+              </td>
+            )}
+            {row.map((cell, columnIndex) => (
+              <td
+                key={columnIndex}
+                className="whitespace-nowrap border-b border-r border-zinc-100 px-3 py-1 last:border-r-0 dark:border-zinc-800"
+              >
+                <CellValue value={cell} />
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+type DevelopOutputIssue = {
+  tone: "warning" | "danger";
+  title: string;
+  detail: string;
+  action?: "document_globals";
+};
+
+function getDevelopOutputIssue(
+  selectedNode: NodeInspectorSelection,
+  executionState: ExecutionDisplayState | null,
+  runStatus: NodeRunVisualStatus,
+  runSummary: NodeRunSummary,
+  preflightIssues: PreflightIssue[],
+): DevelopOutputIssue | null {
+  if (runSummary.variant !== "danger") {
+    const contractIssue = preflightIssues.find((issue) =>
+      issue.kind === "missing_output" && issue.severity === "warning"
+    );
+    return contractIssue
+      ? {
+        tone: "warning",
+        title: "Output contract needs attention",
+        detail: contractIssue.message,
+      }
+      : null;
+  }
+
+  const blockedByGlobals = executionState?.status === "completed" &&
+    !executionState.response.ok &&
+    executionState.response.error?.phase === "document_globals";
+  const detail = executionState?.status === "completed" &&
+      executionState.response.error?.nodeId &&
+      executionState.response.error.nodeId !== selectedNode.id
+    ? `Upstream step ${
+      selectedNode.nodeLabelsById[executionState.response.error.nodeId] ??
+        executionState.response.error.nodeId
+    } failed before this step could run.`
+    : runSummary.detail;
+
+  return {
+    tone: "danger",
+    title: runStatus === "blocked" ? "Step did not run" : runSummary.title,
+    detail,
+    ...(blockedByGlobals ? { action: "document_globals" as const } : {}),
+  };
+}
+
+function DevelopIssue({
+  issue,
+  outputReplacement,
+  outputReplacementDisabled,
+  onOutputReplacement,
+  onShowDocumentGlobals,
+}: {
+  issue: DevelopOutputIssue;
+  outputReplacement?: { from: string; to: string } | null;
+  outputReplacementDisabled: boolean;
+  onOutputReplacement?: () => void;
+  onShowDocumentGlobals?: () => void;
+}) {
+  const styles = issue.tone === "warning"
+    ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+    : "border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200";
+
+  return (
+    <div className={`m-3 rounded border p-3 ${styles}`}>
+      <p className="text-sm font-medium">{issue.title}</p>
+      <p className="mt-1 text-xs leading-5">{issue.detail}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {issue.action === "document_globals" && onShowDocumentGlobals && (
+          <button
+            type="button"
+            className="rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-100 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
+            onClick={onShowDocumentGlobals}
+          >
+            View Document Globals
+          </button>
+        )}
+        {outputReplacement && onOutputReplacement && (
+          <button
+            type="button"
+            className="rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-60"
+            disabled={outputReplacementDisabled}
+            onClick={onOutputReplacement}
+          >
+            Use {outputReplacement.to} instead
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getPreviewState(
+  status: NodeRunVisualStatus,
+  hasPreview: boolean,
+): { label: string; className: string; dotClassName: string } | null {
+  if (status === "stale") {
+    return {
+      label: "Stale",
+      className: "text-amber-700 dark:text-amber-300",
+      dotClassName: "bg-amber-500",
+    };
+  }
+  if (status === "running" || status === "queued") {
+    return {
+      label: status === "running" ? "Running" : "Queued",
+      className: "text-blue-700 dark:text-blue-300",
+      dotClassName: "bg-blue-500",
+    };
+  }
+  if (
+    status === "failed" || status === "blocked" ||
+    status === "blocked_globals"
+  ) {
+    return {
+      label: "Failed",
+      className: "text-red-700 dark:text-red-300",
+      dotClassName: "bg-red-500",
+    };
+  }
+  if (status === "completed" || hasPreview) {
+    return {
+      label: "Fresh",
+      className: "text-emerald-700 dark:text-emerald-300",
+      dotClassName: "bg-emerald-500",
+    };
+  }
+  return null;
+}
+
+function NodeOverview({
+  selectedNode,
+  outputOptions,
+  outputsReadOnly,
+  actionsDisabled,
+  onOutputToggle,
+  onNodeMetadataChange,
+  onNodeSelect,
+  onDeleteNode,
+}: {
+  selectedNode: NodeInspectorSelection;
+  outputOptions: OutputOption[];
+  outputsReadOnly: boolean;
+  actionsDisabled: boolean;
+  onOutputToggle: (name: string) => void;
+  onNodeMetadataChange: (
+    nodeId: string,
+    metadata: { description?: string },
+  ) => void;
+  onNodeSelect: (nodeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
+}) {
+  return (
+    <div className="h-full overflow-y-auto px-5 py-4">
+      <div className="space-y-5">
+        <section>
+          <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+            Description
+          </label>
+          <textarea
+            className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            value={selectedNode.description}
+            placeholder="What does this step do?"
+            readOnly={outputsReadOnly}
+            onChange={(event) =>
+              onNodeMetadataChange(selectedNode.id, {
+                description: event.currentTarget.value,
+              })}
+          />
+        </section>
+
+        <FlowNavigation
+          upstreamDependencies={selectedNode.upstreamDependencies}
+          downstreamDependencies={selectedNode.downstreamDependencies}
+          labelsById={selectedNode.nodeLabelsById}
+          onNodeSelect={onNodeSelect}
+        />
+
+        <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+              Declared Outputs
+            </h3>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {selectedNode.outputs.length} selected
+            </span>
+          </div>
+          <DeclaredOutputsEditor
+            selectedNode={selectedNode}
+            outputOptions={outputOptions}
+            readOnly={outputsReadOnly}
+            onToggle={onOutputToggle}
+          />
+        </section>
+
+        {(selectedNode.badges.length > 0 || selectedNode.functionName) && (
+          <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+              Identity
+            </h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+              {selectedNode.badges.map((badge) => (
+                <span
+                  key={badge}
+                  className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
+                >
+                  {badge}
+                </span>
+              ))}
+              <code className="rounded bg-zinc-100 px-2 py-1 font-mono dark:bg-zinc-800">
+                {selectedNode.functionName ?? "custom Python"}
+              </code>
+            </div>
+          </section>
+        )}
+
+        {onDeleteNode && (
+          <DeleteNodeAction
+            selectedNode={selectedNode}
+            disabled={actionsDisabled}
+            onDeleteNode={onDeleteNode}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeclaredOutputsEditor({
+  selectedNode,
+  outputOptions,
+  readOnly,
+  onToggle,
+}: {
+  selectedNode: NodeInspectorSelection;
+  outputOptions: OutputOption[];
+  readOnly: boolean;
+  onToggle: (name: string) => void;
+}) {
+  if (outputOptions.length === 0) {
+    return (
+      <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+        No assignable outputs found.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="mt-2 space-y-1.5">
+      {outputOptions.map((option) => {
+        const checked = selectedNode.outputs.includes(option.name);
+        const isMissing = option.source === "missing" && checked;
+        return (
+          <li key={option.name}>
+            <label
+              className={`flex items-center gap-2 rounded border px-3 py-2 text-sm ${
+                isMissing
+                  ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                  : checked
+                  ? "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400"
+              } ${
+                readOnly
+                  ? "cursor-not-allowed opacity-70"
+                  : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={checked}
+                disabled={readOnly}
+                onChange={() => onToggle(option.name)}
+              />
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                  isMissing
+                    ? "border-amber-700 bg-amber-700 text-white"
+                    : checked
+                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
+                    : "border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900"
+                }`}
+                aria-hidden="true"
+              >
+                {checked && <Check className="h-3 w-3" strokeWidth={3} />}
+              </span>
+              <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                {option.name}
+              </code>
+              <span
+                className={`rounded px-1.5 py-0.5 text-xs ${
+                  isMissing
+                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                    : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                }`}
+              >
+                {isMissing ? "missing" : option.source}
+              </span>
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function NodeResults({
+  selectedNode,
+  executionState,
+  runStatus,
+  runSummary,
+  inputStatus,
+  preflightIssues,
+  outputReplacement,
+  outputReplacementDisabled,
+  onOutputReplacement,
+  onViewError,
+  traceEnabled,
+  onTraceEnabledChange,
+  shouldShowPriorOutputPreviews,
+}: {
+  selectedNode: NodeInspectorSelection;
+  executionState: ExecutionDisplayState | null;
+  runStatus: NodeRunVisualStatus;
+  runSummary: NodeRunSummary;
+  inputStatus: string;
+  preflightIssues: PreflightIssue[];
+  outputReplacement: { from: string; to: string } | null;
+  outputReplacementDisabled: boolean;
+  onOutputReplacement: () => void;
+  onViewError?: () => void;
+  traceEnabled: boolean;
+  onTraceEnabledChange: (value: boolean) => void;
+  shouldShowPriorOutputPreviews: boolean;
+}) {
+  return (
+    <div className="h-full overflow-y-auto px-5 py-4">
+      <div className="space-y-4">
         <NodeRunBanner
           summary={runSummary}
           inputStatus={inputStatus}
           preflightIssues={preflightIssues}
           outputReplacement={outputReplacement}
-          outputReplacementDisabled={readOnly || !selectedNode.editable}
-          onOutputReplacement={handleOutputReplacement}
-          onViewError={isBlockedByDocumentGlobals
-            ? onShowDocumentGlobals
-            : undefined}
+          outputReplacementDisabled={outputReplacementDisabled}
+          onOutputReplacement={onOutputReplacement}
+          onViewError={onViewError}
         />
-      </section>
-
-      <FlowNavigation
-        upstreamDependencies={selectedNode.upstreamDependencies}
-        downstreamDependencies={selectedNode.downstreamDependencies}
-        labelsById={selectedNode.nodeLabelsById}
-        onNodeSelect={onNodeSelect}
-      />
-
-      <InputPreviewSection inputGroups={selectedNode.inputGroups} />
-
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Code
-        </h3>
-        <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-72 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono">
-          <div data-shortcut-scope="editor">
-            <CodeMirror
-              value={selectedNode.code}
-              extensions={extensions}
-              readOnly={codeReadOnly}
-              onChange={(value) => onCodeChange(selectedNode.id, value)}
-              basicSetup={{
-                autocompletion: false,
-                closeBrackets: true,
-                foldGutter: true,
-                highlightActiveLine: true,
-                highlightActiveLineGutter: true,
-                lineNumbers: true,
-              }}
-              theme={themeMode}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-xs font-semibold uppercase text-zinc-500">
-            Declared Outputs
-          </h3>
-          <span className="text-xs text-zinc-500">
-            {selectedNode.outputs.length} selected
-          </span>
-        </div>
-        {outputOptions.length === 0
-          ? (
-            <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-500">
-              No assignable outputs found.
-            </p>
-          )
-          : (
-            <ul className="mt-2 space-y-1.5">
-              {outputOptions.map((option) => {
-                const checked = selectedNode.outputs.includes(option.name);
-                const isMissing = option.source === "missing" && checked;
-                return (
-                  <li key={option.name}>
-                    <label
-                      className={`flex items-center gap-2 rounded border px-3 py-2 text-sm ${
-                        isMissing
-                          ? "border-amber-300 bg-amber-50 text-amber-950"
-                          : checked
-                          ? "border-zinc-300 bg-white text-zinc-900"
-                          : "border-zinc-200 bg-zinc-50 text-zinc-500"
-                      } ${
-                        outputsReadOnly
-                          ? "cursor-not-allowed opacity-70"
-                          : "cursor-pointer hover:bg-zinc-100"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={checked}
-                        disabled={outputsReadOnly}
-                        onChange={() => handleOutputToggle(option.name)}
-                      />
-                      <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                          isMissing
-                            ? "border-amber-700 bg-amber-700 text-white"
-                            : checked
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-zinc-300 bg-white"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        {checked && (
-                          <Check className="h-3 w-3" strokeWidth={3} />
-                        )}
-                      </span>
-                      <code className="min-w-0 flex-1 truncate font-mono text-xs">
-                        {option.name}
-                      </code>
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-xs ${
-                          isMissing
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-zinc-100 text-zinc-500"
-                        }`}
-                        title={isMissing
-                          ? "Declared as an output, but not found as an input or assignment in this step."
-                          : undefined}
-                      >
-                        {isMissing ? "missing" : option.source}
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
+        <div className={runStatus === "stale" ? "opacity-60" : ""}>
+          {shouldShowPriorOutputPreviews && (
+            <OutputPreviewSection previews={selectedNode.outputPreviews} />
           )}
-      </section>
-
-      {shouldShowPriorOutputPreviews && (
-        <OutputPreviewSection previews={selectedNode.outputPreviews} />
-      )}
-
-      <RunResult selectedNode={selectedNode} executionState={executionState} />
+          <RunResult
+            selectedNode={selectedNode}
+            executionState={executionState}
+          />
+        </div>
+        <TraceToggle
+          traceEnabled={traceEnabled}
+          onTraceEnabledChange={onTraceEnabledChange}
+        />
+      </div>
     </div>
   );
 }
@@ -2032,6 +2874,51 @@ function DeleteNodeAction({
   );
 }
 
+function NodeInspectorTabs({
+  mode,
+  runStatus,
+  onModeChange,
+}: {
+  mode: NodeInspectorMode;
+  runStatus: NodeRunVisualStatus;
+  onModeChange: (mode: NodeInspectorMode) => void;
+}) {
+  const state = getPreviewState(runStatus, runStatus === "completed");
+  const tabs: Array<{ id: NodeInspectorMode; label: string }> = [
+    { id: "develop", label: "Develop" },
+    { id: "overview", label: "Overview" },
+    { id: "results", label: "Results" },
+  ];
+
+  return (
+    <div className="flex h-11 shrink-0 items-end gap-6 border-b border-zinc-200 px-5 dark:border-zinc-800">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={`border-b-2 pb-2.5 text-sm font-medium ${
+            tab.id === mode
+              ? "border-blue-600 text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
+              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+          }`}
+          onClick={() => onModeChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+      <div className="flex-1" />
+      {state && state.label !== "Fresh" && (
+        <span
+          className={`mb-3 inline-flex items-center gap-1.5 text-[11px] font-medium ${state.className}`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${state.dotClassName}`} />
+          {state.label}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function InspectorPanel({
   themeMode,
   selectedNode,
@@ -2072,6 +2959,9 @@ export function InspectorPanel({
     getDefaultInspectorWidth,
   );
   const [isResizing, setIsResizing] = useState(false);
+  const [inspectorMode, setInspectorMode] = useState<NodeInspectorMode>(
+    "develop",
+  );
   const [nodeNameDraft, setNodeNameDraft] = useState(
     selectedNode?.displayName ?? "",
   );
@@ -2161,11 +3051,11 @@ export function InspectorPanel({
       <div className="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
         {selectedNode
           ? (
-            <div className="flex flex-wrap items-start gap-3">
+            <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <input
                   className={[
-                    "w-full rounded border bg-transparent px-0 py-1 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:bg-zinc-800",
+                    "w-full truncate rounded border bg-transparent px-0 py-0.5 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:bg-zinc-800",
                     nodeNameError
                       ? "border-red-300 focus:border-red-400 dark:border-red-800 dark:focus:border-red-700"
                       : "border-transparent focus:border-zinc-300 dark:focus:border-zinc-700",
@@ -2188,30 +3078,22 @@ export function InspectorPanel({
                     {nodeNameError}
                   </p>
                 )}
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  <span className="rounded bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    Python
-                  </span>
-                  {selectedNode.badges.map((badge) => (
-                    <span
-                      key={badge}
-                      className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                    >
-                      {badge}
-                    </span>
-                  ))}
+                <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span
-                    className="font-mono text-zinc-400 dark:text-zinc-500"
+                    className="truncate font-mono text-zinc-400 dark:text-zinc-500"
                     title={selectedNode.functionName ?? ""}
                   >
                     {selectedNode.functionName ?? "custom Python"}
                   </span>
+                  <span className="h-0.5 w-0.5 shrink-0 rounded-full bg-zinc-400" />
+                  <span className="shrink-0">Python</span>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+                  title="Run through step (Shift+Enter)"
+                  className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
                   disabled={areNodeActionsDisabled}
                   onClick={() => onRunToNode(selectedNode.id)}
                 >
@@ -2220,9 +3102,7 @@ export function InspectorPanel({
                     className="h-4 w-4"
                     strokeWidth={2.25}
                   />
-                  {isAnyRunBlockingNodeActions
-                    ? "Running..."
-                    : "Run through step"}
+                  {isAnyRunBlockingNodeActions ? "Running…" : "Run"}
                 </button>
                 <button
                   type="button"
@@ -2261,28 +3141,43 @@ export function InspectorPanel({
           )}
       </div>
 
-      <div
-        ref={scrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
-      >
-        <div className="space-y-4">
-          {selectedNode
-            ? (
+      {selectedNode
+        ? (
+          <>
+            <NodeInspectorTabs
+              mode={inspectorMode}
+              runStatus={selectedNodeRunStatus}
+              onModeChange={setInspectorMode}
+            />
+            <div className="min-h-0 flex-1 overflow-auto">
               <NodeInspector
                 themeMode={themeMode}
                 selectedNode={selectedNode}
                 executionState={selectedNodeExecutionState}
                 runStatus={selectedNodeRunStatus}
+                mode={inspectorMode}
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}
                 onCodeChange={onCodeChange}
                 onOutputsChange={onOutputsChange}
+                onNodeMetadataChange={onNodeMetadataChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}
+                onModeChange={setInspectorMode}
+                traceEnabled={traceEnabled}
+                onTraceEnabledChange={onTraceEnabledChange}
+                onDeleteNode={onDeleteNode}
                 onShowDocumentGlobals={onShowDocumentGlobals}
               />
-            )
-            : (
+            </div>
+          </>
+        )
+        : (
+          <div
+            ref={scrollContainerRef}
+            className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+          >
+            <div className="space-y-4">
               <GraphInspector
                 themeMode={themeMode}
                 graph={graph}
@@ -2291,20 +3186,13 @@ export function InspectorPanel({
                 onNodeSelect={onNodeSelect}
                 onGlobalsCodeChange={onGlobalsCodeChange}
               />
-            )}
-          <TraceToggle
-            traceEnabled={traceEnabled}
-            onTraceEnabledChange={onTraceEnabledChange}
-          />
-          {selectedNode && onDeleteNode && (
-            <DeleteNodeAction
-              selectedNode={selectedNode}
-              disabled={areNodeActionsDisabled}
-              onDeleteNode={onDeleteNode}
-            />
-          )}
-        </div>
-      </div>
+              <TraceToggle
+                traceEnabled={traceEnabled}
+                onTraceEnabledChange={onTraceEnabledChange}
+              />
+            </div>
+          </div>
+        )}
     </aside>
   );
 }

@@ -2,12 +2,7 @@ import { assertEquals } from "@std/assert";
 import type { ExecutionDisplayState } from "../components/InspectorPanel.tsx";
 import {
   preserveCompletedExecutionStatesForEdit,
-  preserveUnaffectedExecutionStates,
 } from "./executionSessionState.ts";
-
-function requestError(message: string): ExecutionDisplayState {
-  return { status: "request_error", message };
-}
 
 function completedPreview(value: number): ExecutionDisplayState {
   return {
@@ -32,19 +27,6 @@ function completedPreview(value: number): ExecutionDisplayState {
   };
 }
 
-Deno.test("execution invalidation preserves unaffected node previews", () => {
-  const upstream = completedPreview(1);
-  const edited = completedPreview(2);
-  const downstream = completedPreview(3);
-
-  const result = preserveUnaffectedExecutionStates(
-    { upstream, edited, downstream },
-    new Set(["edited", "downstream"]),
-  );
-
-  assertEquals(result, { upstream });
-});
-
 Deno.test("starting a downstream edit keeps completed upstream previews", () => {
   const upstream = completedPreview(1);
 
@@ -54,16 +36,4 @@ Deno.test("starting a downstream edit keeps completed upstream previews", () => 
   });
 
   assertEquals(result, { upstream });
-});
-
-Deno.test("execution invalidation clears all previews when every node is stale", () => {
-  const result = preserveUnaffectedExecutionStates(
-    {
-      first: requestError("first result marker"),
-      second: requestError("second result marker"),
-    },
-    new Set(["first", "second"]),
-  );
-
-  assertEquals(result, {});
 });

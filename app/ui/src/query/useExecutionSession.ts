@@ -15,7 +15,6 @@ import {
 } from "./executionPresentation.ts";
 import {
   preserveCompletedExecutionStatesForEdit,
-  preserveUnaffectedExecutionStates,
 } from "./executionSessionState.ts";
 
 export function useExecutionSession(
@@ -321,10 +320,6 @@ export function useExecutionSession(
     if (staleNodeIds.size === 0) {
       return;
     }
-
-    setExecutionStateByNodeId((current) =>
-      preserveUnaffectedExecutionStates(current, staleNodeIds)
-    );
 
     setNodeRunStatuses((current) => {
       const next = { ...current };
