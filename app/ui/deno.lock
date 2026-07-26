@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.12",
+    "npm:@codemirror/lang-json@6.0.2": "6.0.2",
     "npm:@codemirror/lang-python@6.2.1": "6.2.1",
     "npm:@codemirror/view@6.38.8": "6.38.8",
     "npm:@lezer/common@1.5.2": "1.5.2",
@@ -18,6 +19,7 @@
     "npm:@xyflow/react@12.10.2": "12.10.2_react@19.2.5_react-dom@19.2.5__react@19.2.5_@types+react@19.2.14",
     "npm:lucide-react@1.17.0": "1.17.0_react@19.2.5",
     "npm:react-dom@19.2.5": "19.2.5_react@19.2.5",
+    "npm:react-json-view-lite@2.5.0": "2.5.0_react@19.2.5",
     "npm:react@19.2.5": "19.2.5",
     "npm:tailwindcss@4.2.2": "4.2.2",
     "npm:vite@*": "7.3.2",
@@ -191,6 +193,13 @@
         "@codemirror/state",
         "@codemirror/view",
         "@lezer/common"
+      ]
+    },
+    "@codemirror/lang-json@6.0.2": {
+      "integrity": "sha512-x2OtO+AvwEHrEwR0FyyPtfDUiloG3rnVTSZV1W8UteaLL8/MajQd8DpvUb2YVzC+/T18aSDv0H9mu+xw0EStoQ==",
+      "dependencies": [
+        "@codemirror/language",
+        "@lezer/json"
       ]
     },
     "@codemirror/lang-python@6.2.1": {
@@ -415,6 +424,14 @@
       "integrity": "sha512-qXdH7UqTvGfdVBINrgKhDsVTJTxactNNxLk7+UMwZhU13lMHaOBlJe9Vqp907ya56Y3+ed2tlqzys7jDkTmW0g==",
       "dependencies": [
         "@lezer/common"
+      ]
+    },
+    "@lezer/json@1.0.3": {
+      "integrity": "sha512-BP9KzdF9Y35PDpv04r0VeSTKDeox5vVr3efE7eBbx3r4s3oNLfunchejZhjArmeieBH+nVOpgIiBJpEAv8ilqQ==",
+      "dependencies": [
+        "@lezer/common",
+        "@lezer/highlight",
+        "@lezer/lr"
       ]
     },
     "@lezer/lr@1.4.8": {
@@ -1109,6 +1126,12 @@
         "scheduler"
       ]
     },
+    "react-json-view-lite@2.5.0_react@19.2.5": {
+      "integrity": "sha512-tk7o7QG9oYyELWHL8xiMQ8x4WzjCzbWNyig3uexmkLb54r8jO0yH3WCWx8UZS0c49eSA4QUmG5caiRJ8fAn58g==",
+      "dependencies": [
+        "react"
+      ]
+    },
     "react-refresh@0.18.0": {
       "integrity": "sha512-QgT5//D3jfjJb6Gsjxv0Slpj23ip+HtOpnNgnb2S5zU3CB26G/IDPGoy4RJB42wzFE46DRsstbW6tKHoKbhAxw=="
     },
@@ -1228,6 +1251,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
+      "npm:@codemirror/lang-json@6.0.2",
       "npm:@codemirror/lang-python@6.2.1",
       "npm:@codemirror/view@6.38.8",
       "npm:@lezer/common@1.5.2",
@@ -1243,6 +1267,7 @@
       "npm:@xyflow/react@12.10.2",
       "npm:lucide-react@1.17.0",
       "npm:react-dom@19.2.5",
+      "npm:react-json-view-lite@2.5.0",
       "npm:react@19.2.5",
       "npm:tailwindcss@4.2.2",
       "npm:vite@*",

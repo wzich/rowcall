@@ -83,6 +83,138 @@ body {
   background-color: #18181b;
 }
 
+.nodebook-json-tree {
+  color: #27272a;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.nodebook-json-tree-item {
+  min-height: 1.25rem;
+}
+
+.nodebook-json-tree-children {
+  border-left: 1px solid #e4e4e7;
+  list-style: none;
+  margin: 0 0 0 0.35rem;
+  padding: 0 0 0 0.85rem;
+}
+
+.nodebook-json-tree-label {
+  color: #3f3f46;
+  font-weight: 600;
+  margin-right: 0.35rem;
+}
+
+.nodebook-json-tree-clickable-label {
+  cursor: pointer;
+}
+
+.nodebook-json-tree-expander {
+  align-items: center;
+  color: #71717a;
+  cursor: pointer;
+  display: inline-flex;
+  height: 1rem;
+  justify-content: center;
+  margin-right: 0.2rem;
+  user-select: none;
+  width: 1rem;
+}
+
+.nodebook-json-tree-expander::after {
+  font-size: 0.65rem;
+}
+
+.nodebook-json-tree-expander-collapsed::after {
+  content: "▶";
+}
+
+.nodebook-json-tree-expander-expanded::after {
+  content: "▼";
+}
+
+.nodebook-json-tree-expander:focus-visible {
+  border-radius: 0.125rem;
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
+.nodebook-json-tree-collapsed-content {
+  color: #a1a1aa;
+  cursor: pointer;
+  margin: 0 0.2rem;
+}
+
+.nodebook-json-tree-collapsed-content::after {
+  content: "…";
+}
+
+.nodebook-json-tree-punctuation {
+  color: #71717a;
+}
+
+.nodebook-json-tree-null {
+  color: #9333ea;
+}
+
+.nodebook-json-tree-string {
+  color: #047857;
+}
+
+.nodebook-json-tree-number {
+  color: #1d4ed8;
+}
+
+.nodebook-json-tree-boolean {
+  color: #c2410c;
+}
+
+.nodebook-json-tree-other {
+  color: #52525b;
+}
+
+.dark .nodebook-json-tree {
+  color: #e4e4e7;
+}
+
+.dark .nodebook-json-tree-children {
+  border-left-color: #3f3f46;
+}
+
+.dark .nodebook-json-tree-label {
+  color: #d4d4d8;
+}
+
+.dark .nodebook-json-tree-expander,
+.dark .nodebook-json-tree-punctuation {
+  color: #a1a1aa;
+}
+
+.dark .nodebook-json-tree-null {
+  color: #d8b4fe;
+}
+
+.dark .nodebook-json-tree-string {
+  color: #6ee7b7;
+}
+
+.dark .nodebook-json-tree-number {
+  color: #93c5fd;
+}
+
+.dark .nodebook-json-tree-boolean {
+  color: #fdba74;
+}
+
+.dark .nodebook-json-tree-other {
+  color: #d4d4d8;
+}
+
 .dark .cm-editor .cm-content {
   caret-color: #f4f4f5;
 }

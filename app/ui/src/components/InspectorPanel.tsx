@@ -16,6 +16,8 @@ import type { ReactNode } from "react";
 import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
+import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
+import { isJsonContainer } from "./jsonPreviewState.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -472,11 +474,7 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
       </div>
       {preview.table
         ? <TablePreviewBlock table={preview.table} />
-        : (
-          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
-            {preview.repr}
-          </pre>
-        )}
+        : <JsonPreview preview={preview} />}
       {preview.warning && (
         <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
           {preview.warning}
@@ -517,11 +515,7 @@ function FlatPreview({
       </div>
       {preview.table
         ? <TablePreviewBlock table={preview.table} />
-        : (
-          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
-            {preview.repr}
-          </pre>
-        )}
+        : <JsonPreview preview={preview} />}
       {preview.warning && (
         <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
           {preview.warning}
@@ -1814,9 +1808,11 @@ function ValuePeek({
         </div>
       </div>
 
-      {selectedOption && (
-        <PreviewMetadata option={selectedOption} direction={direction} />
-      )}
+      {selectedOption &&
+        !(
+          !selectedOption.preview?.table &&
+          isJsonContainer(selectedOption.preview?.jsonValue)
+        ) && <PreviewMetadata option={selectedOption} direction={direction} />}
 
       <div
         className={`min-h-0 flex-1 overflow-auto ${
@@ -1983,11 +1979,7 @@ function PreviewMetadata({
 
 function CompactPreview({ preview }: { preview: ValuePreview }) {
   if (!preview.table) {
-    return (
-      <pre className="whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
-        {preview.repr}
-      </pre>
-    );
+    return <JsonPreview preview={preview} variant="compact" />;
   }
 
   const table = preview.table;
@@ -3137,7 +3129,8 @@ export function InspectorPanel({
   }, [isResizing]);
 
   return (
-    <aside
+    <JsonPreviewThemeScope
+      themeMode={themeMode}
       className="relative flex h-full shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
       style={{ width: inspectorWidth }}
     >
@@ -3174,7 +3167,10 @@ export function InspectorPanel({
                     }
                     const nextName = event.currentTarget.value;
                     setNodeNameDraft(nextName);
-                    const result = onNodeNameChange(selectedNode.id, nextName);
+                    const result = onNodeNameChange(
+                      selectedNode.id,
+                      nextName,
+                    );
                     setNodeNameError(result.ok ? null : result.message);
                   }}
                 />
@@ -3311,6 +3307,6 @@ export function InspectorPanel({
             </div>
           </>
         )}
-    </aside>
+    </JsonPreviewThemeScope>
   );
 }

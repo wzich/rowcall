@@ -8,6 +8,7 @@
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
+    "@codemirror/lang-json": "npm:@codemirror/lang-json@6.0.2",
     "@codemirror/lang-python": "npm:@codemirror/lang-python@6.2.1",
     "@codemirror/view": "npm:@codemirror/view@6.38.8",
     "@lezer/common": "npm:@lezer/common@1.5.2",
@@ -23,6 +24,7 @@
     "react": "npm:react@19.2.5",
     "react/jsx-runtime": "npm:react@19.2.5/jsx-runtime",
     "react-dom/client": "npm:react-dom@19.2.5/client",
+    "react-json-view-lite": "npm:react-json-view-lite@2.5.0",
     "tailwindcss": "npm:tailwindcss@4.2.2",
     "vite": "npm:vite@7.3.2"
   },

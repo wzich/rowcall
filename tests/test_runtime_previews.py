@@ -129,6 +129,36 @@ class RuntimePreviewTests(unittest.TestCase):
             previews.PREVIEW_WARNING_BYTE_LIMIT,
         )
 
+    def test_json_preview_accepts_an_mvp_sized_record_list(self) -> None:
+        records = [
+            {
+                "id": index,
+                "label": f"record-{index}",
+                "amount": index + 0.25,
+            }
+            for index in range(500)
+        ]
+
+        preview = previews.make_json_preview_value(records)
+
+        self.assertEqual(preview, records)
+        self.assertGreater(
+            len(json.dumps(preview).encode("utf-8")),
+            16_000,
+        )
+
+    def test_json_preview_still_rejects_pathological_container_sizes(self) -> None:
+        value = list(range(previews.JSON_PREVIEW_MAX_CONTAINER_ITEMS + 1))
+
+        with self.assertRaisesRegex(ValueError, "too many container items"):
+            previews.make_json_preview_value(value)
+
+    def test_json_preview_still_enforces_its_encoded_byte_limit(self) -> None:
+        value = "x" * previews.JSON_PREVIEW_BYTE_LIMIT
+
+        with self.assertRaisesRegex(ValueError, "JSON preview too large"):
+            previews.make_json_preview_value(value)
+
     def _make_fake_pandas_preview(self) -> dict | None:
         class FakeSeries:
             pass
