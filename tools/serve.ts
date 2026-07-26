@@ -1,5 +1,5 @@
-import { buildNodebookUrl } from "./main.ts";
-import { parseStartupOptions } from "./startup_args.ts";
+import { buildNodebookUrl } from "../main.ts";
+import { parseStartupOptions } from "../startup_args.ts";
 
 type LauncherOptions = ReturnType<typeof parseLauncherOptions>;
 

@@ -1,4 +1,4 @@
-import { resolvePythonCommand } from "./runtime_config.ts";
+import { resolvePythonCommand } from "../runtime_config.ts";
 
 if (import.meta.main) {
   const command = new Deno.Command(await resolvePythonCommand(), {

@@ -1,4 +1,4 @@
-import { parseStartupOptions } from "./startup_args.ts";
+import { parseStartupOptions } from "../startup_args.ts";
 
 const viteHostname = "127.0.0.1";
 const defaultVitePort = 5173;

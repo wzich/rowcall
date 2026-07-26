@@ -1,33 +1,33 @@
 {
   "tasks": {
-    "setup": "deno run --allow-read --allow-write --allow-run setup.ts",
+    "setup": "deno run --allow-read --allow-write --allow-run tools/setup.ts",
     "fmt:check": "deno fmt --check",
-    "lint": "deno lint *.ts",
-    "check": "deno task fmt:check && deno task lint && deno check main.ts beta_launcher.ts dev.ts serve.ts cli.ts setup.ts release.ts && deno task ui:check",
-    "test:deno": "deno test --allow-read --allow-write --allow-run --allow-env *.test.ts",
-    "test:python": "python3 -m unittest nodebook_test.py && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "lint": "deno lint *.ts tools/*.ts",
+    "check": "deno task fmt:check && deno task lint && deno check main.ts beta_launcher.ts tools/dev.ts tools/serve.ts tools/cli.ts tools/setup.ts tools/release.ts && deno task ui:check",
+    "test:deno": "deno test --allow-read --allow-write --allow-run --allow-env *.test.ts tools/*.test.ts",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test": "deno task test:deno && deno task test:python && deno task ui:test",
-    "dev": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env dev.ts",
+    "dev": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env tools/dev.ts",
     "dev:api": "deno run --watch --allow-read --allow-write --allow-net --allow-run main.ts",
     "build": "cd app/ui && deno task build",
-    "serve": "deno run --allow-read --allow-write --allow-net --allow-run serve.ts",
+    "serve": "deno run --allow-read --allow-write --allow-net --allow-run tools/serve.ts",
     "beta": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env beta_launcher.ts",
     "beta:check": "deno check beta_launcher.ts main.ts",
     "beta:compile": "deno task build && deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include nodebook --include app/ui/dist --output dist/nodebook beta_launcher.ts",
-    "release:build": "deno run --allow-read --allow-write --allow-run --allow-env release.ts build",
-    "release:site": "deno run --allow-read --allow-write --allow-run --allow-env release.ts site",
+    "release:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts build",
+    "release:site": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts site",
     "release:smoke": "sh packaging/smoke-installed-release.sh",
-    "release:deploy:assets": "deno run --allow-read --allow-write --allow-run --allow-env release.ts deploy-assets",
-    "release:deploy:site": "deno run --allow-read --allow-write --allow-run --allow-env release.ts deploy-site",
-    "release:deploy": "deno run --allow-read --allow-write --allow-run --allow-env release.ts deploy",
-    "cli": "deno run --allow-read --allow-run cli.ts",
+    "release:deploy:assets": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts deploy-assets",
+    "release:deploy:site": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts deploy-site",
+    "release:deploy": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts deploy",
+    "cli": "deno run --allow-read --allow-run tools/cli.ts",
     "ui:check": "cd app/ui && deno task check",
     "ui:test": "cd app/ui && deno task test"
   },
   "fmt": {
     "exclude": [
-      "docs/architecture-review.html",
-      "docs/runtime-app-split-plan.html"
+      "docs/reviews/architecture-review.html",
+      "docs/plans/runtime-app-split-plan.html"
     ]
   },
   "imports": {
