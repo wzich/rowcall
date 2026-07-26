@@ -15,6 +15,7 @@ export type BetaCommand =
   | {
     kind: "doctor";
     checkUpdates: boolean;
+    json: boolean;
     pythonCommand?: string;
     managedEnv: boolean;
   }
@@ -236,13 +237,16 @@ binding.
 `;
 
 const runHelpText = `Usage:
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace] [--python <path>] [--managed-env]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary] [--python <path>] [--managed-env]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
 
 Examples:
   nodebook run my-work
   nodebook run my-work --to total_numbers --json
+  nodebook run my-work --to total_numbers --outputs-only
+  nodebook run my-work --json=summary --trace=summary
   nodebook run my-work/graph.py --json --trace
 `;
 
@@ -286,10 +290,10 @@ Creates a sample Nodebook project with graph.py and data/orders.csv.
 `;
 
 const doctorHelpText = `Usage:
-  nodebook doctor [--updates] [--python <path>] [--managed-env]
+  nodebook doctor [--updates] [--json] [--python <path>] [--managed-env]
 
 Inspects the local Nodebook install, selected Python environment, dependency
-availability, and log path.
+availability, and log path without modifying Nodebook state.
 `;
 
 const resetEnvHelpText = `Usage:
@@ -336,7 +340,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "doctor" };
     }
     const parsed = parseArgs(args.slice(1), {
-      boolean: ["updates", "managed-env"],
+      boolean: ["updates", "json", "managed-env"],
       string: ["python"],
       unknown: rejectUnknownOption,
     });
@@ -344,6 +348,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     return {
       kind: "doctor",
       checkUpdates: Boolean(parsed.updates),
+      json: Boolean(parsed.json),
       managedEnv: Boolean(parsed["managed-env"]),
       ...(typeof parsed.python === "string"
         ? { pythonCommand: parsed.python }
@@ -473,7 +478,6 @@ export async function runBetaCommand(
       console.info(nodebookVersion);
       return { code: 0 };
     case "doctor":
-      await appendLog(paths, `nodebook ${command.kind}`);
       await printDoctor(command, paths);
       return { code: 0 };
     case "reset-env":
@@ -855,72 +859,143 @@ async function ensureBundledAssets(paths: BetaPaths): Promise<void> {
   await copyDirectoryIfExists(bundledSource("app/ui/dist"), paths.uiDistPath);
 }
 
+type DoctorCheckStatus = "ok" | "missing" | "not_checked";
+
+type DoctorReport = {
+  ok: boolean;
+  command: "doctor";
+  nodebookVersion: string;
+  dataDirectory: string;
+  managedEnvironment: string;
+  logFile: string;
+  pathContainsLocalBin: boolean;
+  runtime: {
+    mode: "user" | "managed";
+    python: {
+      status: DoctorCheckStatus;
+      command?: string;
+      error?: string;
+    };
+    imports: Record<"nodebook" | "pandas" | "polars", DoctorCheckStatus>;
+  };
+  updateCheck: "not_requested" | "not_implemented";
+};
+
+export async function buildDoctorReport(
+  command: Extract<BetaCommand, { kind: "doctor" }>,
+  paths: BetaPaths,
+): Promise<DoctorReport> {
+  const mode = command.managedEnv ? "managed" : "user";
+  let pythonCommand = "";
+  let pythonError: string | undefined;
+
+  if (mode === "managed") {
+    const runtime = await inspectManagedRuntime(paths);
+    pythonCommand = runtime.pythonCommand;
+    pythonError = runtime.error;
+  } else if (command.pythonCommand) {
+    if (await isCompatiblePython(command.pythonCommand)) {
+      pythonCommand = command.pythonCommand;
+    } else {
+      pythonError =
+        `Selected Python is unavailable or older than Python 3.10: ${command.pythonCommand}`;
+    }
+  } else {
+    try {
+      pythonCommand = await findCompatibleUserPython();
+    } catch (error) {
+      pythonError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const runtimeEnv = {
+    ...(mode === "user" ? pythonRuntimeEnv(paths) : {}),
+    PYTHONDONTWRITEBYTECODE: "1",
+  };
+  const imports = {
+    nodebook: await inspectPythonImport(pythonCommand, "nodebook", runtimeEnv),
+    pandas: await inspectPythonImport(pythonCommand, "pandas", runtimeEnv),
+    polars: await inspectPythonImport(pythonCommand, "polars", runtimeEnv),
+  };
+
+  return {
+    ok: Boolean(pythonCommand) && imports.nodebook === "ok",
+    command: "doctor",
+    nodebookVersion,
+    dataDirectory: paths.dataDir,
+    managedEnvironment: paths.venvDir,
+    logFile: paths.logFile,
+    pathContainsLocalBin: pathContainsLocalBin(paths.home),
+    runtime: {
+      mode,
+      python: {
+        status: pythonCommand ? "ok" : "missing",
+        ...(pythonCommand ? { command: pythonCommand } : {}),
+        ...(pythonError ? { error: pythonError } : {}),
+      },
+      imports,
+    },
+    updateCheck: command.checkUpdates ? "not_implemented" : "not_requested",
+  };
+}
+
+async function inspectPythonImport(
+  pythonCommand: string,
+  packageName: string,
+  env?: Record<string, string>,
+): Promise<DoctorCheckStatus> {
+  if (!pythonCommand) return "not_checked";
+  return await commandWorks(
+      pythonCommand,
+      ["-c", `import ${packageName}`],
+      env,
+    )
+    ? "ok"
+    : "missing";
+}
+
 async function printDoctor(
   command: Extract<BetaCommand, { kind: "doctor" }>,
   paths: BetaPaths,
 ): Promise<void> {
-  const runtime = command.managedEnv
-    ? await inspectManagedRuntime(paths)
-    : await resolveRuntimeSelection(paths, {
-      mode: "user",
-      pythonCommand: command.pythonCommand,
-    }).catch((error) => ({
-      mode: "user" as const,
-      pythonCommand: "",
-      error: error instanceof Error ? error.message : String(error),
-    }));
-  const runtimeEnv = runtime.mode === "user"
-    ? pythonRuntimeEnv(paths)
-    : undefined;
-  const nodebookImport = runtime.pythonCommand
-    ? await commandWorks(
-      runtime.pythonCommand,
-      ["-c", "import nodebook"],
-      runtimeEnv,
-    )
-    : false;
-  const pandasImport = runtime.pythonCommand
-    ? await commandWorks(
-      runtime.pythonCommand,
-      ["-c", "import pandas"],
-      runtimeEnv,
-    )
-    : false;
-  const polarsImport = runtime.pythonCommand
-    ? await commandWorks(
-      runtime.pythonCommand,
-      ["-c", "import polars"],
-      runtimeEnv,
-    )
-    : false;
+  const report = await buildDoctorReport(command, paths);
+  if (command.json) {
+    console.info(JSON.stringify(report, null, 2));
+    return;
+  }
 
-  console.info(`Nodebook ${nodebookVersion}`);
-  console.info(`Data directory: ${paths.dataDir}`);
-  console.info(`Managed venv: ${paths.venvDir}`);
-  console.info(`Log file: ${paths.logFile}`);
+  console.info(`Nodebook ${report.nodebookVersion}`);
+  console.info(`Data directory: ${report.dataDirectory}`);
+  console.info(`Managed venv: ${report.managedEnvironment}`);
+  console.info(`Log file: ${report.logFile}`);
   console.info(
     `PATH contains ~/.local/bin: ${
-      pathContainsLocalBin(paths.home) ? "ok" : "missing"
+      report.pathContainsLocalBin ? "ok" : "missing"
     }`,
   );
-  console.info(`Runtime mode: ${runtime.mode}`);
-  console.info(`Runtime Python: ${runtime.pythonCommand || "not found"}`);
-  if ("error" in runtime) {
-    console.info(`Runtime error: ${runtime.error}`);
+  console.info(`Runtime mode: ${report.runtime.mode}`);
+  console.info(
+    `Runtime Python: ${
+      report.runtime.python.command || report.runtime.python.status
+    }`,
+  );
+  if (report.runtime.python.error) {
+    console.info(`Runtime error: ${report.runtime.python.error}`);
   }
-  console.info(`nodebook package: ${nodebookImport ? "ok" : "missing"}`);
-  console.info(`pandas: ${pandasImport ? "ok" : "missing"}`);
-  console.info(`polars: ${polarsImport ? "ok" : "missing"}`);
+  console.info(`nodebook package: ${report.runtime.imports.nodebook}`);
+  console.info(`pandas: ${report.runtime.imports.pandas}`);
+  console.info(`polars: ${report.runtime.imports.polars}`);
   if (command.checkUpdates) {
     console.info("Update checks are not implemented yet.");
   }
 
   if (
-    command.managedEnv && (!nodebookImport || !pandasImport || !polarsImport)
+    command.managedEnv &&
+    Object.values(report.runtime.imports).some((status) => status !== "ok")
   ) {
     console.info("");
     console.info("Fix: nodebook reset-env");
-  } else if (!command.managedEnv && !runtime.pythonCommand) {
+  } else if (!command.managedEnv && report.runtime.python.status !== "ok") {
     console.info("");
     console.info("Fix: nodebook doctor --managed-env");
   }

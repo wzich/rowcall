@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  buildDoctorReport,
   buildLauncherInvocation,
   createExampleProject,
   createNewDocument,
@@ -12,6 +13,7 @@ import {
   parseBetaCommand,
   resolveExistingDocumentPath,
 } from "./beta_launcher.ts";
+import { getBetaPaths } from "./beta_paths.ts";
 
 Deno.test("format help teaches the strict generated return structure", () => {
   const help = helpTextForTopic("format");
@@ -103,15 +105,45 @@ Deno.test("parseBetaCommand maps doctor/reset/update commands", () => {
   assertEquals(parseBetaCommand(["doctor", "--updates"]), {
     kind: "doctor",
     checkUpdates: true,
+    json: false,
     managedEnv: false,
   });
   assertEquals(parseBetaCommand(["doctor", "--managed-env"]), {
     kind: "doctor",
     checkUpdates: false,
+    json: false,
     managedEnv: true,
+  });
+  assertEquals(parseBetaCommand(["doctor", "--json"]), {
+    kind: "doctor",
+    checkUpdates: false,
+    json: true,
+    managedEnv: false,
   });
   assertEquals(parseBetaCommand(["reset-env"]), { kind: "reset-env" });
   assertEquals(parseBetaCommand(["update"]), { kind: "update" });
+});
+
+Deno.test({
+  name: "doctor inspection does not create Nodebook state",
+  permissions: { read: true, run: true, env: true, write: true },
+  async fn() {
+    const tempDir = await Deno.makeTempDir();
+    const home = `${tempDir}/unused-home`;
+    const paths = getBetaPaths(home);
+
+    const report = await buildDoctorReport({
+      kind: "doctor",
+      checkUpdates: false,
+      json: true,
+      managedEnv: true,
+    }, paths);
+
+    assertEquals(report.runtime.mode, "managed");
+    assertEquals(report.runtime.python.status, "missing");
+    assertEquals(report.runtime.imports.nodebook, "not_checked");
+    await assertRejects(() => Deno.stat(paths.dataDir), Deno.errors.NotFound);
+  },
 });
 
 Deno.test("parseBetaCommand maps new and example commands", () => {

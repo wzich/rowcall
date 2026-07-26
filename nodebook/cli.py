@@ -14,7 +14,8 @@ from nodebook.runtime import run_document
 
 USAGE = """Usage:
   nodebook validate <folder-or-document.py> [--json]
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json] [--trace]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary]
+  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only
 
 Folders resolve to graph.py inside the folder.
 """
@@ -24,8 +25,9 @@ Folders resolve to graph.py inside the folder.
 class CliOptions:
     command: str
     document_path: str
-    json: bool = False
-    trace: bool = False
+    json_mode: str = "none"
+    trace_mode: str = "none"
+    outputs_only: bool = False
     target: str | None = None
 
 
@@ -50,7 +52,10 @@ def main(
     try:
         options = parse_cli_options(args)
     except CliUsageError as exc:
-        json_requested = "--json" in args
+        json_requested = any(
+            arg == "--outputs-only" or arg == "--json" or arg.startswith("--json=")
+            for arg in args
+        )
         command, document_path = partial_command_and_path(args)
         if json_requested:
             write_json(
@@ -83,16 +88,29 @@ def parse_cli_options(args: list[str]) -> CliOptions:
         raise CliUsageError(f"Unknown command: {command}")
 
     positionals: list[str] = []
-    json_output = False
-    trace = False
+    json_mode = "none"
+    trace_mode = "none"
+    outputs_only = False
     target: str | None = None
     index = 1
     while index < len(args):
         arg = args[index]
         if arg == "--json":
-            json_output = True
+            json_mode = "full"
+        elif arg.startswith("--json="):
+            value = arg.split("=", 1)[1]
+            if value not in {"full", "summary"}:
+                raise CliUsageError("Invalid value for --json. Use `full` or `summary`.")
+            json_mode = value
         elif arg == "--trace":
-            trace = True
+            trace_mode = "full"
+        elif arg.startswith("--trace="):
+            value = arg.split("=", 1)[1]
+            if value not in {"full", "summary"}:
+                raise CliUsageError("Invalid value for --trace. Use `full` or `summary`.")
+            trace_mode = value
+        elif arg == "--outputs-only":
+            outputs_only = True
         elif arg == "--to":
             index += 1
             if index >= len(args) or args[index].startswith("-"):
@@ -117,14 +135,23 @@ def parse_cli_options(args: list[str]) -> CliOptions:
     document_path = positionals[0]
     if command == "validate" and target is not None:
         raise CliUsageError("`validate` does not accept --to.")
-    if command == "validate" and trace:
+    if command == "validate" and trace_mode != "none":
         raise CliUsageError("`validate` does not accept --trace.")
+    if command == "validate" and outputs_only:
+        raise CliUsageError("`validate` does not accept --outputs-only.")
+    if outputs_only and json_mode == "summary":
+        raise CliUsageError("Use either --outputs-only or --json=summary, not both.")
+    if outputs_only and trace_mode != "none":
+        raise CliUsageError("`--outputs-only` does not accept --trace.")
+    if trace_mode == "summary" and json_mode == "none":
+        raise CliUsageError("`--trace=summary` requires --json or --json=summary.")
 
     return CliOptions(
         command=command,
         document_path=document_path,
-        json=json_output,
-        trace=trace,
+        json_mode=json_mode,
+        trace_mode=trace_mode,
+        outputs_only=outputs_only,
         target=target,
     )
 
@@ -148,7 +175,7 @@ def handle_validate(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> i
         result = None
         error = {"kind": "load_error", "message": str(exc)}
 
-    if options.json:
+    if options.json_mode != "none":
         payload: dict[str, Any] = {
             "ok": bool(result and result.ok),
             "command": "validate",
@@ -188,7 +215,7 @@ def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
             "executedNodeIds": [],
             "resultsByNode": {},
             "finalOutputsByNode": {},
-            "trace": [] if options.trace else None,
+            "trace": [] if options.trace_mode != "none" else None,
             "error": {"kind": "load_error", "message": str(exc)},
         }
     else:
@@ -200,7 +227,7 @@ def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
             response = run_document(
                 str(resolved_document_path),
                 target=options.target,
-                trace=options.trace,
+                trace=options.trace_mode != "none",
             )
     except OSError as exc:
         response = {
@@ -210,7 +237,7 @@ def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
             "executedNodeIds": [],
             "resultsByNode": {},
             "finalOutputsByNode": {},
-            "trace": [] if options.trace else None,
+            "trace": [] if options.trace_mode != "none" else None,
             "error": {"kind": "load_error", "message": str(exc)},
         }
     except Exception as exc:
@@ -221,7 +248,7 @@ def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
             "executedNodeIds": [],
             "resultsByNode": {},
             "finalOutputsByNode": {},
-            "trace": [] if options.trace else None,
+            "trace": [] if options.trace_mode != "none" else None,
             "error": {"kind": "execution_error", "message": str(exc)},
         }
 
@@ -234,12 +261,230 @@ def handle_run(options: CliOptions, *, stdout: TextIO, stderr: TextIO) -> int:
     if options.target is not None:
         payload["target"] = {"requested": options.target, "nodeId": response.get("targetNodeId")}
 
-    if options.json:
+    if options.outputs_only:
+        write_json(outputs_only_payload(payload), stdout)
+    elif options.json_mode == "summary":
+        write_json(summary_payload(payload, trace_mode=options.trace_mode), stdout)
+    elif options.json_mode == "full":
+        if options.trace_mode == "summary":
+            payload["response"] = {
+                **response,
+                "trace": summarize_trace(response.get("trace")),
+            }
         write_json(payload, stdout)
     else:
         write_run_summary(payload, stdout=stdout, stderr=stderr)
 
     return 0 if payload["ok"] else 1
+
+
+COMPACT_TEXT_LIMIT = 1_000
+COMPACT_JSON_VALUE_BYTE_LIMIT = 16_000
+COMPACT_TABLE_ROWS = 5
+COMPACT_TABLE_COLUMNS = 10
+COMPACT_COLLECTION_ITEMS = 20
+
+
+def truncate_compact_text(value: Any, limit: int = COMPACT_TEXT_LIMIT) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
+
+
+def compact_error(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return truncate_compact_text(value)
+    compact: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, str):
+            compact[key] = truncate_compact_text(item, 2_000)
+        elif isinstance(item, list):
+            compact[key] = [
+                compact_error(entry)
+                for entry in item[:COMPACT_COLLECTION_ITEMS]
+            ]
+            if len(item) > COMPACT_COLLECTION_ITEMS:
+                compact[f"{key}Truncated"] = True
+        elif isinstance(item, dict):
+            compact[key] = compact_error(item)
+        elif item is None or isinstance(item, (bool, int, float)):
+            compact[key] = item
+        else:
+            compact[key] = truncate_compact_text(item)
+    return compact
+
+
+def compact_preview(preview: Any) -> Any:
+    if not isinstance(preview, dict):
+        return preview
+
+    compact = {
+        key: preview[key]
+        for key in ("name", "type")
+        if key in preview
+    }
+    if "repr" in preview:
+        compact["repr"] = truncate_compact_text(preview["repr"], 500)
+    if "summary" in preview:
+        compact["summary"] = truncate_compact_text(preview["summary"])
+    if "text" in preview:
+        compact["text"] = truncate_compact_text(preview["text"])
+    if "warning" in preview:
+        compact["warning"] = truncate_compact_text(preview["warning"])
+
+    if "jsonValue" in preview:
+        encoded = json.dumps(
+            preview["jsonValue"],
+            ensure_ascii=False,
+            allow_nan=False,
+            default=str,
+        ).encode("utf-8")
+        if len(encoded) <= COMPACT_JSON_VALUE_BYTE_LIMIT:
+            compact["jsonValue"] = preview["jsonValue"]
+        else:
+            compact["jsonValueOmitted"] = {
+                "reason": "compact_output_limit",
+                "sizeBytes": len(encoded),
+                "limitBytes": COMPACT_JSON_VALUE_BYTE_LIMIT,
+            }
+
+    table = preview.get("table")
+    if isinstance(table, dict):
+        columns = table.get("columns")
+        rows = table.get("rows")
+        compact_table = {
+            key: table[key]
+            for key in ("rowCount", "columnCount")
+            if key in table
+        }
+        if isinstance(columns, list):
+            compact_table["columns"] = columns[:COMPACT_TABLE_COLUMNS]
+        if isinstance(rows, list):
+            compact_table["rows"] = [
+                row[:COMPACT_TABLE_COLUMNS] if isinstance(row, list) else row
+                for row in rows[:COMPACT_TABLE_ROWS]
+            ]
+        if isinstance(table.get("index"), list):
+            compact_table["index"] = table["index"][:COMPACT_TABLE_ROWS]
+        compact_table["truncated"] = bool(table.get("truncated")) or (
+            isinstance(columns, list) and len(columns) > COMPACT_TABLE_COLUMNS
+        ) or (isinstance(rows, list) and len(rows) > COMPACT_TABLE_ROWS)
+        compact["table"] = compact_table
+
+    return compact
+
+
+def compact_outputs(outputs_by_node: Any) -> dict[str, Any]:
+    if not isinstance(outputs_by_node, dict):
+        return {}
+    return {
+        str(node_id): {
+            str(name): compact_preview(preview)
+            for name, preview in outputs.items()
+        }
+        for node_id, outputs in outputs_by_node.items()
+        if isinstance(outputs, dict)
+    }
+
+
+def summarize_trace(trace: Any) -> list[dict[str, Any]] | None:
+    if trace is None:
+        return None
+    if not isinstance(trace, list):
+        return []
+    summary = []
+    for entry in trace:
+        if not isinstance(entry, dict):
+            continue
+        item = {
+            key: entry[key]
+            for key in ("index", "nodeId", "dependsOn", "ok")
+            if key in entry
+        }
+        warnings = entry.get("warnings")
+        if isinstance(warnings, list) and warnings:
+            item["warnings"] = [
+                truncate_compact_text(warning)
+                for warning in warnings[:COMPACT_COLLECTION_ITEMS]
+            ]
+        if entry.get("error") is not None:
+            item["error"] = compact_error(entry["error"])
+        summary.append(item)
+    return summary
+
+
+def summary_payload(payload: dict[str, Any], *, trace_mode: str) -> dict[str, Any]:
+    response = payload["response"]
+    results = response.get("resultsByNode")
+    node_summaries = []
+    if isinstance(results, dict):
+        for node_id in response.get("executedNodeIds") or []:
+            result = results.get(node_id)
+            if not isinstance(result, dict):
+                continue
+            node_summary: dict[str, Any] = {
+                "nodeId": node_id,
+                "ok": bool(result.get("ok")),
+            }
+            for stream_name in ("stdout", "stderr"):
+                stream_value = result.get(stream_name)
+                if stream_value:
+                    node_summary[stream_name] = truncate_compact_text(stream_value)
+            warnings = result.get("warnings")
+            if isinstance(warnings, list) and warnings:
+                node_summary["warnings"] = [
+                    truncate_compact_text(warning)
+                    for warning in warnings[:COMPACT_COLLECTION_ITEMS]
+                ]
+            if result.get("error") is not None:
+                node_summary["error"] = compact_error(result["error"])
+            node_summaries.append(node_summary)
+
+    compact_response: dict[str, Any] = {
+        key: response[key]
+        for key in (
+            "ok",
+            "runType",
+            "targetNodeId",
+            "finalNodeIds",
+            "executedNodeIds",
+        )
+        if key in response
+    }
+    compact_response["nodes"] = node_summaries
+    compact_response["finalOutputsByNode"] = compact_outputs(
+        response.get("finalOutputsByNode")
+    )
+    if trace_mode != "none":
+        compact_response["trace"] = (
+            summarize_trace(response.get("trace"))
+            if trace_mode == "summary"
+            else response.get("trace")
+        )
+    if response.get("error") is not None:
+        compact_response["error"] = compact_error(response["error"])
+
+    result = {
+        key: payload[key]
+        for key in ("ok", "command", "documentPath", "target")
+        if key in payload
+    }
+    result["response"] = compact_response
+    return result
+
+
+def outputs_only_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    response = payload["response"]
+    result = {
+        key: payload[key]
+        for key in ("ok", "command", "documentPath", "target")
+        if key in payload
+    }
+    result["outputsByNode"] = compact_outputs(response.get("finalOutputsByNode"))
+    if response.get("error") is not None:
+        result["error"] = compact_error(response["error"])
+    return result
 
 
 def document_summary(result: ParseResult) -> dict[str, Any]:

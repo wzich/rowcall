@@ -111,6 +111,8 @@ starter environment:
 ```sh
 nodebook open --managed-env my-work
 nodebook run --managed-env my-work --json
+nodebook run --managed-env my-work --json=summary --trace=summary
+nodebook run --managed-env my-work --outputs-only
 ```
 
 The beta launcher stores its managed files under:
@@ -130,6 +132,7 @@ Inspect the default user Python runtime:
 
 ```sh
 nodebook doctor
+nodebook doctor --json
 ```
 
 Inspect the managed starter environment:
@@ -137,6 +140,9 @@ Inspect the managed starter environment:
 ```sh
 nodebook doctor --managed-env
 ```
+
+Doctor is read-only: it reports missing or unchecked capabilities without
+creating launcher assets, environments, or log files.
 
 Recreate only the managed venv:
 

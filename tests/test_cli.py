@@ -215,6 +215,101 @@ def start():
             2,
         )
 
+    def test_run_json_summary_omits_intermediate_results(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        exit_code = main(
+            [
+                "run",
+                str(REPO_ROOT / "examples/hello_world.py"),
+                "--json=summary",
+                "--trace=summary",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(exit_code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        response = payload["response"]
+        self.assertNotIn("resultsByNode", response)
+        self.assertEqual(
+            [node["nodeId"] for node in response["nodes"]],
+            ["n_load", "n_shout"],
+        )
+        self.assertEqual(
+            response["finalOutputsByNode"]["n_shout"]["message"]["jsonValue"],
+            "HELLO!",
+        )
+        self.assertEqual(
+            response["trace"],
+            [
+                {
+                    "index": 0,
+                    "nodeId": "n_load",
+                    "dependsOn": [],
+                    "ok": True,
+                },
+                {
+                    "index": 1,
+                    "nodeId": "n_shout",
+                    "dependsOn": ["n_load"],
+                    "ok": True,
+                },
+            ],
+        )
+
+    def test_run_outputs_only_bounds_large_final_json_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "large.py"
+            path.write_text(
+                """
+from nodebook import node
+
+@node(id="large", outputs=["values"])
+def large_value():
+    values = [f"value-{index:04d}" for index in range(1500)]
+    return {"values": values}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(
+                ["run", str(path), "--outputs-only"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0, stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertNotIn("response", payload)
+        preview = payload["outputsByNode"]["large"]["values"]
+        self.assertNotIn("jsonValue", preview)
+        self.assertEqual(
+            preview["jsonValueOmitted"]["reason"],
+            "compact_output_limit",
+        )
+        self.assertLess(len(stdout.getvalue()), 5_000)
+
+    def test_trace_summary_requires_json_output(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        exit_code = main(
+            [
+                "run",
+                str(REPO_ROOT / "examples/hello_world.py"),
+                "--trace=summary",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("requires --json", stderr.getvalue())
+
     def test_run_missing_module_json_is_structured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "missing.py"

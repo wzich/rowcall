@@ -73,14 +73,26 @@ not created implicitly; use `nodebook new <path>` instead.
 
 ## Options
 
-- `--json` prints structured machine-readable output.
+- `--json` prints the full structured machine-readable runtime response.
+- `--json=summary` prints a bounded response with node statuses and compact
+  final-output previews, omitting full intermediate results.
+- `--outputs-only` prints only bounded final-output previews and any run error.
 - `--trace` includes ordered per-step execution details, including input
   previews for each executed node.
+- `--trace=summary` includes only trace order, dependencies, statuses, warnings,
+  and errors. It requires `--json` or `--json=summary`.
 
 Example:
 
 ```sh
 nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+```
+
+For agent and CI workflows, prefer a compact projection:
+
+```sh
+nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json=summary --trace=summary
+nodebook run examples/ecommerce/analysis.py --to build_customer_facts --outputs-only
 ```
 
 For developer workflows, the Python module CLI is equivalent when the package is
@@ -120,6 +132,12 @@ state.
 `--trace` can produce large JSON because it includes previews for intermediate
 inputs and outputs. Prefer untraced `--json` for normal automation and add
 `--trace` when debugging data flow into a specific node.
+
+Summary and outputs-only responses cap embedded plain JSON values at 16 KB,
+table previews at 5 rows by 10 columns, and diagnostic text fields at bounded
+lengths. Omitted or shortened values include explicit truncation metadata or
+markers. These presentation limits do not change the Python values passed
+between nodes.
 
 ## Exit Codes
 
@@ -172,7 +190,10 @@ then `python` and requires Python 3.10 or newer.
 
 Use `nodebook doctor` to inspect the selected user Python runtime. Use
 `nodebook doctor --managed-env` to inspect the managed venv, installed package
-status, pandas/polars availability, and log path.
+status, pandas/polars availability, and log path. Doctor is read-only and does
+not materialize launcher assets, create environments, or append to the log. Pass
+`--json` for a structured report; checks that cannot run are reported as
+`not_checked` rather than as missing packages.
 
 The lower-level Python module CLI runs with the interpreter used to launch it.
 It does not auto-detect Conda, virtualenv, or other interpreters.
