@@ -3,9 +3,9 @@
 ## Status
 
 Working product alignment for the invited-beta inspector. This document is
-intentionally narrower than a complete UI specification. It defines the jobs
-the inspector must support, their priority, and the interaction model we want
-to test with early users.
+intentionally narrower than a complete UI specification. It defines the jobs the
+inspector must support, their priority, and the interaction model we want to
+test with early users.
 
 ## Product decision
 
@@ -16,9 +16,9 @@ Its primary job is to make the transformation loop fast:
 
 > observe inputs -> edit code -> run -> inspect outputs -> repeat
 
-That loop should be possible without repeatedly changing views, scrolling a
-long document, or reaching for the mouse. Other inspector features should not
-compete with this loop for permanent space.
+That loop should be possible without repeatedly changing views, scrolling a long
+document, or reaching for the mouse. Other inspector features should not compete
+with this loop for permanent space.
 
 The inspector has three user modes:
 
@@ -101,8 +101,8 @@ can return to editing quickly.
 **Job to be done**
 
 When I select a node I did not just write, I want a concise explanation of what
-it receives, what it does, what it produces, and where those values go so that
-I can understand the graph without reverse-engineering every line of code.
+it receives, what it does, what it produces, and where those values go so that I
+can understand the graph without reverse-engineering every line of code.
 
 **Core user stories**
 
@@ -114,8 +114,8 @@ I can understand the graph without reverse-engineering every line of code.
 - As a reader, I can navigate directly to a neighboring node.
 - As a reader, I can open the code when the summary is insufficient.
 
-A generated natural-language summary may eventually improve this mode, but it
-is not required for the MVP. The explicit contract and representative previews
+A generated natural-language summary may eventually improve this mode, but it is
+not required for the MVP. The explicit contract and representative previews
 should carry the first version.
 
 ### P1: Inspect run results and artifacts
@@ -198,16 +198,16 @@ strip overflows, scroll it horizontally or collapse it into a compact selector
 rather than wrapping and stealing vertical space. Do not stack every dataframe
 vertically.
 
-Remember the last selected input per node if that is cheap; otherwise choose
-the first tabular value, then the first value. Apply the same model to multiple
+Remember the last selected input per node if that is cheap; otherwise choose the
+first tabular value, then the first value. Apply the same model to multiple
 declared outputs. Simultaneous side-by-side comparison of two inputs may be
 useful later, but it is not required for the first friend release.
 
 The Develop output strip includes a compact **Expose** action. It offers locals
-assigned in the node first and pass-through inputs second. Choosing a value
-adds it to the node's output contract and selects its new preview tab; it does
-not require a trip to Overview. Full contract review and removal remain in
-Overview for the MVP.
+assigned in the node first and pass-through inputs second. Choosing a value adds
+it to the node's output contract and selects its new preview tab; it does not
+require a trip to Overview. Full contract review and removal remain in Overview
+for the MVP.
 
 ### Overview tab
 
@@ -284,10 +284,9 @@ and sink counts are omitted, as are source/sink navigation lists and declared
 sink-output summaries. The graph canvas is the primary navigation and topology
 surface.
 
-Starting **Run graph** automatically opens Results. Graph Results represent
-only a full `run_graph` execution. A `run_to_node` execution updates the
-relevant node inspectors and notification state, but never replaces graph
-Results.
+Starting **Run graph** automatically opens Results. Graph Results represent only
+a full `run_graph` execution. A `run_to_node` execution updates the relevant
+node inspectors and notification state, but never replaces graph Results.
 
 Successful graph Results show declared sink outputs using flat output tabs and
 the richest preview currently available. The selected preview identifies and
@@ -326,8 +325,8 @@ friend testing demonstrates demand.
 ## Questions to answer through friend testing
 
 - Can users correctly identify whether an input or output preview is fresh?
-- Is 5-10 actual preview rows enough to judge common dataframe
-  transformations, and is a head sample the right default?
+- Is 5-10 actual preview rows enough to judge common dataframe transformations,
+  and is a head sample the right default?
 - Do users need to compare more than one input or output simultaneously?
 - Is the vertical sandwich usable at the inspector's current 520-640px width,
   especially with wide dataframes?

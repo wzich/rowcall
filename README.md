@@ -192,14 +192,19 @@ This creates a repo-local `.venv`, installs the local `nodebook` Python package,
 and installs `requirements-alpha.txt`. This is separate from the beta launcher's
 `~/.nodebook/venvs/default`.
 
-Start the Deno API:
+Start the full development environment:
 
 ```sh
 deno task dev
 ```
 
-By default this edits `examples/ecommerce/analysis.py`. To edit another local
-document during development, pass a `.py` path through the task:
+This starts the watched Deno API and the Vite development server, then opens the
+app at `http://127.0.0.1:5173/`. Vite hot-reloads UI changes and proxies API
+requests with a development-session authorization token, so API restarts do not
+require opening a new tokenized URL.
+
+By default Nodebook edits `examples/ecommerce/analysis.py`. To edit another
+local document during development, pass a `.py` path through the task:
 
 ```sh
 deno task dev path/to/analysis.py
@@ -210,6 +215,18 @@ new `.py` path:
 
 ```sh
 deno task dev --create path/to/analysis.py
+```
+
+Pass `--no-open` to start both development processes without opening a browser:
+
+```sh
+deno task dev --no-open path/to/analysis.py
+```
+
+If port 5173 is already occupied, choose another Vite port explicitly:
+
+```sh
+deno task dev --ui-port 5174 path/to/analysis.py
 ```
 
 Nodebook Python documents import a tiny local `nodebook` package:
@@ -240,42 +257,40 @@ python -m pip install polars
 deno task dev examples/polars_orders.py
 ```
 
-Start the React canvas UI in another terminal:
-
-```sh
-deno task ui:dev
-```
-
-The UI is served by Vite at `http://127.0.0.1:5173/` and proxies document and
-execution requests to the API at `http://127.0.0.1:8000/`. Document parsing and
-execution go through the Python runtime worker. Selected-node runs execute that
-node's complete upstream dependency plan afresh; no prior execution outputs are
-reused.
+Document parsing and execution go through the Python runtime worker.
+Selected-node runs execute that node's complete upstream dependency plan afresh;
+no prior execution outputs are reused.
 
 ## Build And Serve The UI
 
 ```sh
-deno task ui:build
+deno task build
 ```
 
 The build output is written to `app/ui/dist/`. After building, the Deno/Hono
 server serves the React app from `http://127.0.0.1:8000/` while continuing to
 handle document and execution API routes.
 
-Use Vite for active UI development. Use the Hono-served build when you want a
-single local server or a production-style static app host.
+For a production-style local smoke test, build and start that single server:
+
+```sh
+deno task serve
+```
+
+`serve` builds the current UI before starting and opens the tokenized local app.
+Pass `--no-open` to suppress the browser. Use `dev` for normal development and
+hot reloading.
 
 ## Build The Beta Launcher
 
-Build the UI, then compile the macOS beta launcher:
+Compile the macOS beta launcher:
 
 ```sh
-deno task ui:build
 deno task beta:compile
 ```
 
-The compiled binary is written to `dist/nodebook`. It embeds the built UI, the
-Python package, and `requirements-alpha.txt`.
+The task builds the UI first. The compiled binary is written to `dist/nodebook`
+and embeds the built UI, the Python package, and `requirements-alpha.txt`.
 
 For release hosting, publish platform-specific binaries such as:
 

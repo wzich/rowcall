@@ -108,7 +108,7 @@ function printHelp() {
 }
 
 async function buildReleaseBinaries() {
-  await run("deno", ["task", "ui:build"]);
+  await run("deno", ["task", "build"]);
   await emptyDir(releaseDir);
 
   for (const asset of releaseAssets) {

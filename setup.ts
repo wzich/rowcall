@@ -39,7 +39,7 @@ async function main(): Promise<void> {
 
   console.info("");
   console.info("Nodebook Python environment is ready.");
-  console.info(`Run: deno task start`);
+  console.info(`Run: deno task dev`);
 }
 
 function parseSetupOptions(args: string[]): SetupOptions {

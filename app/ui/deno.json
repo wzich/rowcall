@@ -4,8 +4,7 @@
     "check": "deno check src/main.tsx",
     "test": "deno test --allow-read src",
     "dev": "deno run -A npm:vite@7.3.2 --host 127.0.0.1",
-    "build": "deno run -A npm:vite@7.3.2 build",
-    "preview": "deno run -A npm:vite@7.3.2 preview --host 127.0.0.1"
+    "build": "deno run -A npm:vite@7.3.2 build"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",

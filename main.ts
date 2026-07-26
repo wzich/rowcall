@@ -494,7 +494,7 @@ async function serveBuiltUiIndex(): Promise<Response> {
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
       return new Response(
-        "React UI build not found. Run `deno task ui:build` first, or use `deno task ui:dev` during development.",
+        "React UI build not found. Run `deno task dev` for active development, or `deno task build` before starting the API directly.",
         {
           status: 404,
           headers: {

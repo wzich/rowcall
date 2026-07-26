@@ -15,8 +15,8 @@ async function main(): Promise<void> {
     Deno.exit(1);
   }
 
-  console.info("Building Nodebook UI...");
-  await runChecked([Deno.execPath(), "task", "ui:build"]);
+  console.info("Building Nodebook...");
+  await runChecked([Deno.execPath(), "task", "build"]);
   console.info("Preparing Nodebook server...");
   await runChecked([Deno.execPath(), "cache", "main.ts"]);
 
