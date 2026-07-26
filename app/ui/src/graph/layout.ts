@@ -1,3 +1,4 @@
+import { Graph, layout } from "@dagrejs/dagre";
 import type { RuntimeGraph } from "./runtimeTypes.ts";
 
 export type CanvasPosition = {
@@ -5,54 +6,50 @@ export type CanvasPosition = {
   y: number;
 };
 
-const columnGap = 880;
-const rowGap = 300;
-const startX = 80;
-const startY = 80;
+const nodeWidth = 360;
+const nodeHeight = 220;
+const nodeGap = 80;
+const rankGap = 120;
+const canvasMargin = 80;
 
 export function createSimpleLayout(
   graph: RuntimeGraph,
 ): Record<string, CanvasPosition> {
-  const depthByNode = new Map<string, number>();
-  const parentsByNode = new Map<string, string[]>();
+  const layoutGraph = new Graph()
+    .setGraph({
+      rankdir: "TB",
+      nodesep: nodeGap,
+      ranksep: rankGap,
+      marginx: canvasMargin,
+      marginy: canvasMargin,
+    })
+    .setDefaultEdgeLabel(() => ({}));
 
   for (const node of graph.nodes) {
-    depthByNode.set(node.id, 0);
-    parentsByNode.set(node.id, []);
+    layoutGraph.setNode(node.id, {
+      width: nodeWidth,
+      height: nodeHeight,
+    });
   }
 
   for (const edge of graph.edges) {
-    if (!parentsByNode.has(edge.toNode)) continue;
-    parentsByNode.get(edge.toNode)!.push(edge.fromNode);
-  }
-
-  // TODO: Replace this minimal layout with a real DAG layout once graphs get
-  // large enough that hand-spaced columns stop being useful.
-  for (let pass = 0; pass < graph.nodes.length; pass += 1) {
-    for (const node of graph.nodes) {
-      const parentDepths = (parentsByNode.get(node.id) ?? [])
-        .map((parentId) => depthByNode.get(parentId) ?? 0);
-      if (parentDepths.length === 0) continue;
-      depthByNode.set(node.id, Math.max(...parentDepths) + 1);
+    if (
+      layoutGraph.hasNode(edge.fromNode) &&
+      layoutGraph.hasNode(edge.toNode)
+    ) {
+      layoutGraph.setEdge(edge.fromNode, edge.toNode);
     }
   }
 
-  const nodesByDepth = new Map<number, string[]>();
-  for (const node of graph.nodes) {
-    const depth = depthByNode.get(node.id) ?? 0;
-    const nodes = nodesByDepth.get(depth) ?? [];
-    nodes.push(node.id);
-    nodesByDepth.set(depth, nodes);
-  }
+  layout(layoutGraph);
 
   const positions: Record<string, CanvasPosition> = {};
-  for (const [depth, nodeIds] of nodesByDepth) {
-    nodeIds.forEach((nodeId, row) => {
-      positions[nodeId] = {
-        x: startX + row * columnGap,
-        y: startY + depth * rowGap,
-      };
-    });
+  for (const node of graph.nodes) {
+    const position = layoutGraph.node(node.id);
+    positions[node.id] = {
+      x: position.x - nodeWidth / 2,
+      y: position.y - nodeHeight / 2,
+    };
   }
 
   return positions;

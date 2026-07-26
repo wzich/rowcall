@@ -8,6 +8,7 @@
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
+    "@dagrejs/dagre": "npm:@dagrejs/dagre@3.0.0",
     "@codemirror/lang-json": "npm:@codemirror/lang-json@6.0.2",
     "@codemirror/lang-python": "npm:@codemirror/lang-python@6.2.1",
     "@codemirror/view": "npm:@codemirror/view@6.38.8",
