@@ -3,6 +3,7 @@
 **/.vite/
 **/dist/
 tmp/
+.playwright-cli/
 .wrangler/
 .codex/
 **/*.egg-info/
