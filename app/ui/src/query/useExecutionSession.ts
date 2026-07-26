@@ -15,6 +15,7 @@ import {
 } from "./executionPresentation.ts";
 import {
   preserveCompletedExecutionStatesForEdit,
+  preserveGraphExecutionStateForEdit,
 } from "./executionSessionState.ts";
 
 export function useExecutionSession(
@@ -26,6 +27,9 @@ export function useExecutionSession(
   >({});
   const [graphExecutionState, setGraphExecutionState] = useState<
     GraphExecutionDisplayState | null
+  >(null);
+  const [activeRunType, setActiveRunType] = useState<
+    ExecutionResponse["runType"] | null
   >(null);
   const [nodeRunStatuses, setNodeRunStatuses] = useState<
     Record<string, NodeRunVisualStatus>
@@ -57,7 +61,10 @@ export function useExecutionSession(
       ...current,
       [nodeId]: { status: "running", runType },
     }));
-    setGraphExecutionState({ status: "running", runType });
+    setActiveRunType(runType);
+    if (runType === "run_graph") {
+      setGraphExecutionState({ status: "running" });
+    }
   }
 
   function markGraphExecutionRunning(
@@ -70,7 +77,10 @@ export function useExecutionSession(
     if (clearNodeExecutionState) {
       setExecutionStateByNodeId({});
     }
-    setGraphExecutionState({ status: "running", runType });
+    setActiveRunType(runType);
+    if (runType === "run_graph") {
+      setGraphExecutionState({ status: "running" });
+    }
   }
 
   function applyExecutionStreamEvent(
@@ -83,7 +93,10 @@ export function useExecutionSession(
 
     if (event.type === "run_started") {
       activeRunIdRef.current = event.runId;
-      setGraphExecutionState({ status: "running", runType: event.runType });
+      setActiveRunType(event.runType);
+      if (event.runType === "run_graph") {
+        setGraphExecutionState({ status: "running" });
+      }
       return;
     }
 
@@ -139,7 +152,11 @@ export function useExecutionSession(
     }
 
     if (event.type === "run_completed" || event.type === "run_failed") {
-      storeGraphExecutionResponse(event.response);
+      if (event.response.runType === "run_graph") {
+        storeGraphExecutionResponse(event.response);
+      } else {
+        storeRunNotification(event.response);
+      }
       storeExecutionResponseForNodeIds(
         event.response,
         activePlanNodeIdsRef.current.length > 0
@@ -196,15 +213,24 @@ export function useExecutionSession(
     error: unknown,
     targetNodeId: string,
   ) {
+    const message = error instanceof Error
+      ? error.message
+      : "The request failed before Python execution completed.";
     setExecutionStateByNodeId((current) => ({
       ...current,
       [targetNodeId]: {
         status: "request_error",
-        message: error instanceof Error
-          ? error.message
-          : "The request failed before Python execution completed.",
+        message,
       },
     }));
+    notificationIdRef.current += 1;
+    setRunNotification({
+      id: notificationIdRef.current,
+      tone: "danger",
+      title: "Run couldn't start",
+      summary: "Execution request failed",
+      destination: { kind: "node", nodeId: targetNodeId },
+    });
   }
 
   function resetUnfinishedRunStatuses() {
@@ -243,6 +269,7 @@ export function useExecutionSession(
       activeRunAbortControllerRef.current = null;
       activeRunIdRef.current = null;
       activePlanNodeIdsRef.current = [];
+      setActiveRunType(null);
       return true;
     }
     return false;
@@ -253,20 +280,31 @@ export function useExecutionSession(
     activeRunAbortControllerRef.current = null;
     activeRunIdRef.current = null;
     activePlanNodeIdsRef.current = [];
+    setActiveRunType(null);
+  }
+
+  function storeRunNotification(response: ExecutionResponse) {
+    if (notifiedResponseRef.current === response) {
+      return;
+    }
+    notifiedResponseRef.current = response;
+    notificationIdRef.current += 1;
+    setRunNotification(
+      createRunNotification(response, notificationIdRef.current),
+    );
   }
 
   function storeGraphExecutionResponse(response: ExecutionResponse) {
+    if (response.runType !== "run_graph") {
+      storeRunNotification(response);
+      return;
+    }
     setGraphExecutionState({
       status: "completed",
       response,
+      freshness: "fresh",
     });
-    if (notifiedResponseRef.current !== response) {
-      notifiedResponseRef.current = response;
-      notificationIdRef.current += 1;
-      setRunNotification(
-        createRunNotification(response, notificationIdRef.current),
-      );
-    }
+    storeRunNotification(response);
   }
 
   function storeGraphExecutionRequestError(error: unknown) {
@@ -309,7 +347,7 @@ export function useExecutionSession(
     setExecutionStateByNodeId((current) =>
       preserveCompletedExecutionStatesForEdit(current)
     );
-    setGraphExecutionState(null);
+    setGraphExecutionState(preserveGraphExecutionStateForEdit);
     resetUnfinishedRunStatuses();
     setRunNotification(null);
     notifiedResponseRef.current = null;
@@ -354,6 +392,7 @@ export function useExecutionSession(
   return {
     executionStateByNodeId,
     graphExecutionState,
+    activeRunType,
     nodeRunStatuses,
     runNotification,
     applyExecutionStreamEvent,
@@ -369,6 +408,7 @@ export function useExecutionSession(
     resetUnfinishedRunStatuses,
     startRunAbortController,
     storeExecutionRequestErrorForNode,
+    storeRunNotification,
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,

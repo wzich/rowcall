@@ -64,15 +64,41 @@ body {
   color: #71717a;
 }
 
+.cm-editor .cm-activeLine {
+  background-color: rgb(24 24 27 / 0.035);
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: rgb(24 24 27 / 0.05);
+  color: #52525b;
+}
+
 .dark .cm-editor .cm-gutters {
   background-color: #18181b;
   border-right-color: #3f3f46;
   color: #71717a;
 }
 
+.dark .inspector-code-editor .cm-editor {
+  background-color: #18181b;
+}
+
+.dark .cm-editor .cm-content {
+  caret-color: #f4f4f5;
+}
+
+.dark .cm-editor .cm-cursor,
+.dark .cm-editor .cm-dropCursor {
+  border-left-color: #f4f4f5;
+}
+
+.dark .cm-editor .cm-activeLine {
+  background-color: rgb(255 255 255 / 0.045);
+}
+
 .dark .cm-editor .cm-activeLineGutter {
-  background-color: #27272a;
-  color: #d4d4d8;
+  background-color: rgb(255 255 255 / 0.055);
+  color: #a1a1aa;
 }
 
 .dark .cm-editor .cm-foldGutter span {

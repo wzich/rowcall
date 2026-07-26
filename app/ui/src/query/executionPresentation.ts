@@ -26,7 +26,9 @@ export function createRunNotification(
       summary: response.runType === "run_graph"
         ? "Graph completed"
         : "Run through completed",
-      destination: { kind: "graph" },
+      destination: response.runType === "run_to_node" && response.targetNodeId
+        ? { kind: "node", nodeId: response.targetNodeId }
+        : { kind: "graph" },
     };
   }
 

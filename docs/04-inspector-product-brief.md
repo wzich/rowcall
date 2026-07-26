@@ -268,6 +268,41 @@ relevant.
 7. **The graph owns topology.** The inspector provides compact neighbor context
    and navigation, not a miniature duplicate of the canvas.
 
+## Graph inspector alignment
+
+The graph inspector has a narrower job than the node inspector. It supports
+shared setup and full-graph execution; it does not repeat topology that is
+already legible and navigable on the canvas.
+
+It has two tabs:
+
+1. **Overview** -- edit Document Globals and see graph-level setup errors.
+2. **Results** -- inspect the latest full-graph run and its sink outputs.
+
+The Overview tab begins with the Document Globals editor. Node, edge, source,
+and sink counts are omitted, as are source/sink navigation lists and declared
+sink-output summaries. The graph canvas is the primary navigation and topology
+surface.
+
+Starting **Run graph** automatically opens Results. Graph Results represent
+only a full `run_graph` execution. A `run_to_node` execution updates the
+relevant node inspectors and notification state, but never replaces graph
+Results.
+
+Successful graph Results show declared sink outputs using flat output tabs and
+the richest preview currently available. The selected preview identifies and
+links to its originating sink node. Duplicate output names are disambiguated
+with their sink-node names.
+
+Any graph or Document Globals edit makes the latest completed graph result
+stale. Keep that result visible but faded and clearly labeled until the next
+full graph run. Partial node runs do not make a stale graph result fresh.
+
+Failures take priority in Results. A node failure links directly to the failed
+node; a Document Globals failure links directly back to Overview. Trace and
+other diagnostics remain secondary to status, failure location, and sink
+outputs.
+
 ## MVP recommendation
 
 Build and test the **Develop tab first**. Retain current functionality through

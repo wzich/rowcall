@@ -1,7 +1,12 @@
 import { assertEquals } from "@std/assert";
-import type { ExecutionDisplayState } from "../components/InspectorPanel.tsx";
+import type { ExecutionResponse } from "../../../../types.ts";
+import type {
+  ExecutionDisplayState,
+  GraphExecutionDisplayState,
+} from "../components/InspectorPanel.tsx";
 import {
   preserveCompletedExecutionStatesForEdit,
+  preserveGraphExecutionStateForEdit,
 } from "./executionSessionState.ts";
 
 function completedPreview(value: number): ExecutionDisplayState {
@@ -36,4 +41,31 @@ Deno.test("starting a downstream edit keeps completed upstream previews", () => 
   });
 
   assertEquals(result, { upstream });
+});
+
+Deno.test("graph edits preserve completed graph results as stale", () => {
+  const response: ExecutionResponse = {
+    ok: true,
+    runType: "run_graph",
+    finalNodeIds: [],
+    executedNodeIds: [],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: null,
+    error: null,
+  };
+  const current: GraphExecutionDisplayState = {
+    status: "completed",
+    response,
+    freshness: "fresh",
+  };
+
+  assertEquals(preserveGraphExecutionStateForEdit(current), {
+    ...current,
+    freshness: "stale",
+  });
+  assertEquals(
+    preserveGraphExecutionStateForEdit({ status: "running" }),
+    null,
+  );
 });

@@ -188,6 +188,7 @@ export default function App() {
   const {
     executionStateByNodeId,
     graphExecutionState,
+    activeRunType,
     nodeRunStatuses,
     runNotification,
     applyExecutionStreamEvent,
@@ -202,13 +203,14 @@ export default function App() {
     resetUnfinishedRunStatuses,
     startRunAbortController,
     storeExecutionRequestErrorForNode,
+    storeRunNotification,
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
   } = useExecutionSession(documentSourceValue, {
     getCurrentSourceValue: () => documentSourceValueRef.current,
   });
-  const isGraphRunning = graphExecutionState?.status === "running";
+  const isRunActive = activeRunType !== null;
   const isSelectedNodeRunning = selectedNodeId
     ? executionStateByNodeId[selectedNodeId]?.status === "running"
     : false;
@@ -390,7 +392,7 @@ export default function App() {
         ...response.executedNodeIds,
         variables.nodeId,
       ]);
-      storeGraphExecutionResponse(response);
+      storeRunNotification(response);
       clearActiveRun(variables.abortController);
     },
     onError: (error, variables) => {
@@ -405,7 +407,6 @@ export default function App() {
       }
 
       storeExecutionRequestErrorForNode(error, variables.nodeId);
-      storeGraphExecutionRequestError(error);
       clearActiveRun(variables.abortController);
     },
   });
@@ -1589,7 +1590,7 @@ export default function App() {
                 onRunToNode={handleRunToNode}
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isGraphRunning || isSelectedNodeRunning ||
+                runToNodeDisabled={isRunActive || isSelectedNodeRunning ||
                   saveStatus === "outcome_unknown"}
                 onSelectionClear={() => setSelectedNodeId(null)}
                 themeMode={themeMode}
@@ -1606,6 +1607,7 @@ export default function App() {
                 ? nodeRunStatuses[selectedNodeId] ?? "idle"
                 : "idle"}
               graphExecutionState={graphExecutionState}
+              isRunActive={isRunActive}
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}

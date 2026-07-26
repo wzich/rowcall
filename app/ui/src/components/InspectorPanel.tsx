@@ -75,6 +75,7 @@ export type NodeInspectorInputGroup = {
 };
 
 type NodeInspectorMode = "develop" | "overview" | "results";
+type GraphInspectorMode = "overview" | "results";
 
 export type GraphInspectorModel = {
   nodeCount: number;
@@ -105,12 +106,14 @@ export type ExecutionDisplayState =
   | { status: "completed"; response: ExecutionResponse }
   | { status: "request_error"; message: string };
 
-export type GraphExecutionDisplayState = Extract<
-  ExecutionDisplayState,
+export type GraphExecutionDisplayState =
   | { status: "running" }
-  | { status: "completed" }
-  | { status: "request_error" }
->;
+  | {
+    status: "completed";
+    response: ExecutionResponse;
+    freshness: "fresh" | "stale";
+  }
+  | { status: "request_error"; message: string };
 
 export type InspectorNavigationRequest = {
   target: "document_globals" | "run_result";
@@ -124,6 +127,7 @@ type InspectorPanelProps = {
   selectedNodeExecutionState: ExecutionDisplayState | null;
   selectedNodeRunStatus: NodeRunVisualStatus;
   graphExecutionState: GraphExecutionDisplayState | null;
+  isRunActive: boolean;
   traceEnabled: boolean;
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
@@ -147,28 +151,6 @@ type InspectorPanelProps = {
   navigationRequest?: InspectorNavigationRequest | null;
   onShowDocumentGlobals?: () => void;
 };
-
-function CodeList(
-  { items, emptyLabel }: { items: string[]; emptyLabel: string },
-) {
-  if (items.length === 0) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">{emptyLabel}</p>
-    );
-  }
-
-  return (
-    <ul className="mt-2 space-y-1">
-      {items.map((item) => (
-        <li key={item}>
-          <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
-            {item}
-          </code>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function LabelList(
   { items, emptyLabel }: { items: string[]; emptyLabel: string },
@@ -209,40 +191,6 @@ function NodeIdButton({
     >
       {label}
     </button>
-  );
-}
-
-function NodeIdList({
-  items,
-  emptyLabel,
-  labelsById = {},
-  onNodeSelect,
-}: {
-  items: string[];
-  emptyLabel: string;
-  labelsById?: Record<string, string>;
-  onNodeSelect: (nodeId: string) => void;
-}) {
-  if (items.length === 0) {
-    return (
-      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-        {emptyLabel}
-      </p>
-    );
-  }
-
-  return (
-    <ul className="mt-2 flex flex-wrap gap-1.5">
-      {items.map((item) => (
-        <li key={item}>
-          <NodeIdButton
-            nodeId={item}
-            label={labelsById[item]}
-            onNodeSelect={onNodeSelect}
-          />
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -538,6 +486,110 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
   );
 }
 
+function FlatPreview({
+  preview,
+  metadataSuffix,
+}: {
+  preview: ValuePreview;
+  metadataSuffix?: ReactNode;
+}) {
+  const typeLabel = formatPythonType(preview.type);
+
+  return (
+    <div className="pt-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-zinc-500 dark:text-zinc-400">
+        <span title={preview.type}>{typeLabel}</span>
+        {preview.table && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>
+              {preview.table.rowCount} rows × {preview.table.columnCount}{" "}
+              columns
+            </span>
+          </>
+        )}
+        {metadataSuffix && (
+          <>
+            <span aria-hidden="true">·</span>
+            {metadataSuffix}
+          </>
+        )}
+      </div>
+      {preview.table
+        ? <TablePreviewBlock table={preview.table} />
+        : (
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-800 dark:text-zinc-200">
+            {preview.repr}
+          </pre>
+        )}
+      {preview.warning && (
+        <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          {preview.warning}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ResultOutputTabs({
+  previews,
+  title = "Outputs",
+}: {
+  previews: Record<string, ValuePreview>;
+  title?: string;
+}) {
+  const options = Object.entries(previews);
+  const [selectedName, setSelectedName] = useState(options[0]?.[0] ?? "");
+
+  useEffect(() => {
+    if (!options.some(([name]) => name === selectedName)) {
+      setSelectedName(options[0]?.[0] ?? "");
+    }
+  }, [options, selectedName]);
+
+  const selected = options.find(([name]) => name === selectedName) ??
+    options[0];
+
+  if (!selected) {
+    return (
+      <section>
+        <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+          {title}
+        </h4>
+        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+          No outputs.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+        {title}
+      </h4>
+      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-700">
+        {options.map(([name]) => (
+          <button
+            key={name}
+            type="button"
+            className={[
+              "shrink-0 border-b-2 px-0.5 pb-2 font-mono text-xs",
+              name === selected[0]
+                ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
+                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
+            ].join(" ")}
+            onClick={() => setSelectedName(name)}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+      <FlatPreview preview={{ ...selected[1], name: selected[0] }} />
+    </section>
+  );
+}
+
 function WarningList({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
 
@@ -628,7 +680,6 @@ function RunResult({
     executionState.status === "failed_node"
   ) {
     const nodeResult = executionState.result;
-    const outputEntries = Object.entries(nodeResult.outputs);
 
     return (
       <section className="border-t border-zinc-200 pt-4">
@@ -656,14 +707,7 @@ function RunResult({
         )}
 
         <div className="mt-4 space-y-4">
-          <section>
-            <h4 className="text-xs font-semibold uppercase text-zinc-500">
-              Outputs
-            </h4>
-            {outputEntries.length === 0
-              ? <p className="mt-2 text-sm text-zinc-500">No outputs.</p>
-              : <PreviewBlock previews={nodeResult.outputs} />}
-          </section>
+          <ResultOutputTabs previews={nodeResult.outputs} />
 
           <InlineOutputBlock
             events={nodeResult.outputEvents}
@@ -730,7 +774,6 @@ function RunResult({
   }
 
   const outputs = nodeResult?.outputs ?? {};
-  const outputEntries = Object.entries(outputs);
 
   return (
     <section className="border-t border-zinc-200 pt-4">
@@ -758,14 +801,7 @@ function RunResult({
       )}
 
       <div className="mt-4 space-y-4">
-        <section>
-          <h4 className="text-xs font-semibold uppercase text-zinc-500">
-            Outputs
-          </h4>
-          {outputEntries.length === 0
-            ? <p className="mt-2 text-sm text-zinc-500">No outputs.</p>
-            : <PreviewBlock previews={outputs} />}
-        </section>
+        <ResultOutputTabs previews={outputs} />
 
         <InlineOutputBlock
           events={nodeResult?.outputEvents}
@@ -812,31 +848,24 @@ function NodeTraceResult({
   );
 }
 
-// Keep the graph and node inspector modes together while the surface is small.
-// Split these into separate files once either mode starts carrying more logic.
-function MetricTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded border border-zinc-200 bg-zinc-50 p-3">
-      <dt className="text-xs text-zinc-500">{label}</dt>
-      <dd className="mt-1 text-lg font-semibold text-zinc-950">{value}</dd>
-    </div>
-  );
-}
-
 function GraphInspector({
   themeMode,
   graph,
   graphExecutionState,
+  mode,
   readOnly,
   onNodeSelect,
   onGlobalsCodeChange,
+  onModeChange,
 }: {
   themeMode: ThemeMode;
   graph: GraphInspectorModel;
   graphExecutionState: GraphExecutionDisplayState | null;
+  mode: GraphInspectorMode;
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onGlobalsCodeChange: (code: string) => void;
+  onModeChange: (mode: GraphInspectorMode) => void;
 }) {
   const globalsError = graphExecutionState?.status === "completed" &&
       !graphExecutionState.response.ok &&
@@ -844,139 +873,76 @@ function GraphInspector({
     ? graphExecutionState.response.error
     : null;
 
-  return (
-    <div className="space-y-4">
+  if (mode === "results") {
+    return (
       <div data-inspector-target="run_result">
         <GraphRunResult
           executionState={graphExecutionState}
           nodeLabelsById={graph.nodeLabelsById}
           onNodeSelect={onNodeSelect}
+          onShowDocumentGlobals={() => onModeChange("overview")}
         />
       </div>
+    );
+  }
 
-      <section
-        data-inspector-target="document_globals"
+  return (
+    <section
+      data-inspector-target="document_globals"
+      className={[
+        globalsError
+          ? "rounded border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40"
+          : "",
+      ].join(" ")}
+    >
+      <h3
         className={[
-          "border-t pt-4",
-          globalsError
-            ? "rounded border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40"
-            : "border-zinc-200",
+          "text-xs font-semibold uppercase",
+          globalsError ? "text-red-800 dark:text-red-300" : "text-zinc-500",
         ].join(" ")}
       >
-        <h3
-          className={[
-            "text-xs font-semibold uppercase",
-            globalsError ? "text-red-800 dark:text-red-300" : "text-zinc-500",
-          ].join(" ")}
-        >
-          Document Globals
-        </h3>
-        <div
-          className={[
-            "mt-2 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:min-h-36 [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
-            globalsError ? "border-red-300" : "border-zinc-200",
-          ].join(" ")}
-        >
-          <CodeMirror
-            value={graph.globalsCode}
-            extensions={[python()]}
-            readOnly={readOnly}
-            onChange={onGlobalsCodeChange}
-            basicSetup={{
-              autocompletion: false,
-              closeBrackets: true,
-              foldGutter: true,
-              highlightActiveLine: true,
-              highlightActiveLineGutter: true,
-              lineNumbers: true,
-            }}
-            theme={themeMode}
-          />
-        </div>
-        {globalsError && (
-          <div className="mt-2 text-sm text-red-800 dark:text-red-200">
-            <p className="font-medium">
-              {globalsError.message || "Document Globals failed."}
+        Document Globals
+      </h3>
+      <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+        Imports, constants, and helpers shared by every step.
+      </p>
+      <div
+        className={[
+          "mt-3 h-52 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:h-full [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
+          globalsError ? "border-red-300" : "border-zinc-200",
+        ].join(" ")}
+      >
+        <CodeMirror
+          className="inspector-code-editor h-full"
+          value={graph.globalsCode}
+          height="100%"
+          extensions={[python()]}
+          readOnly={readOnly}
+          onChange={onGlobalsCodeChange}
+          basicSetup={{
+            autocompletion: false,
+            closeBrackets: true,
+            foldGutter: true,
+            highlightActiveLine: true,
+            highlightActiveLineGutter: true,
+            lineNumbers: true,
+          }}
+          theme={themeMode}
+        />
+      </div>
+      {globalsError && (
+        <div className="mt-2 text-sm text-red-800 dark:text-red-200">
+          <p className="font-medium">
+            {globalsError.message || "Document Globals failed."}
+          </p>
+          {globalsError.pythonExecutable && (
+            <p className="mt-1 truncate font-mono text-xs opacity-80">
+              Python: {globalsError.pythonExecutable}
             </p>
-            {globalsError.pythonExecutable && (
-              <p className="mt-1 truncate font-mono text-xs opacity-80">
-                Python: {globalsError.pythonExecutable}
-              </p>
-            )}
-          </div>
-        )}
-      </section>
-
-      <dl className="grid grid-cols-2 gap-3">
-        <MetricTile label="Nodes" value={graph.nodeCount} />
-        <MetricTile label="Edges" value={graph.edgeCount} />
-        <MetricTile label="Sources" value={graph.sourceNodeIds.length} />
-        <MetricTile label="Sinks" value={graph.sinkNodeIds.length} />
-      </dl>
-
-      <section>
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Sources
-        </h3>
-        <NodeIdList
-          items={graph.sourceNodeIds}
-          emptyLabel="No source nodes"
-          labelsById={graph.nodeLabelsById}
-          onNodeSelect={onNodeSelect}
-        />
-      </section>
-
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Sinks
-        </h3>
-        <NodeIdList
-          items={graph.sinkNodeIds}
-          emptyLabel="No sink nodes"
-          labelsById={graph.nodeLabelsById}
-          onNodeSelect={onNodeSelect}
-        />
-      </section>
-
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Sink Declared Outputs
-        </h3>
-        {graph.sinkOutputs.length === 0
-          ? <p className="mt-2 text-sm text-zinc-500">No sink nodes</p>
-          : (
-            <div className="mt-2 space-y-3">
-              {graph.sinkOutputs.map((sinkOutput) => (
-                <div key={sinkOutput.nodeId}>
-                  <NodeIdButton
-                    nodeId={sinkOutput.nodeId}
-                    label={graph.nodeLabelsById[sinkOutput.nodeId]}
-                    onNodeSelect={onNodeSelect}
-                  />
-                  <CodeList
-                    items={sinkOutput.outputs}
-                    emptyLabel="No declared outputs"
-                  />
-                </div>
-              ))}
-            </div>
           )}
-      </section>
-
-      {graph.isolatedNodeIds.length > 0 && (
-        <section className="border-t border-zinc-200 pt-4">
-          <h3 className="text-xs font-semibold uppercase text-zinc-500">
-            Isolated Nodes
-          </h3>
-          <NodeIdList
-            items={graph.isolatedNodeIds}
-            emptyLabel="No isolated nodes"
-            labelsById={graph.nodeLabelsById}
-            onNodeSelect={onNodeSelect}
-          />
-        </section>
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -984,122 +950,99 @@ function GraphRunResult({
   executionState,
   nodeLabelsById,
   onNodeSelect,
+  onShowDocumentGlobals,
 }: {
   executionState: GraphExecutionDisplayState | null;
   nodeLabelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
+  onShowDocumentGlobals: () => void;
 }) {
   if (!executionState) {
-    return null;
+    return (
+      <div className="flex min-h-72 flex-col items-center justify-center rounded border border-dashed border-zinc-300 px-8 text-center dark:border-zinc-700">
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+          No graph results yet
+        </p>
+        <p className="mt-1 max-w-sm text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+          Run the graph to inspect its sink outputs here.
+        </p>
+      </div>
+    );
   }
 
   if (executionState.status === "running") {
     return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <p className="mt-2 text-sm text-zinc-600">Running...</p>
-      </section>
+      <div className="rounded border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/40">
+        <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
+          Running graph…
+        </p>
+        <p className="mt-1 text-xs text-blue-700 dark:text-blue-300">
+          Sink outputs will appear when the run completes.
+        </p>
+      </div>
     );
   }
 
   if (executionState.status === "request_error") {
     return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-          <p className="text-sm font-medium text-red-800">
-            Could not start run
-          </p>
-          <p className="mt-1 text-sm text-red-700">
-            The request failed before Python execution completed.
-          </p>
-          <p className="mt-2 font-mono text-xs text-red-950">
-            {executionState.message}
-          </p>
-        </div>
-      </section>
+      <div className="rounded border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
+        <p className="text-sm font-medium text-red-800 dark:text-red-200">
+          Could not start graph run
+        </p>
+        <p className="mt-2 font-mono text-xs text-red-950 dark:text-red-300">
+          {executionState.message}
+        </p>
+      </div>
     );
   }
 
   const response = executionState.response;
-  const finalNodeIds = response.finalNodeIds.filter((nodeId) =>
-    nodeId in response.finalOutputsByNode
-  );
 
   return (
-    <section className="border-t border-zinc-200 pt-4">
-      <h3 className="text-xs font-semibold uppercase text-zinc-500">
-        Run Result
-      </h3>
-      <p
-        className={[
-          "mt-2 text-sm font-medium",
-          response.ok ? "text-zinc-700" : "text-red-800",
-        ].join(" ")}
+    <div className="space-y-4">
+      {executionState.freshness === "stale" && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <p className="text-sm font-medium">Results are stale</p>
+          <p className="mt-1 text-xs">
+            The graph changed after this run. These results are preserved for
+            context until you run the graph again.
+          </p>
+        </div>
+      )}
+
+      <div
+        className={executionState.freshness === "stale" ? "opacity-60" : ""}
       >
-        {response.ok ? "Run succeeded" : "Run failed"}
-      </p>
-
-      {response.ok
-        ? (
-          <div className="mt-4 space-y-4">
-            <section>
-              <h4 className="text-xs font-semibold uppercase text-zinc-500">
-                Executed Nodes
-              </h4>
-              <p className="mt-2 text-sm text-zinc-700">
-                {response.executedNodeIds.length}
-              </p>
-            </section>
-
-            <section>
-              <h4 className="text-xs font-semibold uppercase text-zinc-500">
-                Final Outputs
-              </h4>
-              {finalNodeIds.length === 0
-                ? (
-                  <p className="mt-2 text-sm text-zinc-500">
-                    No final outputs.
-                  </p>
-                )
-                : (
-                  <div className="mt-2 space-y-3">
-                    {finalNodeIds.map((nodeId) => (
-                      <div key={nodeId}>
-                        <NodeIdButton
-                          nodeId={nodeId}
-                          label={nodeLabelsById[nodeId]}
-                          onNodeSelect={onNodeSelect}
-                        />
-                        <PreviewBlock
-                          previews={response.finalOutputsByNode[nodeId]}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-            </section>
-
-            <GraphTraceResult
+        {response.ok
+          ? (
+            <GraphOutputTabs
               response={response}
+              freshness={executionState.freshness}
               nodeLabelsById={nodeLabelsById}
+              onNodeSelect={onNodeSelect}
             />
-          </div>
-        )
-        : (
-          <>
-            <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-              <p className="text-sm font-medium text-red-800">
-                {response.error?.message ?? "Graph execution failed."}
+          )
+          : (
+            <div className="rounded border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
+              <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                Graph run failed
               </p>
+              <p className="mt-1 text-sm text-red-700 dark:text-red-300">
+                {response.error?.message ?? "Python execution failed."}
+              </p>
+              {response.error?.phase === "document_globals" && (
+                <button
+                  type="button"
+                  className="mt-3 rounded border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900"
+                  onClick={onShowDocumentGlobals}
+                >
+                  Open Document Globals
+                </button>
+              )}
               {response.error?.nodeId && (
-                <div className="mt-2">
-                  <p className="text-xs font-semibold uppercase text-red-700">
-                    Failed At
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase text-red-700 dark:text-red-300">
+                    Failed at
                   </p>
                   <div className="mt-1">
                     <NodeIdButton
@@ -1111,12 +1054,135 @@ function GraphRunResult({
                 </div>
               )}
             </div>
-            <GraphTraceResult
-              response={response}
-              nodeLabelsById={nodeLabelsById}
-            />
-          </>
+          )}
+      </div>
+
+      <GraphTraceResult
+        response={response}
+        nodeLabelsById={nodeLabelsById}
+      />
+    </div>
+  );
+}
+
+type GraphOutputOption = {
+  key: string;
+  nodeId: string;
+  nodeLabel: string;
+  name: string;
+  preview: ValuePreview;
+};
+
+function GraphOutputTabs({
+  response,
+  freshness,
+  nodeLabelsById,
+  onNodeSelect,
+}: {
+  response: ExecutionResponse;
+  freshness: "fresh" | "stale";
+  nodeLabelsById: Record<string, string>;
+  onNodeSelect: (nodeId: string) => void;
+}) {
+  const options = useMemo<GraphOutputOption[]>(
+    () =>
+      response.finalNodeIds.flatMap((nodeId) =>
+        Object.entries(response.finalOutputsByNode[nodeId] ?? {}).map(
+          ([name, preview]) => ({
+            key: `${nodeId}:${name}`,
+            nodeId,
+            nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
+            name,
+            preview,
+          }),
+        )
+      ),
+    [nodeLabelsById, response],
+  );
+  const duplicateNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const option of options) {
+      counts.set(option.name, (counts.get(option.name) ?? 0) + 1);
+    }
+    return new Set(
+      [...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name),
+    );
+  }, [options]);
+  const [selectedKey, setSelectedKey] = useState(options[0]?.key ?? "");
+
+  useEffect(() => {
+    if (!options.some((option) => option.key === selectedKey)) {
+      setSelectedKey(options[0]?.key ?? "");
+    }
+  }, [options, selectedKey]);
+
+  const selected = options.find((option) => option.key === selectedKey) ??
+    options[0];
+
+  if (!selected) {
+    return (
+      <div className="rounded border border-zinc-200 p-4 dark:border-zinc-700">
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+          Graph completed
+        </p>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          No sink outputs were produced.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+          Graph outputs
+        </h3>
+        {freshness === "fresh" && (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            Fresh
+          </span>
         )}
+      </div>
+      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-700">
+        {options.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            className={[
+              "shrink-0 border-b-2 px-0.5 pb-2 font-mono text-xs",
+              option.key === selected.key
+                ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
+                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
+            ].join(" ")}
+            onClick={() => setSelectedKey(option.key)}
+          >
+            {duplicateNames.has(option.name)
+              ? `${option.nodeLabel} · ${option.name}`
+              : option.name}
+          </button>
+        ))}
+      </div>
+      <div className="py-3">
+        <FlatPreview
+          preview={{ ...selected.preview, name: selected.name }}
+          metadataSuffix={
+            <span className="font-sans">
+              from{" "}
+              <button
+                type="button"
+                className="font-medium text-zinc-700 hover:underline dark:text-zinc-200"
+                onClick={() => onNodeSelect(selected.nodeId)}
+              >
+                {selected.nodeLabel}
+              </button>
+            </span>
+          }
+        />
+      </div>
     </section>
   );
 }
@@ -1602,7 +1668,7 @@ function NodeDevelop({
           <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
             <div data-shortcut-scope="editor" className="h-full">
               <CodeMirror
-                className="h-full"
+                className="inspector-code-editor h-full"
                 value={selectedNode.code}
                 height="100%"
                 extensions={extensions}
@@ -1612,8 +1678,8 @@ function NodeDevelop({
                   autocompletion: false,
                   closeBrackets: true,
                   foldGutter: true,
-                  highlightActiveLine: false,
-                  highlightActiveLineGutter: false,
+                  highlightActiveLine: true,
+                  highlightActiveLineGutter: true,
                   lineNumbers: true,
                 }}
                 theme={themeMode}
@@ -2788,12 +2854,7 @@ function OutputPreviewSection({
 
   return (
     <section className="border-t border-zinc-200 pt-4">
-      <h3 className="text-xs font-semibold uppercase text-zinc-500">
-        Output Previews
-      </h3>
-      <div className="mt-2">
-        <PreviewBlock previews={previews} />
-      </div>
+      <ResultOutputTabs previews={previews} title="Output previews" />
     </section>
   );
 }
@@ -2874,6 +2935,38 @@ function DeleteNodeAction({
   );
 }
 
+function GraphInspectorTabs({
+  mode,
+  onModeChange,
+}: {
+  mode: GraphInspectorMode;
+  onModeChange: (mode: GraphInspectorMode) => void;
+}) {
+  const tabs: Array<{ id: GraphInspectorMode; label: string }> = [
+    { id: "overview", label: "Overview" },
+    { id: "results", label: "Results" },
+  ];
+
+  return (
+    <div className="flex h-11 shrink-0 items-end gap-6 border-b border-zinc-200 px-5 dark:border-zinc-800">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={`border-b-2 pb-2.5 text-sm font-medium ${
+            tab.id === mode
+              ? "border-blue-600 text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
+              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+          }`}
+          onClick={() => onModeChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function NodeInspectorTabs({
   mode,
   runStatus,
@@ -2926,6 +3019,7 @@ export function InspectorPanel({
   selectedNodeExecutionState,
   selectedNodeRunStatus,
   graphExecutionState,
+  isRunActive,
   traceEnabled,
   readOnly,
   onNodeSelect,
@@ -2945,12 +3039,11 @@ export function InspectorPanel({
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
     "running";
-  const isGraphRunning = graphExecutionState?.status === "running";
   const isNodeNameReadOnly = readOnly || !selectedNode?.editable;
-  const isAnyRunBlockingNodeActions = isSelectedNodeRunning || isGraphRunning;
-  const areNodeActionsDisabled = actionsBlocked || isSelectedNodeRunning ||
-    isGraphRunning;
-  const isGraphActionDisabled = actionsBlocked || isGraphRunning;
+  const isAnyRunBlockingNodeActions = isRunActive || isSelectedNodeRunning;
+  const areNodeActionsDisabled = actionsBlocked || isRunActive ||
+    isSelectedNodeRunning;
+  const isGraphActionDisabled = actionsBlocked || isRunActive;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const handledNavigationRequestIdRef = useRef<number | null>(null);
   const dragStartXRef = useRef(0);
@@ -2962,6 +3055,9 @@ export function InspectorPanel({
   const [inspectorMode, setInspectorMode] = useState<NodeInspectorMode>(
     "develop",
   );
+  const [graphInspectorMode, setGraphInspectorMode] = useState<
+    GraphInspectorMode
+  >("overview");
   const [nodeNameDraft, setNodeNameDraft] = useState(
     selectedNode?.displayName ?? "",
   );
@@ -2980,6 +3076,9 @@ export function InspectorPanel({
     }
 
     handledNavigationRequestIdRef.current = navigationRequest.requestId;
+    setGraphInspectorMode(
+      navigationRequest.target === "document_globals" ? "overview" : "results",
+    );
     const frameId = requestAnimationFrame(() => {
       const target = scrollContainerRef.current?.querySelector(
         `[data-inspector-target="${navigationRequest.target}"]`,
@@ -2988,6 +3087,12 @@ export function InspectorPanel({
     });
     return () => cancelAnimationFrame(frameId);
   }, [navigationRequest, selectedNode]);
+
+  useEffect(() => {
+    if (!selectedNode && graphExecutionState?.status === "running") {
+      setGraphInspectorMode("results");
+    }
+  }, [graphExecutionState?.status, selectedNode]);
 
   useEffect(() => {
     setNodeNameDraft(selectedNode?.displayName ?? "");
@@ -3128,14 +3233,17 @@ export function InspectorPanel({
                 type="button"
                 className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
                 disabled={isGraphActionDisabled}
-                onClick={onRunGraph}
+                onClick={() => {
+                  setGraphInspectorMode("results");
+                  onRunGraph();
+                }}
               >
                 <Play
                   aria-hidden="true"
                   className="h-4 w-4"
                   strokeWidth={2.25}
                 />
-                {isGraphRunning ? "Running..." : "Run graph"}
+                {isRunActive ? "Running..." : "Run graph"}
               </button>
             </div>
           )}
@@ -3173,25 +3281,35 @@ export function InspectorPanel({
           </>
         )
         : (
-          <div
-            ref={scrollContainerRef}
-            className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
-          >
-            <div className="space-y-4">
+          <>
+            <GraphInspectorTabs
+              mode={graphInspectorMode}
+              onModeChange={setGraphInspectorMode}
+            />
+            <div
+              ref={scrollContainerRef}
+              className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+            >
               <GraphInspector
                 themeMode={themeMode}
                 graph={graph}
                 graphExecutionState={graphExecutionState}
+                mode={graphInspectorMode}
                 readOnly={readOnly}
                 onNodeSelect={onNodeSelect}
                 onGlobalsCodeChange={onGlobalsCodeChange}
+                onModeChange={setGraphInspectorMode}
               />
-              <TraceToggle
-                traceEnabled={traceEnabled}
-                onTraceEnabledChange={onTraceEnabledChange}
-              />
+              {graphInspectorMode === "results" && (
+                <div className="mt-4">
+                  <TraceToggle
+                    traceEnabled={traceEnabled}
+                    onTraceEnabledChange={onTraceEnabledChange}
+                  />
+                </div>
+              )}
             </div>
-          </div>
+          </>
         )}
     </aside>
   );

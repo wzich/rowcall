@@ -58,3 +58,22 @@ Deno.test("node failures navigate to the failed node", () => {
     "blocked",
   );
 });
+
+Deno.test("successful partial runs stay attached to their target node", () => {
+  const response: ExecutionResponse = {
+    ok: true,
+    runType: "run_to_node",
+    targetNodeId: "n_total",
+    finalNodeIds: ["n_total"],
+    executedNodeIds: ["n_total"],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: null,
+    error: null,
+  };
+
+  assertEquals(createRunNotification(response, 9).destination, {
+    kind: "node",
+    nodeId: "n_total",
+  });
+});
