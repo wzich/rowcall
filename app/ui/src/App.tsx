@@ -34,6 +34,10 @@ import {
   type NodebookDocumentV1,
   toRuntimeGraph,
 } from "./graph/documentTypes.ts";
+import {
+  type DirectOutputConflict,
+  getDirectOutputConflictsForConnection,
+} from "./graph/connectionValidation.ts";
 import { createSimpleLayout } from "./graph/layout.ts";
 import {
   functionNameFromDisplayName,
@@ -75,6 +79,11 @@ export type NodeNameChangeResult =
   | { ok: false; message: string };
 
 type SaveErrorMessage = {
+  title: string;
+  detail: string;
+};
+
+type ConnectionWarning = {
   title: string;
   detail: string;
 };
@@ -134,6 +143,9 @@ export default function App() {
     "idle" | "saving" | "saved" | "error" | "outcome_unknown"
   >("idle");
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
+  const [connectionWarning, setConnectionWarning] = useState<
+    ConnectionWarning | null
+  >(null);
   const [documentPath, setDocumentPath] = useState("Active document");
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [firstUnsavedEditAt, setFirstUnsavedEditAt] = useState<number | null>(
@@ -966,12 +978,24 @@ export default function App() {
     if (targetNode?.editable === false) {
       return;
     }
+    const conflicts = getDirectOutputConflictsForConnection(
+      current,
+      fromNode,
+      toNode,
+    );
+    if (conflicts.length > 0) {
+      setConnectionWarning(
+        createConnectionWarning(current, fromNode, toNode, conflicts),
+      );
+      return;
+    }
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), toNode);
     const nextDocument = {
       ...current,
       edges: [...current.edges, { fromNode, toNode }],
     };
 
+    setConnectionWarning(null);
     markDocumentEdited();
     queueOperation({ type: "add_edge", fromNode, toNode });
     markNodesStale(staleNodeIds);
@@ -1449,6 +1473,26 @@ export default function App() {
           onOpen={() => handleRunNotificationClick(runNotification)}
           onDismiss={() => dismissRunNotification(runNotification.id)}
         />
+      )}
+      {connectionWarning && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">{connectionWarning.title}.</span>
+            <span className="ml-2">{connectionWarning.detail}</span>
+          </p>
+          <button
+            type="button"
+            aria-label="Dismiss connection warning"
+            title="Dismiss"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-amber-800 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900"
+            onClick={() => setConnectionWarning(null)}
+          >
+            <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+          </button>
+        </div>
       )}
       {externalDocumentNotice.kind === "dirty" && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100">
@@ -2320,6 +2364,42 @@ function getOutputPreviewsForNode(
 
 function getNodeDisplayTitle(node: RuntimeNode): string {
   return prettifyFunctionName(node.functionName);
+}
+
+function createConnectionWarning(
+  document: NodebookDocumentV1,
+  fromNode: string,
+  toNode: string,
+  conflicts: DirectOutputConflict[],
+): ConnectionWarning {
+  const labelsById = Object.fromEntries(
+    document.nodes.map((node) => [node.id, getNodeDisplayTitle(node)]),
+  );
+  const sourceLabel = labelsById[fromNode] ?? fromNode;
+  const targetLabel = labelsById[toNode] ?? toNode;
+  const conflictDetails = conflicts.map((conflict) => {
+    const ownerLabels = conflict.upstreamNodeIds.map((nodeId) =>
+      labelsById[nodeId] ?? nodeId
+    );
+    return `"${conflict.outputName}" from ${formatList(ownerLabels)}`;
+  });
+
+  return {
+    title: `Couldn’t connect ${sourceLabel} to ${targetLabel}`,
+    detail: `${
+      formatList(conflictDetails)
+    } would be ambiguous. Rename one of the conflicting outputs before connecting.`,
+  };
+}
+
+function formatList(items: string[]): string {
+  if (items.length <= 1) {
+    return items[0] ?? "";
+  }
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
 
 function getNodeLabelsById(graph: RuntimeGraph): Record<string, string> {
