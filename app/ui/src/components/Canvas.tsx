@@ -2,7 +2,6 @@ import {
   Background,
   Controls,
   type EdgeChange,
-  type EdgeMouseHandler,
   type NodeChange,
   type NodeMouseHandler,
   type NodeTypes,
@@ -35,6 +34,7 @@ import {
   type PythonNodeOutputOption,
   toReactFlowGraph,
 } from "../graph/toReactFlow.ts";
+import { getCanvasDeletionIntent } from "./canvasDeletion.ts";
 import { PythonNode } from "./PythonNode.tsx";
 
 const nodeTypes = {
@@ -163,6 +163,10 @@ export function Canvas({
     }
     onNodeSelect(node.id);
   };
+  const handleEdgeClick = useCallback(() => {
+    shortcutScopeRef.current?.focus();
+    onSelectionClear();
+  }, [onSelectionClear]);
   const handlePaneClick = useCallback(() => {
     shortcutScopeRef.current?.focus();
     onSelectionClear();
@@ -218,10 +222,6 @@ export function Canvas({
 
     onConnectNodes?.(connection.source, connection.target);
   }, [onConnectNodes]);
-  const handleEdgeDoubleClick = useCallback<EdgeMouseHandler>((event, edge) => {
-    event.preventDefault();
-    onDeleteEdges?.([edge.id]);
-  }, [onDeleteEdges]);
   useEffect(() => {
     addNodeAtCanvasCenterRef.current = () => {
       onAddNode?.({ x: 0, y: 0 });
@@ -232,6 +232,26 @@ export function Canvas({
   ) => {
     if (!isCanvasShortcutEvent(event)) {
       return;
+    }
+
+    if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+      const deletionIntent = getCanvasDeletionIntent({
+        key: event.key,
+        repeat: event.repeat,
+        selectedNodeId,
+        selectedEdgeIds: edges
+          .filter((edge) => edge.selected)
+          .map((edge) => edge.id),
+      });
+      if (deletionIntent) {
+        event.preventDefault();
+        if (deletionIntent.type === "edges") {
+          onDeleteEdges?.(deletionIntent.edgeIds);
+        } else {
+          onDeleteNode?.(deletionIntent.nodeId);
+        }
+        return;
+      }
     }
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -270,8 +290,11 @@ export function Canvas({
   }, [
     onAddChildNode,
     onAddNode,
+    onDeleteEdges,
+    onDeleteNode,
     onRunToNode,
     onSaveDocument,
+    edges,
     selectedNodeId,
     runToNodeDisabled,
   ]);
@@ -291,7 +314,7 @@ export function Canvas({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
-        onEdgeDoubleClick={onDeleteEdges ? handleEdgeDoubleClick : undefined}
+        onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
         nodesDraggable={Boolean(onNodePositionChange)}

@@ -260,6 +260,15 @@ body {
   stroke-linecap: round;
 }
 
+.react-flow__edge.python-flow-edge.selected .react-flow__edge-path {
+  stroke: #2563eb !important;
+  stroke-width: 3 !important;
+}
+
+.dark .react-flow__edge.python-flow-edge.selected .react-flow__edge-path {
+  stroke: #60a5fa !important;
+}
+
 .react-flow__node-pythonNode,
 .python-node-card {
   isolation: isolate;

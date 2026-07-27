@@ -113,6 +113,13 @@ function getInitialThemeMode(): ThemeMode {
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [pendingNodeDeletion, setPendingNodeDeletion] = useState<
+    {
+      nodeId: string;
+      label: string;
+      incidentEdgeCount: number;
+    } | null
+  >(null);
   const [inspectorNavigationRequest, setInspectorNavigationRequest] = useState<
     InspectorNavigationRequest | null
   >(null);
@@ -248,6 +255,7 @@ export default function App() {
       };
       editableDocumentRef.current = nextDocument;
       setEditableDocument(nextDocument);
+      setPendingNodeDeletion(null);
       clearExecutionSession();
       baseRevisionRef.current = graph.revision ?? "";
       pendingOperationsRef.current = [];
@@ -1022,9 +1030,9 @@ export default function App() {
     queueOperation,
   ]);
 
-  const handleDeleteNode = useCallback((nodeId: string) => {
+  const commitDeleteNode = useCallback((nodeId: string) => {
     const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
     if (!current.nodes.some((node) => node.id === nodeId)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
 
@@ -1053,7 +1061,30 @@ export default function App() {
     markNodesStale,
     queueOperation,
     selectedNodeId,
+    isRunActive,
   ]);
+
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    const current = editableDocumentRef.current;
+    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node || hasCustomManagedDownstream(current, nodeId)) return;
+
+    setPendingNodeDeletion({
+      nodeId,
+      label: prettifyFunctionName(node.functionName),
+      incidentEdgeCount: current.edges.filter((edge) =>
+        edge.fromNode === nodeId || edge.toNode === nodeId
+      ).length,
+    });
+  }, [isRunActive]);
+
+  const confirmDeleteNode = useCallback(() => {
+    if (!pendingNodeDeletion) return;
+    setPendingNodeDeletion(null);
+    if (isRunActive) return;
+    commitDeleteNode(pendingNodeDeletion.nodeId);
+  }, [commitDeleteNode, isRunActive, pendingNodeDeletion]);
 
   const handleNodePositionChange = useCallback((
     nodeId: string,
@@ -1630,7 +1661,117 @@ export default function App() {
           </div>
         )}
       </main>
+      {pendingNodeDeletion && (
+        <DeleteNodeDialog
+          deletion={pendingNodeDeletion}
+          onCancel={() => setPendingNodeDeletion(null)}
+          onConfirm={confirmDeleteNode}
+        />
+      )}
     </div>
+  );
+}
+
+function DeleteNodeDialog({
+  deletion,
+  onCancel,
+  onConfirm,
+}: {
+  deletion: {
+    nodeId: string;
+    label: string;
+    incidentEdgeCount: number;
+  };
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.showModal();
+    cancelButtonRef.current?.focus();
+    return () => {
+      if (dialogRef.current?.open) {
+        dialogRef.current.close();
+      }
+      if (
+        previouslyFocused instanceof HTMLElement &&
+        previouslyFocused.isConnected
+      ) {
+        previouslyFocused.focus();
+      }
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="delete-node-title"
+      aria-describedby="delete-node-description"
+      className="m-auto w-[min(28rem,calc(100vw-2rem))] max-w-none rounded-lg bg-transparent p-0 backdrop:bg-black/45"
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+      onMouseDown={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left || event.clientX > bounds.right ||
+          event.clientY < bounds.top || event.clientY > bounds.bottom
+        ) {
+          onCancel();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (
+          !event.repeat && !event.metaKey && !event.ctrlKey &&
+          !event.altKey &&
+          (event.key === "Delete" || event.key === "Backspace")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          onConfirm();
+        }
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 text-zinc-950 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+        <h2 id="delete-node-title" className="text-base font-semibold">
+          Delete “{deletion.label}”?
+        </h2>
+        <p
+          id="delete-node-description"
+          className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-300"
+        >
+          This removes the node
+          {deletion.incidentEdgeCount > 0
+            ? ` and ${
+              deletion.incidentEdgeCount === 1
+                ? "its connection"
+                : `its ${deletion.incidentEdgeCount} connections`
+            }`
+            : ""}. Press Delete again to confirm.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            ref={cancelButtonRef}
+            type="button"
+            className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rounded border border-red-700 bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-900"
+            onClick={onConfirm}
+          >
+            Delete node
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -1720,7 +1861,11 @@ function ShortcutHintPanel() {
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         Ctrl+S
       </kbd>
-      <span className="ml-1">save</span>
+      <span className="mx-1">save</span>
+      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+        Delete
+      </kbd>
+      <span className="ml-1">delete selection</span>
     </aside>
   );
 }
