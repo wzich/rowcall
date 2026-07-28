@@ -41,20 +41,15 @@ To upgrade, run the same installer command again. It replaces only the
 `nodebook` launcher in `~/.local/bin`; the launcher refreshes its managed Python
 runtime the next time it runs if the bundled Nodebook version changed.
 
-For local release testing, build both artifacts and natively smoke the artifact
-for the current Mac:
+To run the complete release check without uploading anything:
 
 ```sh
-deno task release:build
-deno task release:smoke
+deno task release:prepare
 ```
 
-The smoke writes a diagnostic receipt beside that one artifact. The normal local
-smoke command marks its receipt diagnostic, even from a clean checkout, and
-deliberately does not attest the cross-built artifact for the other
-architecture. Assembling an installable release requires the two authorizing
-receipts from the manual GitHub workflow described in
-[Release To nodebook.rodeo](#release-to-nodebookrodeo).
+This checks and tests the repository, builds both macOS artifacts, exercises the
+artifact native to the current Mac outside the checkout, and stages the
+Cloudflare upload. The other architecture is cross-built but not executed.
 
 If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 `export PATH=...` line to your shell profile.
@@ -325,45 +320,32 @@ the large downloads are generated into `dist/r2/` and uploaded to a Cloudflare
 R2 bucket. The default bucket name is `nodebook-rodeo-releases`, and the
 expected public custom domain is `https://releases.nodebook.rodeo`.
 
-Publishing is intentionally manual during the invited beta. The release gate
-requires each binary to have been run natively on its matching architecture.
-There is no all-in-one build-and-publish command because a cross-build on one
-Mac cannot satisfy that gate.
-
-First, manually run the `Invited beta smoke` workflow for the exact commit to
-publish. Its two jobs each build from that commit, natively install and run only
-the matching artifact, and upload an artifact archive containing the files
-below. The attestations record the shared workflow run ID and attempt,
-dispatched commit, runner architecture, exact tested binary hash, and version:
-
-```text
-nodebook-darwin-arm64
-nodebook-darwin-arm64.smoke-attestation.json
-
-nodebook-darwin-x64
-nodebook-darwin-x64.smoke-attestation.json
-```
-
-Download both workflow artifacts from that same workflow run and place all four
-files in `dist/release/`. Do not rebuild either binary locally: each attestation
-is bound to the exact binary hash, source commit, and version.
-
-Then assemble the deployable static site and R2 asset directory:
+Publishing is intentionally local and manual during the invited beta. Start from
+a clean checkout and stage the release:
 
 ```sh
-deno task release:site
+deno task release:prepare
 ```
 
-Assembly fails unless both native attestations are authorizing receipts from the
-same manual workflow run and attempt, match their exact binaries and native
-runner architectures, identify the same source commit and version, and that
-commit is the clean checkout running the assembly command.
+This checks and tests the repository, builds both macOS binaries, natively
+installs and exercises the binary for the current Mac, and assembles the site
+and download directory. Inspect the staged output if desired, then authenticate
+Wrangler with the Cloudflare account that owns the Pages project and R2 bucket
+and publish those exact artifacts:
 
-These JSON receipts are an unsigned, local guard against accidental artifact
-mix-ups; they are not cryptographic proof of GitHub provenance and can be forged
-by someone who can modify the release inputs. The publisher must download them
-from the `wzich/nodebook` workflow run shown in GitHub. The release itself is
-also unsigned during this invited beta.
+```sh
+deno task release:publish
+```
+
+Publishing revalidates the clean source commit, native smoke receipt, binary
+architectures, staged hashes, release manifest, installer, and site files before
+contacting Cloudflare. It does not rebuild, so a retry publishes the same
+artifacts.
+
+The binary for the other macOS architecture is cross-built but not run. That is
+an explicit friends-only beta tradeoff. Restore a native Intel/ARM build job,
+code signing, and notarization before treating this as a hardened public
+release.
 
 This writes:
 
@@ -376,42 +358,13 @@ dist/site/
 dist/r2/
   latest/nodebook-darwin-arm64
   latest/nodebook-darwin-arm64.sha256
-  latest/nodebook-darwin-arm64.smoke-attestation.json
   latest/nodebook-darwin-x64
   latest/nodebook-darwin-x64.sha256
-  latest/nodebook-darwin-x64.smoke-attestation.json
   v0.1.0/nodebook-darwin-arm64
   v0.1.0/nodebook-darwin-arm64.sha256
-  v0.1.0/nodebook-darwin-arm64.smoke-attestation.json
   v0.1.0/nodebook-darwin-x64
   v0.1.0/nodebook-darwin-x64.sha256
-  v0.1.0/nodebook-darwin-x64.smoke-attestation.json
 ```
-
-Upload the generated R2 assets and deploy the generated site to Cloudflare Pages
-with Wrangler:
-
-```sh
-deno task release:deploy
-```
-
-Deploy just one side when needed:
-
-```sh
-deno task release:deploy:assets
-deno task release:deploy:site
-```
-
-Every deploy command reassembles from `dist/release/` and revalidates both the
-`latest` and versioned artifact sets, so neither an unattested local cross-build
-nor a one-architecture smoke can be published accidentally. The workflow only
-uploads the binaries and attestations; it never publishes them. Local native
-smoke remains useful for diagnostics: `release:smoke` installs the native
-artifact into a temporary home and runs outside this checkout, but its single
-attestation is not enough to assemble or publish a two-architecture release. The
-normal local smoke command emits only diagnostic receipts. Receipts matching the
-manual workflow convention are accepted for assembly, subject to the
-unsigned-receipt limitation above.
 
 Keep the Cloudflare Pages Git integration disabled during the invited beta.
 Publish the generated `dist/site/` explicitly with Wrangler so a push to `main`
@@ -420,6 +373,7 @@ cannot change what testers receive.
 Override the R2 bucket name or public download base if needed:
 
 ```sh
-NODEBOOK_R2_BUCKET=my-bucket deno task release:deploy:assets
-NODEBOOK_RELEASE_DOWNLOAD_BASE=https://downloads.example.com deno task release:site
+NODEBOOK_RELEASE_DOWNLOAD_BASE=https://downloads.example.com \
+  deno task release:prepare
+NODEBOOK_R2_BUCKET=my-bucket deno task release:publish
 ```

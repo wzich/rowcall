@@ -44,52 +44,30 @@ type ReleaseManifest = {
 };
 
 type ReleaseSmokeAttestation = {
-  schemaVersion: 2;
+  schemaVersion: 1;
   asset: string;
   sha256: string;
   version: string;
   sourceCommit: string;
   sourceDirty: boolean;
   nativeArchitecture: "arm64" | "x64";
-  authorization: "github-actions-workflow" | "diagnostic";
-  workflowRunId: string | null;
-  workflowRunAttempt: string | null;
-  workflowName: string | null;
-  workflowEvent: string | null;
-  workflowJob: string | null;
-  workflowRef: string | null;
-  workflowRepository: string | null;
-  runnerArchitecture: "ARM64" | "X64" | null;
 };
 
 export type ValidatedReleaseIdentity = {
   version: string;
   sourceCommit: string;
-  workflowRunId: string;
-  workflowRunAttempt: string;
+  nativeSmokedAsset: string;
   hashes: Record<string, string>;
 };
 
 async function main() {
   const command = Deno.args[0] ?? "help";
   switch (command) {
-    case "build":
-      await buildReleaseBinaries();
+    case "prepare":
+      await prepareRelease();
       break;
-    case "site":
-      await assembleReleaseSite();
-      break;
-    case "deploy":
-      await assembleReleaseSite();
+    case "publish":
       await deployReleaseAssets();
-      await deployReleaseSite();
-      break;
-    case "deploy-assets":
-      await assembleReleaseSite();
-      await deployReleaseAssets();
-      break;
-    case "deploy-site":
-      await assembleReleaseSite();
       await deployReleaseSite();
       break;
     default:
@@ -100,11 +78,17 @@ async function main() {
 
 function printHelp() {
   console.info(`Usage:
-  deno task release:build   Build macOS release binaries
-  deno task release:smoke -- <native artifact>
-                            Natively run one artifact and attest it
-  deno task release:site    Verify both native attestations, then assemble
-  deno task release:deploy  Reverify and upload dist/r2 and dist/site`);
+  deno task release:prepare  Check, test, build, smoke, and stage a release
+  deno task release:publish  Validate and publish the staged release`);
+}
+
+async function prepareRelease() {
+  await requireCleanSourceCommit();
+  await run("deno", ["task", "check"]);
+  await run("deno", ["task", "test"]);
+  await buildReleaseBinaries();
+  await run("sh", ["packaging/smoke-installed-release.sh"]);
+  await assembleReleaseSite();
 }
 
 async function buildReleaseBinaries() {
@@ -144,6 +128,7 @@ async function assembleReleaseSite() {
     directory: releaseDir,
     expectedVersion: version,
     expectedSourceCommit: sourceCommit,
+    verifyArchitectures: true,
   });
   await emptyDir(siteDistDir);
   await emptyDir(r2DistDir);
@@ -168,10 +153,6 @@ async function assembleReleaseSite() {
         await Deno.chmod(destinationPath, 0o755);
       }
       await writeChecksumSidecar(destinationPath, asset.fileName, hash);
-      await Deno.copyFile(
-        smokeAttestationPath(sourcePath),
-        smokeAttestationPath(destinationPath),
-      );
     }
 
     downloads[asset.key] = {
@@ -242,143 +223,237 @@ export async function validateReleaseArtifacts(options: {
   directory: string;
   expectedVersion: string;
   expectedSourceCommit?: string;
+  expectedNativeArchitecture?: "arm64" | "x64";
+  verifyArchitectures?: boolean;
 }): Promise<ValidatedReleaseIdentity> {
-  let identity: ValidatedReleaseIdentity | undefined;
   const hashes: Record<string, string> = {};
+  const nativeArchitecture = options.expectedNativeArchitecture ??
+    nativeArchitectureForHost();
+  const nativeAsset = releaseAssets.find((asset) =>
+    asset.nativeArchitecture === nativeArchitecture
+  );
+  if (nativeAsset === undefined) {
+    throw new Error(
+      `Unsupported release host architecture: ${Deno.build.arch}`,
+    );
+  }
 
   for (const asset of releaseAssets) {
     const binaryPath = `${options.directory}/${asset.fileName}`;
-    const attestationPath = smokeAttestationPath(binaryPath);
     await assertPathExists(binaryPath);
-    await assertPathExists(attestationPath);
-
-    let candidate: unknown;
-    try {
-      candidate = JSON.parse(await Deno.readTextFile(attestationPath));
-    } catch (error) {
-      throw new Error(
-        `Invalid smoke attestation ${attestationPath}: ${errorMessage(error)}`,
-      );
+    if (options.verifyArchitectures) {
+      const architectures = (await commandOutput("/usr/bin/lipo", [
+        "-archs",
+        binaryPath,
+      ])).trim();
+      const expected = asset.nativeArchitecture === "arm64"
+        ? "arm64"
+        : "x86_64";
+      if (architectures !== expected) {
+        throw new Error(
+          `${binaryPath} has architecture ${architectures}; expected ${expected}`,
+        );
+      }
     }
-    const attestation = parseSmokeAttestation(candidate, attestationPath);
-    const actualHash = await sha256Hex(binaryPath);
-
-    if (attestation.asset !== asset.fileName) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} names ${attestation.asset}; expected ${asset.fileName}`,
-      );
-    }
-    if (attestation.nativeArchitecture !== asset.nativeArchitecture) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} records ${attestation.nativeArchitecture}; expected a native ${asset.nativeArchitecture} smoke`,
-      );
-    }
-    if (attestation.sha256 !== actualHash) {
-      throw new Error(
-        `Smoke attestation hash does not match ${binaryPath}`,
-      );
-    }
-    if (attestation.version !== options.expectedVersion) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} is for version ${attestation.version}; expected ${options.expectedVersion}`,
-      );
-    }
-    if (attestation.sourceDirty) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} was produced from a dirty source tree and cannot authorize a release`,
-      );
-    }
-    if (attestation.authorization !== "github-actions-workflow") {
-      throw new Error(
-        `Smoke attestation ${attestationPath} is diagnostic only and cannot authorize a release`,
-      );
-    }
-    const expectedRunnerArchitecture = asset.nativeArchitecture === "arm64"
-      ? "ARM64"
-      : "X64";
-    if (
-      attestation.workflowName !== "Invited beta smoke" ||
-      attestation.workflowEvent !== "workflow_dispatch" ||
-      attestation.workflowJob !== "build-and-smoke" ||
-      attestation.workflowRepository !== "wzich/nodebook" ||
-      attestation.workflowRef === null ||
-      !attestation.workflowRef.startsWith(
-        "wzich/nodebook/.github/workflows/invited-beta-smoke.yml@",
-      ) ||
-      attestation.runnerArchitecture !== expectedRunnerArchitecture ||
-      attestation.workflowRunId === null ||
-      !/^[1-9][0-9]*$/.test(attestation.workflowRunId) ||
-      attestation.workflowRunAttempt === null ||
-      !/^[1-9][0-9]*$/.test(attestation.workflowRunAttempt)
-    ) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} does not contain a valid manual GitHub workflow receipt`,
-      );
-    }
-    if (
-      options.expectedSourceCommit !== undefined &&
-      attestation.sourceCommit !== options.expectedSourceCommit
-    ) {
-      throw new Error(
-        `Smoke attestation ${attestationPath} is for source commit ${attestation.sourceCommit}; current checkout is ${options.expectedSourceCommit}`,
-      );
-    }
-
-    const candidateIdentity = {
-      version: attestation.version,
-      sourceCommit: attestation.sourceCommit,
-      workflowRunId: attestation.workflowRunId,
-      workflowRunAttempt: attestation.workflowRunAttempt,
-    };
-    if (identity === undefined) {
-      identity = { ...candidateIdentity, hashes };
-    } else if (
-      identity.version !== candidateIdentity.version ||
-      identity.sourceCommit !== candidateIdentity.sourceCommit ||
-      identity.workflowRunId !== candidateIdentity.workflowRunId ||
-      identity.workflowRunAttempt !== candidateIdentity.workflowRunAttempt
-    ) {
-      throw new Error(
-        "Release artifacts do not have authorizing native-smoke attestations from the same workflow run, attempt, source commit, and version",
-      );
-    }
-    hashes[asset.key] = actualHash;
+    hashes[asset.key] = await sha256Hex(binaryPath);
   }
 
-  if (identity === undefined) {
-    throw new Error("No release artifacts configured");
+  const attestationPath = smokeAttestationPath(
+    `${options.directory}/${nativeAsset.fileName}`,
+  );
+  await assertPathExists(attestationPath);
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(await Deno.readTextFile(attestationPath));
+  } catch (error) {
+    throw new Error(
+      `Invalid smoke attestation ${attestationPath}: ${errorMessage(error)}`,
+    );
   }
-  return identity;
+  const attestation = parseSmokeAttestation(candidate, attestationPath);
+  if (
+    attestation.asset !== nativeAsset.fileName ||
+    attestation.nativeArchitecture !== nativeAsset.nativeArchitecture
+  ) {
+    throw new Error(
+      `Smoke attestation ${attestationPath} does not match the native ${nativeAsset.fileName} artifact`,
+    );
+  }
+  if (attestation.sha256 !== hashes[nativeAsset.key]) {
+    throw new Error(
+      `Smoke attestation hash does not match ${nativeAsset.fileName}`,
+    );
+  }
+  if (attestation.version !== options.expectedVersion) {
+    throw new Error(
+      `Smoke attestation is for version ${attestation.version}; expected ${options.expectedVersion}`,
+    );
+  }
+  if (attestation.sourceDirty) {
+    throw new Error(
+      "Smoke attestation was produced from a dirty source tree",
+    );
+  }
+  if (
+    options.expectedSourceCommit !== undefined &&
+    attestation.sourceCommit !== options.expectedSourceCommit
+  ) {
+    throw new Error(
+      `Smoke attestation is for source commit ${attestation.sourceCommit}; current checkout is ${options.expectedSourceCommit}`,
+    );
+  }
+
+  return {
+    version: attestation.version,
+    sourceCommit: attestation.sourceCommit,
+    nativeSmokedAsset: nativeAsset.fileName,
+    hashes,
+  };
 }
 
 async function validateAssembledRelease() {
   const version = await readVersion();
   const sourceCommit = await requireCleanSourceCommit();
   const versionSegment = `v${version}`;
-  const latestIdentity = await validateReleaseArtifacts({
-    directory: `${r2DistDir}/latest`,
+  const identity = await validateReleaseArtifacts({
+    directory: releaseDir,
     expectedVersion: version,
     expectedSourceCommit: sourceCommit,
+    verifyArchitectures: true,
   });
-  const versionedIdentity = await validateReleaseArtifacts({
-    directory: `${r2DistDir}/${versionSegment}`,
-    expectedVersion: version,
-    expectedSourceCommit: sourceCommit,
-  });
+
+  for (const directory of ["latest", versionSegment]) {
+    for (const asset of releaseAssets) {
+      const binaryPath = `${r2DistDir}/${directory}/${asset.fileName}`;
+      await assertPathExists(binaryPath);
+      const hash = await sha256Hex(binaryPath);
+      if (hash !== identity.hashes[asset.key]) {
+        throw new Error(`${binaryPath} does not match the prepared release`);
+      }
+      const checksum = await Deno.readTextFile(`${binaryPath}.sha256`);
+      if (checksum !== `${hash}  ${asset.fileName}\n`) {
+        throw new Error(`Invalid checksum sidecar for ${binaryPath}`);
+      }
+    }
+  }
+
+  await validateStagedSite({ version, identity });
+}
+
+async function validateStagedSite(options: {
+  version: string;
+  identity: ValidatedReleaseIdentity;
+}) {
+  const sourceFiles = await listFiles(siteSourceDir);
+  const expectedRelativeFiles = sourceFiles.map((path) =>
+    path.slice(`${siteSourceDir}/`.length)
+  );
+  expectedRelativeFiles.push("install.sh", "latest.json");
+  expectedRelativeFiles.sort();
+
+  const stagedRelativeFiles = (await listFiles(siteDistDir)).map((path) =>
+    path.slice(`${siteDistDir}/`.length)
+  );
   if (
-    latestIdentity.version !== versionedIdentity.version ||
-    latestIdentity.sourceCommit !== versionedIdentity.sourceCommit ||
-    latestIdentity.workflowRunId !== versionedIdentity.workflowRunId ||
-    latestIdentity.workflowRunAttempt !==
-      versionedIdentity.workflowRunAttempt ||
-    releaseAssets.some((asset) =>
-      latestIdentity.hashes[asset.key] !== versionedIdentity.hashes[asset.key]
-    )
+    JSON.stringify(stagedRelativeFiles) !==
+      JSON.stringify(expectedRelativeFiles)
   ) {
     throw new Error(
-      "latest and versioned release directories were not assembled from the same attested artifacts",
+      `${siteDistDir} does not contain the expected staged site files`,
     );
   }
+
+  for (const sourcePath of sourceFiles) {
+    const relativePath = sourcePath.slice(`${siteSourceDir}/`.length);
+    await assertFilesMatch(
+      sourcePath,
+      `${siteDistDir}/${relativePath}`,
+    );
+  }
+  await assertFilesMatch(
+    "packaging/install.sh",
+    `${siteDistDir}/install.sh`,
+  );
+
+  let candidate: unknown;
+  const manifestPath = `${siteDistDir}/latest.json`;
+  try {
+    candidate = JSON.parse(await Deno.readTextFile(manifestPath));
+  } catch (error) {
+    throw new Error(
+      `Invalid release manifest ${manifestPath}: ${errorMessage(error)}`,
+    );
+  }
+  validateReleaseManifest(candidate, options);
+}
+
+export function validateReleaseManifest(
+  value: unknown,
+  options: {
+    version: string;
+    identity: ValidatedReleaseIdentity;
+  },
+) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Invalid release manifest: expected an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== options.version ||
+    typeof record.downloads !== "object" ||
+    record.downloads === null ||
+    Array.isArray(record.downloads)
+  ) {
+    throw new Error("Invalid release manifest: malformed version or downloads");
+  }
+
+  const downloads = record.downloads as Record<string, unknown>;
+  const expectedKeys = releaseAssets.map((asset) => asset.key).sort();
+  if (
+    JSON.stringify(Object.keys(downloads).sort()) !==
+      JSON.stringify(expectedKeys)
+  ) {
+    throw new Error("Invalid release manifest: unexpected download keys");
+  }
+
+  for (const asset of releaseAssets) {
+    const download = downloads[asset.key];
+    if (
+      typeof download !== "object" ||
+      download === null ||
+      Array.isArray(download)
+    ) {
+      throw new Error(
+        `Invalid release manifest: malformed ${asset.key} download`,
+      );
+    }
+    const fields = download as Record<string, unknown>;
+    const expectedSuffix = `/v${options.version}/${asset.fileName}`;
+    if (
+      typeof fields.url !== "string" ||
+      !fields.url.endsWith(expectedSuffix) ||
+      fields.sha256 !== options.identity.hashes[asset.key] ||
+      JSON.stringify(Object.keys(fields).sort()) !==
+        JSON.stringify(["sha256", "url"])
+    ) {
+      throw new Error(
+        `Invalid release manifest: ${asset.key} does not match the prepared release`,
+      );
+    }
+  }
+}
+
+async function assertFilesMatch(expectedPath: string, actualPath: string) {
+  await assertPathExists(actualPath);
+  if (await sha256Hex(expectedPath) !== await sha256Hex(actualPath)) {
+    throw new Error(`${actualPath} does not match ${expectedPath}`);
+  }
+}
+
+function nativeArchitectureForHost(): "arm64" | "x64" {
+  if (Deno.build.arch === "aarch64") return "arm64";
+  if (Deno.build.arch === "x86_64") return "x64";
+  throw new Error(`Unsupported release host architecture: ${Deno.build.arch}`);
 }
 
 async function requireCleanSourceCommit(): Promise<string> {
@@ -396,7 +471,7 @@ async function requireCleanSourceCommit(): Promise<string> {
   ]);
   if (status.trim() !== "") {
     throw new Error(
-      "Release assembly and deployment require a clean source checkout",
+      "Release preparation and publishing require a clean source checkout",
     );
   }
   return sourceCommit;
@@ -431,7 +506,7 @@ function parseSmokeAttestation(
   }
   const record = value as Record<string, unknown>;
   if (
-    record.schemaVersion !== 2 ||
+    record.schemaVersion !== 1 ||
     typeof record.asset !== "string" ||
     typeof record.sha256 !== "string" ||
     !/^[0-9a-f]{64}$/.test(record.sha256) ||
@@ -440,23 +515,7 @@ function parseSmokeAttestation(
     !/^[0-9a-f]{40,64}$/.test(record.sourceCommit) ||
     typeof record.sourceDirty !== "boolean" ||
     (record.nativeArchitecture !== "arm64" &&
-      record.nativeArchitecture !== "x64") ||
-    (record.authorization !== "github-actions-workflow" &&
-      record.authorization !== "diagnostic") ||
-    (record.workflowRunId !== null &&
-      typeof record.workflowRunId !== "string") ||
-    (record.workflowRunAttempt !== null &&
-      typeof record.workflowRunAttempt !== "string") ||
-    (record.workflowName !== null && typeof record.workflowName !== "string") ||
-    (record.workflowEvent !== null &&
-      typeof record.workflowEvent !== "string") ||
-    (record.workflowJob !== null && typeof record.workflowJob !== "string") ||
-    (record.workflowRef !== null && typeof record.workflowRef !== "string") ||
-    (record.workflowRepository !== null &&
-      typeof record.workflowRepository !== "string") ||
-    (record.runnerArchitecture !== null &&
-      record.runnerArchitecture !== "ARM64" &&
-      record.runnerArchitecture !== "X64")
+      record.nativeArchitecture !== "x64")
   ) {
     throw new Error(`Invalid smoke attestation ${path}: malformed fields`);
   }
