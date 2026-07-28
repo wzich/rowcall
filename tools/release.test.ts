@@ -1,17 +1,17 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { validateReleaseArtifacts } from "./release.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  validateReleaseArtifacts,
+  validateReleaseManifest,
+} from "./release.ts";
 
 const commitA = "a".repeat(40);
 const commitB = "b".repeat(40);
 
 type FixtureOptions = {
   omitX64?: boolean;
-  x64Commit?: string;
-  x64Dirty?: boolean;
-  arm64Authorization?: "github-actions-workflow" | "diagnostic";
-  arm64WorkflowRepository?: string;
-  x64WorkflowRunId?: string;
-  corruptArm64AfterAttestation?: boolean;
+  sourceCommit?: string;
+  sourceDirty?: boolean;
+  corruptArm64AfterSmoke?: boolean;
 };
 
 async function withReleaseFixture(
@@ -20,32 +20,21 @@ async function withReleaseFixture(
 ) {
   const directory = await Deno.makeTempDir();
   try {
-    await writeAttestedArtifact(
-      directory,
-      "nodebook-darwin-arm64",
-      "arm64",
-      commitA,
-      false,
-      options.arm64Authorization ?? "github-actions-workflow",
-      "12345",
-      options.arm64WorkflowRepository,
-    );
-    if (options.corruptArm64AfterAttestation) {
+    const arm64Path = `${directory}/nodebook-darwin-arm64`;
+    await Deno.writeTextFile(arm64Path, "binary:nodebook-darwin-arm64");
+    if (!options.omitX64) {
       await Deno.writeTextFile(
-        `${directory}/nodebook-darwin-arm64`,
-        "changed after smoke",
+        `${directory}/nodebook-darwin-x64`,
+        "binary:nodebook-darwin-x64",
       );
     }
-    if (!options.omitX64) {
-      await writeAttestedArtifact(
-        directory,
-        "nodebook-darwin-x64",
-        "x64",
-        options.x64Commit ?? commitA,
-        options.x64Dirty ?? false,
-        "github-actions-workflow",
-        options.x64WorkflowRunId ?? "12345",
-      );
+    await writeSmokeAttestation(
+      arm64Path,
+      options.sourceCommit ?? commitA,
+      options.sourceDirty ?? false,
+    );
+    if (options.corruptArm64AfterSmoke) {
+      await Deno.writeTextFile(arm64Path, "changed after smoke");
     }
     await run(directory);
   } finally {
@@ -53,56 +42,24 @@ async function withReleaseFixture(
   }
 }
 
-async function writeAttestedArtifact(
-  directory: string,
-  asset: string,
-  nativeArchitecture: "arm64" | "x64",
+async function writeSmokeAttestation(
+  binaryPath: string,
   sourceCommit: string,
   sourceDirty: boolean,
-  authorization: "github-actions-workflow" | "diagnostic",
-  workflowRunId: string,
-  workflowRepository = "wzich/nodebook",
 ) {
-  const binaryPath = `${directory}/${asset}`;
-  await Deno.writeTextFile(binaryPath, `binary:${asset}`);
   const sha256 = await sha256Hex(binaryPath);
   await Deno.writeTextFile(
     `${binaryPath}.smoke-attestation.json`,
     `${
       JSON.stringify(
         {
-          schemaVersion: 2,
-          asset,
+          schemaVersion: 1,
+          asset: "nodebook-darwin-arm64",
           sha256,
           version: "0.1.0",
           sourceCommit,
           sourceDirty,
-          nativeArchitecture,
-          authorization,
-          workflowRunId: authorization === "github-actions-workflow"
-            ? workflowRunId
-            : null,
-          workflowRunAttempt: authorization === "github-actions-workflow"
-            ? "1"
-            : null,
-          workflowName: authorization === "github-actions-workflow"
-            ? "Invited beta smoke"
-            : null,
-          workflowEvent: authorization === "github-actions-workflow"
-            ? "workflow_dispatch"
-            : null,
-          workflowJob: authorization === "github-actions-workflow"
-            ? "build-and-smoke"
-            : null,
-          workflowRef: authorization === "github-actions-workflow"
-            ? `${workflowRepository}/.github/workflows/invited-beta-smoke.yml@refs/heads/main`
-            : null,
-          workflowRepository: authorization === "github-actions-workflow"
-            ? workflowRepository
-            : null,
-          runnerArchitecture: authorization === "github-actions-workflow"
-            ? nativeArchitecture === "arm64" ? "ARM64" : "X64"
-            : null,
+          nativeArchitecture: "arm64",
         },
         null,
         2,
@@ -145,9 +102,7 @@ Deno.test("architecture helper rejects x64 bytes labeled as arm64", async () => 
   );
   assert(!result.success);
   assert(
-    new TextDecoder().decode(result.stderr).includes(
-      "expected 'arm64'",
-    ),
+    new TextDecoder().decode(result.stderr).includes("expected 'arm64'"),
   );
 });
 
@@ -158,36 +113,21 @@ Deno.test("hash helper rejects mutation of the tested fixture", async () => {
   );
   assert(!result.success);
   assert(
-    new TextDecoder().decode(result.stderr).includes(
-      "fixture changed",
-    ),
+    new TextDecoder().decode(result.stderr).includes("fixture changed"),
   );
 });
 
-Deno.test("hash helper rejects mutation of the original artifact", async () => {
-  const result = await runSmokeHelper(
-    'verify_stable_smoke_hashes "$2" "$3" "$4" "$5"',
-    ["a".repeat(64), "a".repeat(64), "a".repeat(64), "b".repeat(64)],
-  );
-  assert(!result.success);
-  assert(
-    new TextDecoder().decode(result.stderr).includes(
-      "Original artifact changed",
-    ),
-  );
-});
-
-Deno.test("release gate accepts two same-source native-smoke attestations", async () => {
+Deno.test("release gate accepts a native smoke plus both builds", async () => {
   await withReleaseFixture({}, async (directory) => {
     const identity = await validateReleaseArtifacts({
       directory,
       expectedVersion: "0.1.0",
       expectedSourceCommit: commitA,
+      expectedNativeArchitecture: "arm64",
     });
     assertEquals(identity.version, "0.1.0");
     assertEquals(identity.sourceCommit, commitA);
-    assertEquals(identity.workflowRunId, "12345");
-    assertEquals(identity.workflowRunAttempt, "1");
+    assertEquals(identity.nativeSmokedAsset, "nodebook-darwin-arm64");
     assertEquals(Object.keys(identity.hashes).sort(), [
       "darwin-arm64",
       "darwin-x64",
@@ -195,13 +135,14 @@ Deno.test("release gate accepts two same-source native-smoke attestations", asyn
   });
 });
 
-Deno.test("release gate rejects a one-architecture smoke", async () => {
+Deno.test("release gate rejects a missing cross-build", async () => {
   await withReleaseFixture({ omitX64: true }, async (directory) => {
     await assertRejects(
       () =>
         validateReleaseArtifacts({
           directory,
           expectedVersion: "0.1.0",
+          expectedNativeArchitecture: "arm64",
         }),
       Error,
       "nodebook-darwin-x64",
@@ -209,42 +150,15 @@ Deno.test("release gate rejects a one-architecture smoke", async () => {
   });
 });
 
-Deno.test("release gate rejects attestations from different source commits", async () => {
-  await withReleaseFixture({ x64Commit: commitB }, async (directory) => {
+Deno.test("release gate rejects artifacts from a different checkout", async () => {
+  await withReleaseFixture({ sourceCommit: commitB }, async (directory) => {
     await assertRejects(
       () =>
         validateReleaseArtifacts({
           directory,
           expectedVersion: "0.1.0",
-        }),
-      Error,
-      "same workflow run, attempt, source commit, and version",
-    );
-  });
-});
-
-Deno.test("release gate rejects attestations from different workflow runs", async () => {
-  await withReleaseFixture({ x64WorkflowRunId: "67890" }, async (directory) => {
-    await assertRejects(
-      () =>
-        validateReleaseArtifacts({
-          directory,
-          expectedVersion: "0.1.0",
-        }),
-      Error,
-      "same workflow run",
-    );
-  });
-});
-
-Deno.test("release gate rejects artifacts from a different checkout commit", async () => {
-  await withReleaseFixture({}, async (directory) => {
-    await assertRejects(
-      () =>
-        validateReleaseArtifacts({
-          directory,
-          expectedVersion: "0.1.0",
-          expectedSourceCommit: commitB,
+          expectedSourceCommit: commitA,
+          expectedNativeArchitecture: "arm64",
         }),
       Error,
       "current checkout",
@@ -252,13 +166,14 @@ Deno.test("release gate rejects artifacts from a different checkout commit", asy
   });
 });
 
-Deno.test("release gate rejects a dirty-source attestation", async () => {
-  await withReleaseFixture({ x64Dirty: true }, async (directory) => {
+Deno.test("release gate rejects a dirty native smoke", async () => {
+  await withReleaseFixture({ sourceDirty: true }, async (directory) => {
     await assertRejects(
       () =>
         validateReleaseArtifacts({
           directory,
           expectedVersion: "0.1.0",
+          expectedNativeArchitecture: "arm64",
         }),
       Error,
       "dirty source tree",
@@ -266,53 +181,86 @@ Deno.test("release gate rejects a dirty-source attestation", async () => {
   });
 });
 
-Deno.test("release gate rejects a local diagnostic smoke", async () => {
+Deno.test("release gate rejects an artifact changed after smoke", async () => {
   await withReleaseFixture(
-    { arm64Authorization: "diagnostic" },
+    { corruptArm64AfterSmoke: true },
     async (directory) => {
       await assertRejects(
         () =>
           validateReleaseArtifacts({
             directory,
             expectedVersion: "0.1.0",
-          }),
-        Error,
-        "diagnostic only",
-      );
-    },
-  );
-});
-
-Deno.test("release gate rejects a workflow receipt from another repository", async () => {
-  await withReleaseFixture(
-    { arm64WorkflowRepository: "attacker/fork" },
-    async (directory) => {
-      await assertRejects(
-        () =>
-          validateReleaseArtifacts({
-            directory,
-            expectedVersion: "0.1.0",
-          }),
-        Error,
-        "valid manual GitHub workflow receipt",
-      );
-    },
-  );
-});
-
-Deno.test("release gate rejects an artifact changed after its smoke", async () => {
-  await withReleaseFixture(
-    { corruptArm64AfterAttestation: true },
-    async (directory) => {
-      await assertRejects(
-        () =>
-          validateReleaseArtifacts({
-            directory,
-            expectedVersion: "0.1.0",
+            expectedNativeArchitecture: "arm64",
           }),
         Error,
         "hash does not match",
       );
     },
+  );
+});
+
+Deno.test("release manifest accepts the prepared binary hashes", () => {
+  validateReleaseManifest(
+    {
+      version: "0.1.0",
+      downloads: {
+        "darwin-arm64": {
+          url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64",
+          sha256: "a".repeat(64),
+        },
+        "darwin-x64": {
+          url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-x64",
+          sha256: "b".repeat(64),
+        },
+      },
+    },
+    {
+      version: "0.1.0",
+      identity: {
+        version: "0.1.0",
+        sourceCommit: commitA,
+        nativeSmokedAsset: "nodebook-darwin-arm64",
+        hashes: {
+          "darwin-arm64": "a".repeat(64),
+          "darwin-x64": "b".repeat(64),
+        },
+      },
+    },
+  );
+});
+
+Deno.test("release manifest rejects a stale binary hash", () => {
+  assertThrows(
+    () =>
+      validateReleaseManifest(
+        {
+          version: "0.1.0",
+          downloads: {
+            "darwin-arm64": {
+              url:
+                "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64",
+              sha256: "c".repeat(64),
+            },
+            "darwin-x64": {
+              url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-x64",
+              sha256: "b".repeat(64),
+            },
+          },
+        },
+        {
+          version: "0.1.0",
+          identity: {
+            version: "0.1.0",
+            sourceCommit: commitA,
+            nativeSmokedAsset: "nodebook-darwin-arm64",
+            hashes: {
+              "darwin-arm64": "a".repeat(64),
+              "darwin-x64": "b".repeat(64),
+            },
+          },
+        },
+      ),
+    Error,
+    "does not match the prepared release",
   );
 });

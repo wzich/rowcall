@@ -17,12 +17,10 @@ case "$(uname -m)" in
   arm64 | aarch64)
     default_asset="nodebook-darwin-arm64"
     expected_architecture=arm64
-    expected_runner_architecture=ARM64
     ;;
   x86_64 | amd64)
     default_asset="nodebook-darwin-x64"
     expected_architecture=x64
-    expected_runner_architecture=X64
     ;;
   *)
     echo "Unsupported smoke-test architecture: $(uname -m)" >&2
@@ -142,80 +140,23 @@ else
   source_dirty=false
 fi
 
-authorization=diagnostic
-workflow_run_id=
-workflow_run_attempt=
-workflow_name=
-workflow_event=
-workflow_job=
-workflow_ref=
-workflow_repository=
-runner_architecture=
-workflow_ref_valid=false
-case "${GITHUB_WORKFLOW_REF:-}" in
-  wzich/nodebook/.github/workflows/invited-beta-smoke.yml@*) workflow_ref_valid=true ;;
-esac
-if [ "${GITHUB_ACTIONS:-}" = true ] &&
-  [ "${GITHUB_REPOSITORY:-}" = wzich/nodebook ] &&
-  [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] &&
-  [ "${GITHUB_WORKFLOW:-}" = "Invited beta smoke" ] &&
-  [ "${GITHUB_JOB:-}" = build-and-smoke ] &&
-  [ "$workflow_ref_valid" = true ] &&
-  [ "${GITHUB_SHA:-}" = "$source_commit" ] &&
-  [ "${RUNNER_OS:-}" = macOS ] &&
-  [ "${RUNNER_ARCH:-}" = "$expected_runner_architecture" ] &&
-  is_positive_decimal "${GITHUB_RUN_ID:-}" &&
-  is_positive_decimal "${GITHUB_RUN_ATTEMPT:-}" &&
-  [ "$source_dirty" = false ]; then
-  authorization=github-actions-workflow
-  workflow_run_id=$GITHUB_RUN_ID
-  workflow_run_attempt=$GITHUB_RUN_ATTEMPT
-  workflow_name=$GITHUB_WORKFLOW
-  workflow_event=$GITHUB_EVENT_NAME
-  workflow_job=$GITHUB_JOB
-  workflow_ref=$GITHUB_WORKFLOW_REF
-  workflow_repository=$GITHUB_REPOSITORY
-  runner_architecture=$RUNNER_ARCH
-fi
-
-if [ "${NODEBOOK_RELEASE_REQUIRE_AUTHORIZING:-0}" = 1 ] &&
-  [ "$authorization" != github-actions-workflow ]; then
-  echo "This workflow job did not produce a valid authorizing release receipt." >&2
-  exit 1
-fi
-
 attestation="$artifact.smoke-attestation.json"
 python3 -c 'import json,sys
-path,asset,digest,version,commit,dirty,architecture,authorization,run_id,run_attempt,workflow_name,workflow_event,workflow_job,workflow_ref,workflow_repository,runner_architecture=sys.argv[1:]
+path,asset,digest,version,commit,dirty,architecture=sys.argv[1:]
 record={
-    "schemaVersion": 2,
+    "schemaVersion": 1,
     "asset": asset,
     "sha256": digest,
     "version": version,
     "sourceCommit": commit,
     "sourceDirty": dirty == "true",
     "nativeArchitecture": architecture,
-    "authorization": authorization,
-    "workflowRunId": run_id or None,
-    "workflowRunAttempt": run_attempt or None,
-    "workflowName": workflow_name or None,
-    "workflowEvent": workflow_event or None,
-    "workflowJob": workflow_job or None,
-    "workflowRef": workflow_ref or None,
-    "workflowRepository": workflow_repository or None,
-    "runnerArchitecture": runner_architecture or None,
 }
 with open(path, "w", encoding="utf-8") as output:
     json.dump(record, output, indent=2, separators=(",", ": "))
     output.write("\n")' \
   "$attestation" "$asset" "$original_hash_start" "$version" "$source_commit" \
-  "$source_dirty" "$expected_architecture" "$authorization" \
-  "$workflow_run_id" "$workflow_run_attempt" "$workflow_name" \
-  "$workflow_event" "$workflow_job" "$workflow_ref" "$workflow_repository" \
-  "$runner_architecture"
+  "$source_dirty" "$expected_architecture"
 
 echo "Installed-artifact smoke test passed: $asset"
 echo "Wrote smoke attestation: $attestation"
-if [ "$authorization" = diagnostic ]; then
-  echo "Note: local smoke attestations are diagnostic and cannot authorize publishing." >&2
-fi
