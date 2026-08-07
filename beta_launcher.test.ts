@@ -9,6 +9,7 @@ import {
   buildLauncherInvocation,
   createExampleProject,
   createNewDocument,
+  ensureProjectEnvironment,
   helpTextForTopic,
   parseBetaCommand,
   resolveExistingDocumentPath,
@@ -159,6 +160,22 @@ Deno.test("parseBetaCommand maps new and example commands", () => {
     openBrowser: true,
     managedEnv: false,
   });
+  assertEquals(
+    parseBetaCommand([
+      "new",
+      "my-work",
+      "--open",
+      "--python",
+      "/env/bin/python",
+    ]),
+    {
+      kind: "new",
+      targetPath: "my-work",
+      openBrowser: true,
+      pythonCommand: "/env/bin/python",
+      managedEnv: false,
+    },
+  );
   assertEquals(parseBetaCommand(["example", "sample"]), {
     kind: "example",
     targetPath: "sample",
@@ -271,6 +288,25 @@ Deno.test({
       source.includes("shout_message.depends_on(load_message)"),
       true,
     );
+    assertEquals(
+      await Deno.readTextFile(`${folder}/.gitignore`),
+      ".venv/\n__pycache__/\n*.py[cod]\n",
+    );
+  },
+});
+
+Deno.test({
+  name: "createNewDocument preserves an existing gitignore",
+  permissions: { read: true, write: true },
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const folder = `${dir}/new-project`;
+    await Deno.mkdir(folder);
+    await Deno.writeTextFile(`${folder}/.gitignore`, "custom/\n");
+
+    await createNewDocument(folder);
+
+    assertEquals(await Deno.readTextFile(`${folder}/.gitignore`), "custom/\n");
   },
 });
 
@@ -326,5 +362,26 @@ Deno.test({
     );
     const source = await Deno.readTextFile(path);
     assertEquals(source.includes("pl.read_csv"), true);
+    assertEquals(
+      await Deno.readTextFile(`${folder}/.gitignore`),
+      ".venv/\n__pycache__/\n*.py[cod]\n",
+    );
+  },
+});
+
+Deno.test({
+  name: "ensureProjectEnvironment creates and reuses a project venv",
+  permissions: { read: true, write: true, run: true, env: true },
+  async fn() {
+    const folder = await Deno.makeTempDir();
+    const documentPath = `${folder}/graph.py`;
+    await Deno.writeTextFile(documentPath, "print('graph')\n");
+
+    const first = await ensureProjectEnvironment(documentPath);
+    const second = await ensureProjectEnvironment(documentPath);
+
+    assertEquals(first, second);
+    assertEquals(first.includes(`${folder}/.venv/`), true);
+    assertEquals((await Deno.stat(first)).isFile, true);
   },
 });

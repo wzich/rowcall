@@ -25,12 +25,14 @@ export type BetaCommand =
     kind: "new";
     targetPath: string;
     openBrowser: boolean;
+    pythonCommand?: string;
     managedEnv: boolean;
   }
   | {
     kind: "example";
     targetPath: string;
     openBrowser: boolean;
+    pythonCommand?: string;
     managedEnv: boolean;
   }
   | {
@@ -111,6 +113,11 @@ def shout_message(message):
 shout_message.depends_on(load_message)
 `;
 
+const defaultGitignore = `.venv/
+__pycache__/
+*.py[cod]
+`;
+
 const exampleDocumentSource = `from pathlib import Path
 
 import polars as pl
@@ -189,8 +196,10 @@ Try:
   nodebook run my-example --json
   nodebook help format
 
-By default Nodebook uses your active Python environment. Pass --managed-env
-to use Nodebook's starter environment.
+Opening a document creates or reuses its project .venv by default. Pass
+--python to use a specific interpreter or --managed-env to use Nodebook's
+shared starter environment. Headless run and validate commands use your active
+Python environment by default.
 `;
 
 const formatHelpText = `Nodebook Python Document Format
@@ -262,14 +271,16 @@ Examples:
 `;
 
 const newHelpText = `Usage:
-  nodebook new <folder-or-document.py> [--open] [--managed-env]
+  nodebook new <folder-or-document.py> [--open] [--python <path>] [--managed-env]
 
 If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
-creates graph.py inside the folder path.
+creates graph.py and .gitignore inside the folder path. Opening without an
+explicit Python interpreter creates or reuses the project's .venv.
 
 Examples:
   nodebook new my-work
   nodebook new my-work --open
+  nodebook new my-work --open --python /path/to/python
   nodebook new graph.py
 `;
 
@@ -284,7 +295,7 @@ Examples:
 `;
 
 const exampleHelpText = `Usage:
-  nodebook example <folder> [--open] [--managed-env]
+  nodebook example <folder> [--open] [--python <path>] [--managed-env]
 
 Creates a sample Nodebook project with graph.py and data/orders.csv.
 `;
@@ -382,8 +393,10 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     }
     const parsed = parseArgs(args.slice(1), {
       boolean: ["open", "managed-env"],
+      string: ["python"],
       unknown: rejectUnknownOption,
     });
+    rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
       throw new Error("Usage: nodebook new <folder-or-document.py> [--open]");
     }
@@ -392,6 +405,9 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       targetPath: parsed._[0],
       openBrowser: Boolean(parsed.open),
       managedEnv: Boolean(parsed["managed-env"]),
+      ...(typeof parsed.python === "string"
+        ? { pythonCommand: parsed.python }
+        : {}),
     };
   }
 
@@ -401,8 +417,10 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     }
     const parsed = parseArgs(args.slice(1), {
       boolean: ["open", "managed-env"],
+      string: ["python"],
       unknown: rejectUnknownOption,
     });
+    rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
       throw new Error("Usage: nodebook example <folder> [--open]");
     }
@@ -411,6 +429,9 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       targetPath: parsed._[0],
       openBrowser: Boolean(parsed.open),
       managedEnv: Boolean(parsed["managed-env"]),
+      ...(typeof parsed.python === "string"
+        ? { pythonCommand: parsed.python }
+        : {}),
     };
   }
 
@@ -496,8 +517,9 @@ export async function runBetaCommand(
       const documentPath = await createNewDocument(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
       await appendLog(paths, `nodebook ${command.kind}`);
-      const runtime = await resolveRuntimeSelection(paths, {
-        mode: command.managedEnv ? "managed" : "user",
+      const runtime = await resolveLaunchRuntime(paths, documentPath, {
+        managedEnv: command.managedEnv,
+        pythonCommand: command.pythonCommand,
       });
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(defaultHostname, defaultPort);
@@ -517,8 +539,9 @@ export async function runBetaCommand(
       const documentPath = await createExampleProject(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
       await appendLog(paths, `nodebook ${command.kind}`);
-      const runtime = await resolveRuntimeSelection(paths, {
-        mode: command.managedEnv ? "managed" : "user",
+      const runtime = await resolveLaunchRuntime(paths, documentPath, {
+        managedEnv: command.managedEnv,
+        pythonCommand: command.pythonCommand,
       });
       await ensureBundledAssets(paths);
       await ensureServerPortAvailable(defaultHostname, defaultPort);
@@ -554,8 +577,8 @@ export async function runBetaCommand(
         ...command,
         documentPath: await resolveExistingDocumentPath(command.documentPath),
       };
-      const runtime = await resolveRuntimeSelection(paths, {
-        mode: command.managedEnv ? "managed" : "user",
+      const runtime = await resolveLaunchRuntime(paths, command.documentPath, {
+        managedEnv: command.managedEnv,
         pythonCommand: command.pythonCommand,
       });
       command = {
@@ -684,6 +707,9 @@ export async function createNewDocument(targetPath: string): Promise<string> {
   }
 
   await Deno.writeTextFile(documentPath, defaultDocumentSource);
+  if (folderPath) {
+    await writeDefaultGitignore(folderPath);
+  }
   console.info(`Created new Nodebook document: ${documentPath}`);
   return documentPath;
 }
@@ -722,9 +748,17 @@ export async function createExampleProject(
   await Deno.mkdir(`${directory}/data`, { recursive: true });
   await Deno.writeTextFile(documentPath, exampleDocumentSource);
   await Deno.writeTextFile(dataPath, exampleOrdersCsv);
+  await writeDefaultGitignore(directory);
   console.info(`Created Nodebook example: ${directory}`);
   console.info(`Open it with: nodebook open ${directory}`);
   return documentPath;
+}
+
+async function writeDefaultGitignore(directory: string): Promise<void> {
+  const gitignorePath = `${directory}/.gitignore`;
+  if (!await pathExists(gitignorePath)) {
+    await Deno.writeTextFile(gitignorePath, defaultGitignore);
+  }
 }
 
 export async function ensureManagedEnvironment(
@@ -783,6 +817,54 @@ async function resolveRuntimeSelection(
     mode: "user",
     pythonCommand,
   };
+}
+
+async function resolveLaunchRuntime(
+  paths: BetaPaths,
+  documentPath: string,
+  selection: { managedEnv: boolean; pythonCommand?: string },
+): Promise<RuntimeSelection & { pythonCommand: string }> {
+  if (selection.managedEnv || selection.pythonCommand) {
+    return await resolveRuntimeSelection(paths, {
+      mode: selection.managedEnv ? "managed" : "user",
+      pythonCommand: selection.pythonCommand,
+    });
+  }
+
+  return await resolveRuntimeSelection(paths, {
+    mode: "user",
+    pythonCommand: await ensureProjectEnvironment(documentPath),
+  });
+}
+
+export async function ensureProjectEnvironment(
+  documentPath: string,
+): Promise<string> {
+  const projectDirectory = getParentDirectory(documentPath) ?? ".";
+  const venvDirectory = `${projectDirectory}/.venv`;
+  const venvPython = getVenvPythonPath(venvDirectory);
+  if (await isCompatiblePython(venvPython)) {
+    console.info(`Using project Python environment: ${venvPython}`);
+    return venvPython;
+  }
+
+  if (await pathExists(venvDirectory)) {
+    throw new Error(
+      `Project environment exists but does not contain Python 3.10 or newer: ${venvDirectory}\n\n` +
+        `Remove or repair it, or pass --python /path/to/python.`,
+    );
+  }
+
+  const basePython = await findCompatibleUserPython();
+  console.info(`Creating project Python environment: ${venvDirectory}`);
+  await runChecked(basePython, ["-m", "venv", venvDirectory]);
+  if (!await isCompatiblePython(venvPython)) {
+    throw new Error(
+      `Created project environment could not run Python 3.10 or newer: ${venvDirectory}`,
+    );
+  }
+  console.info(`Using project Python environment: ${venvPython}`);
+  return venvPython;
 }
 
 export async function resetManagedEnvironment(paths: BetaPaths): Promise<void> {

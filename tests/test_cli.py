@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from nodebook.cli import main
 
@@ -24,6 +25,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("nodebook run <folder-or-document.py>", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_open_delegates_to_full_launcher(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+            exit_code = main(
+                ["open", "analysis.py", "--python", "/env/bin/python"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0)
+        launcher.assert_called_once_with(
+            ["open", "analysis.py", "--python", "/env/bin/python"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def test_bare_document_path_delegates_to_full_launcher(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+            exit_code = main(["analysis.py"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 0)
+        launcher.assert_called_once_with(
+            ["analysis.py"], stdout=stdout, stderr=stderr
+        )
+
+    def test_new_delegates_to_full_launcher(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+            exit_code = main(
+                ["new", "my-work", "--open", "--python", "/env/bin/python"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0)
+        launcher.assert_called_once_with(
+            ["new", "my-work", "--open", "--python", "/env/bin/python"],
+            stdout=stdout,
+            stderr=stderr,
+        )
 
     def test_validate_success_json(self) -> None:
         stdout = io.StringIO()

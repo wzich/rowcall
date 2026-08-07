@@ -6,9 +6,9 @@ scripts. By default, it routes headless commands through your active Python
 environment; pass `--managed-env` to use Nodebook's starter environment under
 `~/.nodebook/venvs/default`.
 
-The Python module CLI remains the underlying runtime contract:
-`python3 -m nodebook` and `deno task cli` are useful for development and local
-package testing.
+The Python module CLI remains the underlying runtime contract for headless
+commands. In a source checkout, `uv run nodebook` and `python3 -m nodebook`
+delegate opening and project-creation commands to the full Deno launcher.
 
 ## Commands
 
@@ -18,11 +18,18 @@ Create a new Nodebook project:
 nodebook new path/to/project
 ```
 
-This creates `path/to/project/graph.py`. To create and immediately open the
-canvas editor, pass `--open`:
+This creates `path/to/project/graph.py` and a `.gitignore`. To create and
+immediately open the canvas editor, pass `--open`:
 
 ```sh
 nodebook new path/to/project --open
+```
+
+Opening creates or reuses `path/to/project/.venv` by default. To use a specific
+interpreter directly instead:
+
+```sh
+nodebook new path/to/project --open --python /path/to/python
 ```
 
 Create a sample project with data:
@@ -161,9 +168,9 @@ document remains the complete source of truth for a run.
 
 ## Python Environment Troubleshooting
 
-The beta launcher runs documents with your active Python environment by default.
-Activate Conda or a virtualenv before running `nodebook`, or pass a specific
-interpreter:
+The beta launcher opens documents with a project-local `.venv` by default.
+Headless `run` and `validate` commands continue to use the active Python
+environment. Pass a specific interpreter to override either behavior:
 
 ```sh
 nodebook run --python "$CONDA_PREFIX/bin/python" my-work --json

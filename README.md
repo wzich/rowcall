@@ -8,9 +8,9 @@ editing and managing those documents.
 ## Beta Tester Start
 
 Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
-must already be installed. By default Nodebook uses your active Python
-environment and temporarily adds its own runtime package for the Nodebook
-process.
+must already be installed. Opening a document creates or reuses a project-local
+`.venv` by default and temporarily adds Nodebook's own runtime package to the
+Nodebook process.
 
 This is an invited beta, not a hardened public release. The macOS launcher is
 currently unsigned and not notarized, and Nodebook executes Python with the
@@ -70,7 +70,15 @@ This creates:
 
 ```text
 my-work/
+  .gitignore
   graph.py
+```
+
+Opening also creates `my-work/.venv` when the project does not already have one.
+To create and open with a specific interpreter instead, run:
+
+```sh
+nodebook new my-work --open --python /path/to/python
 ```
 
 Open an existing Nodebook folder or Python document:
@@ -93,8 +101,9 @@ only.
 
 ### Python Environments
 
-By default, Nodebook uses the Python environment you launch it from. Activate
-Conda or a virtualenv before running `nodebook`, or pass a specific interpreter:
+Opening a document creates or reuses `.venv` beside the document by default.
+Pass a specific interpreter to use it directly without creating the project
+environment:
 
 ```sh
 nodebook open --python "$CONDA_PREFIX/bin/python" my-work
@@ -166,10 +175,12 @@ nodebook run my-work --json --trace
 ```
 
 The launcher delegates headless commands to the selected Python runtime. During
-development, `python3 -m nodebook` and `deno task cli` are still useful local
-wrappers:
+development, `uv run nodebook`, `python3 -m nodebook`, and `deno task cli` are
+still useful local wrappers. Opening commands invoked through the Python CLI
+delegate to the full launcher in the source checkout or installed on `PATH`:
 
 ```sh
+uv run nodebook open my-work
 python3 -m nodebook run my-work --json --trace
 deno task cli run my-work --json --trace
 ```

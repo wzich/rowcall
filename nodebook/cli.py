@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,12 +16,26 @@ from nodebook.runtime import run_document
 
 
 USAGE = """Usage:
+  nodebook <folder-or-document.py>
+  nodebook open <folder-or-document.py> [--python <path>]
+  nodebook new <folder-or-document.py> [--open] [--python <path>]
   nodebook validate <folder-or-document.py> [--json]
   nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary]
   nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only
 
 Folders resolve to graph.py inside the folder.
+Opening commands delegate to the full Nodebook launcher.
 """
+
+LAUNCHER_COMMANDS = {
+    "doctor",
+    "example",
+    "help",
+    "new",
+    "open",
+    "reset-env",
+    "update",
+}
 
 
 @dataclass(frozen=True)
@@ -44,6 +61,13 @@ def main(
     args = list(sys.argv[1:] if argv is None else argv)
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
+
+    if not args:
+        out.write(USAGE)
+        return 0
+
+    if should_delegate_to_launcher(args):
+        return run_full_launcher(args, stdout=out, stderr=err)
 
     if "--help" in args or "-h" in args:
         out.write(USAGE)
@@ -77,6 +101,83 @@ def main(
         return handle_run(options, stdout=out, stderr=err)
 
     raise AssertionError(f"Unhandled command: {options.command}")
+
+
+def should_delegate_to_launcher(args: list[str]) -> bool:
+    if not args:
+        return False
+    first = args[0]
+    if first in LAUNCHER_COMMANDS or first in {"--version", "-V"}:
+        return True
+    return not first.startswith("-") and first not in {"run", "validate"}
+
+
+def run_full_launcher(
+    args: list[str], *, stdout: TextIO, stderr: TextIO
+) -> int:
+    invocation = find_full_launcher_invocation()
+    if invocation is None:
+        stderr.write(
+            "The full Nodebook launcher is required to open the UI.\n\n"
+            "Install it from https://nodebook.rodeo, or run this command "
+            "from a Nodebook source checkout with Deno installed.\n"
+        )
+        return 1
+
+    command = [*invocation, *args]
+    if stdout is sys.stdout and stderr is sys.stderr:
+        return subprocess.run(command, check=False).returncode
+
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    stdout.write(completed.stdout)
+    stderr.write(completed.stderr)
+    return completed.returncode
+
+
+def find_full_launcher_invocation() -> list[str] | None:
+    override = os.environ.get("NODEBOOK_LAUNCHER")
+    if override:
+        return [override]
+
+    source_root = Path(__file__).resolve().parents[1]
+    source_launcher = source_root / "beta_launcher.ts"
+    deno = shutil.which("deno")
+    if source_launcher.is_file() and deno:
+        return [
+            deno,
+            "run",
+            "--allow-read",
+            "--allow-write",
+            "--allow-net",
+            "--allow-run",
+            "--allow-env",
+            str(source_launcher),
+        ]
+
+    current_command = Path(sys.argv[0]).resolve()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = Path(directory) / "nodebook"
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            if candidate.resolve() == current_command:
+                continue
+        except OSError:
+            continue
+        if is_python_cli_wrapper(candidate):
+            continue
+        return [str(candidate)]
+    return None
+
+
+def is_python_cli_wrapper(path: Path) -> bool:
+    try:
+        prefix = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    return b"nodebook.cli" in prefix
 
 
 def parse_cli_options(args: list[str]) -> CliOptions:
