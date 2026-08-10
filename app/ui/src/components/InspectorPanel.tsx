@@ -17,6 +17,7 @@ import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
+import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
 import { isJsonContainer } from "./jsonPreviewState.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
@@ -117,10 +118,16 @@ export type GraphExecutionDisplayState =
   }
   | { status: "request_error"; message: string };
 
-export type InspectorNavigationRequest = {
-  target: "document_globals" | "run_result";
-  requestId: number;
-};
+export type InspectorNavigationRequest =
+  | {
+    target: "document_globals" | "run_result";
+    requestId: number;
+  }
+  | {
+    target: "node_results";
+    nodeId: string;
+    requestId: number;
+  };
 
 type InspectorPanelProps = {
   themeMode: ThemeMode;
@@ -147,7 +154,6 @@ type InspectorPanelProps = {
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
-  onRunGraph: () => void;
   onSelectionClear: () => void;
   actionsBlocked?: boolean;
   navigationRequest?: InspectorNavigationRequest | null;
@@ -292,8 +298,8 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
           <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             <tr>
               {table.index && (
-                <th className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-700">
-                  index
+                <th className="sticky left-0 z-20 whitespace-nowrap border-b border-r border-zinc-200 bg-zinc-100 px-2 py-1.5 font-medium dark:border-zinc-700 dark:bg-zinc-800">
+                  {table.indexLabel ?? "index"}
                 </th>
               )}
               {table.columns.map((column) => (
@@ -320,7 +326,14 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
                 className="odd:bg-white even:bg-zinc-50 dark:odd:bg-zinc-900 dark:even:bg-zinc-800/70"
               >
                 {table.index && (
-                  <td className="border-b border-r border-zinc-100 px-2 py-1.5 font-mono text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                  <td
+                    className={[
+                      "sticky left-0 z-[1] whitespace-nowrap border-b border-r border-zinc-100 px-2 py-1.5 font-mono text-zinc-500 dark:border-zinc-800 dark:text-zinc-400",
+                      rowIndex % 2 === 0
+                        ? "bg-white dark:bg-zinc-900"
+                        : "bg-zinc-50 dark:bg-zinc-800",
+                    ].join(" ")}
+                  >
                     <CellValue value={table.index[rowIndex] ?? null} />
                   </td>
                 )}
@@ -368,7 +381,9 @@ function CellValue({ value }: { value: TableCellPreview }) {
     );
   }
   if (typeof value === "string") {
-    return <span className="block max-w-56 truncate">{value}</span>;
+    return (
+      <span className="block max-w-56 truncate" title={value}>{value}</span>
+    );
   }
   if (value.kind === "nan") {
     return (
@@ -377,12 +392,19 @@ function CellValue({ value }: { value: TableCellPreview }) {
   }
   if (value.kind === "datetime") {
     return (
-      <span className="block max-w-56 truncate font-mono text-zinc-700 dark:text-zinc-200">
+      <span
+        className="block max-w-56 truncate font-mono text-zinc-700 dark:text-zinc-200"
+        title={value.value}
+      >
         {value.value}
       </span>
     );
   }
-  return <span className="block max-w-56 truncate">{value.value}</span>;
+  return (
+    <span className="block max-w-56 truncate" title={value.value}>
+      {value.value}
+    </span>
+  );
 }
 
 function DisplayBlock({ displays }: { displays: DisplayPreview[] }) {
@@ -851,6 +873,8 @@ function GraphInspector({
   onNodeSelect,
   onGlobalsCodeChange,
   onModeChange,
+  selectedOutputKey,
+  onSelectedOutputKeyChange,
 }: {
   themeMode: ThemeMode;
   graph: GraphInspectorModel;
@@ -860,6 +884,8 @@ function GraphInspector({
   onNodeSelect: (nodeId: string) => void;
   onGlobalsCodeChange: (code: string) => void;
   onModeChange: (mode: GraphInspectorMode) => void;
+  selectedOutputKey: string;
+  onSelectedOutputKeyChange: (key: string) => void;
 }) {
   const globalsError = graphExecutionState?.status === "completed" &&
       !graphExecutionState.response.ok &&
@@ -875,6 +901,8 @@ function GraphInspector({
           nodeLabelsById={graph.nodeLabelsById}
           onNodeSelect={onNodeSelect}
           onShowDocumentGlobals={() => onModeChange("overview")}
+          selectedOutputKey={selectedOutputKey}
+          onSelectedOutputKeyChange={onSelectedOutputKeyChange}
         />
       </div>
     );
@@ -945,11 +973,15 @@ function GraphRunResult({
   nodeLabelsById,
   onNodeSelect,
   onShowDocumentGlobals,
+  selectedOutputKey,
+  onSelectedOutputKeyChange,
 }: {
   executionState: GraphExecutionDisplayState | null;
   nodeLabelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
   onShowDocumentGlobals: () => void;
+  selectedOutputKey: string;
+  onSelectedOutputKeyChange: (key: string) => void;
 }) {
   if (!executionState) {
     return (
@@ -1014,6 +1046,8 @@ function GraphRunResult({
               freshness={executionState.freshness}
               nodeLabelsById={nodeLabelsById}
               onNodeSelect={onNodeSelect}
+              selectedKey={selectedOutputKey}
+              onSelectedKeyChange={onSelectedOutputKeyChange}
             />
           )
           : (
@@ -1072,11 +1106,15 @@ function GraphOutputTabs({
   freshness,
   nodeLabelsById,
   onNodeSelect,
+  selectedKey,
+  onSelectedKeyChange,
 }: {
   response: ExecutionResponse;
   freshness: "fresh" | "stale";
   nodeLabelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
+  selectedKey: string;
+  onSelectedKeyChange: (key: string) => void;
 }) {
   const options = useMemo<GraphOutputOption[]>(
     () =>
@@ -1104,16 +1142,20 @@ function GraphOutputTabs({
         .map(([name]) => name),
     );
   }, [options]);
-  const [selectedKey, setSelectedKey] = useState(options[0]?.key ?? "");
+  const resolvedSelectedKey = resolveGraphOutputSelection(
+    selectedKey,
+    options.map((option) => option.key),
+  );
 
   useEffect(() => {
-    if (!options.some((option) => option.key === selectedKey)) {
-      setSelectedKey(options[0]?.key ?? "");
+    if (resolvedSelectedKey !== selectedKey) {
+      onSelectedKeyChange(resolvedSelectedKey);
     }
-  }, [options, selectedKey]);
+  }, [onSelectedKeyChange, resolvedSelectedKey, selectedKey]);
 
-  const selected = options.find((option) => option.key === selectedKey) ??
-    options[0];
+  const selected =
+    options.find((option) => option.key === resolvedSelectedKey) ??
+      options[0];
 
   if (!selected) {
     return (
@@ -1152,7 +1194,7 @@ function GraphOutputTabs({
                 ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
                 : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
             ].join(" ")}
-            onClick={() => setSelectedKey(option.key)}
+            onClick={() => onSelectedKeyChange(option.key)}
           >
             {duplicateNames.has(option.name)
               ? `${option.nodeLabel} · ${option.name}`
@@ -1988,7 +2030,10 @@ function CompactPreview({ preview }: { preview: ValuePreview }) {
       <thead className="sticky top-0 z-[1] bg-zinc-100 dark:bg-zinc-800">
         <tr>
           {table.index && (
-            <th className="border-b border-r border-zinc-300 px-3 py-1 font-medium text-zinc-400 dark:border-zinc-700">
+            <th
+              className="sticky left-0 z-[2] border-b border-r border-zinc-300 bg-zinc-100 px-3 py-1 font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800"
+              title={table.indexLabel ?? "index"}
+            >
               #
             </th>
           )}
@@ -2007,7 +2052,7 @@ function CompactPreview({ preview }: { preview: ValuePreview }) {
         {table.rows.map((row, rowIndex) => (
           <tr key={rowIndex}>
             {table.index && (
-              <td className="whitespace-nowrap border-b border-r border-zinc-100 px-3 py-1 text-zinc-400 dark:border-zinc-800">
+              <td className="sticky left-0 z-[1] whitespace-nowrap border-b border-r border-zinc-100 bg-white px-3 py-1 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
                 <CellValue value={table.index[rowIndex] ?? null} />
               </td>
             )}
@@ -3023,7 +3068,6 @@ export function InspectorPanel({
   onTraceEnabledChange,
   onDeleteNode,
   onRunToNode,
-  onRunGraph,
   onSelectionClear,
   actionsBlocked = false,
   navigationRequest,
@@ -3035,7 +3079,6 @@ export function InspectorPanel({
   const isAnyRunBlockingNodeActions = isRunActive || isSelectedNodeRunning;
   const areNodeActionsDisabled = actionsBlocked || isRunActive ||
     isSelectedNodeRunning;
-  const isGraphActionDisabled = actionsBlocked || isRunActive;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const handledNavigationRequestIdRef = useRef<number | null>(null);
   const dragStartXRef = useRef(0);
@@ -3050,6 +3093,7 @@ export function InspectorPanel({
   const [graphInspectorMode, setGraphInspectorMode] = useState<
     GraphInspectorMode
   >("overview");
+  const [selectedGraphOutputKey, setSelectedGraphOutputKey] = useState("");
   const [nodeNameDraft, setNodeNameDraft] = useState(
     selectedNode?.displayName ?? "",
   );
@@ -3061,9 +3105,23 @@ export function InspectorPanel({
 
   useEffect(() => {
     if (
-      !navigationRequest || selectedNode ||
+      !navigationRequest ||
       handledNavigationRequestIdRef.current === navigationRequest.requestId
     ) {
+      return;
+    }
+
+    if (navigationRequest.target === "node_results") {
+      if (selectedNode?.id !== navigationRequest.nodeId) {
+        return;
+      }
+      handledNavigationRequestIdRef.current = navigationRequest.requestId;
+      setInspectorMode("results");
+      scrollContainerRef.current?.scrollTo({ top: 0 });
+      return;
+    }
+
+    if (selectedNode) {
       return;
     }
 
@@ -3221,26 +3279,10 @@ export function InspectorPanel({
             </div>
           )
           : (
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex min-h-8 items-center">
               <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">
                 Graph overview
               </p>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-                disabled={isGraphActionDisabled}
-                onClick={() => {
-                  setGraphInspectorMode("results");
-                  onRunGraph();
-                }}
-              >
-                <Play
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  strokeWidth={2.25}
-                />
-                {isRunActive ? "Running..." : "Run graph"}
-              </button>
             </div>
           )}
       </div>
@@ -3295,6 +3337,8 @@ export function InspectorPanel({
                 onNodeSelect={onNodeSelect}
                 onGlobalsCodeChange={onGlobalsCodeChange}
                 onModeChange={setGraphInspectorMode}
+                selectedOutputKey={selectedGraphOutputKey}
+                onSelectedOutputKeyChange={setSelectedGraphOutputKey}
               />
               {graphInspectorMode === "results" && (
                 <div className="mt-4">

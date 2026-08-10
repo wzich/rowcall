@@ -1,7 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
-import { AlertTriangle, CheckCircle2, Moon, Save, Sun, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Moon,
+  Play,
+  Save,
+  Sun,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyDocumentOperations,
@@ -217,6 +225,7 @@ export default function App() {
     forgetNodes,
     isCurrentSource,
     markGraphExecutionRunning,
+    markNodeExecutionRunning,
     markNodesStale,
     prepareForDocumentEdit,
     resetUnfinishedRunStatuses,
@@ -1300,8 +1309,9 @@ export default function App() {
     }
     const runSourceValue = documentSourceValueRef.current;
 
+    showNodeResults(nodeId);
     const abortController = startRunAbortController();
-    markGraphExecutionRunning("run_to_node");
+    markNodeExecutionRunning(nodeId, "run_to_node");
     runToNodeMutation.mutate({
       nodeId,
       source: getCurrentPythonSourceForRun(),
@@ -1323,6 +1333,7 @@ export default function App() {
     }
     const runSourceValue = documentSourceValueRef.current;
 
+    showInspectorTarget("run_result");
     const abortController = startRunAbortController();
     markGraphExecutionRunning();
     runGraphMutation.mutate({
@@ -1354,10 +1365,19 @@ export default function App() {
     );
   }
 
-  function showInspectorTarget(target: InspectorNavigationRequest["target"]) {
+  function showInspectorTarget(target: "document_globals" | "run_result") {
     setSelectedNodeId(null);
     setInspectorNavigationRequest((current) => ({
       target,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+  }
+
+  function showNodeResults(nodeId: string) {
+    setSelectedNodeId(nodeId);
+    setInspectorNavigationRequest((current) => ({
+      target: "node_results",
+      nodeId,
       requestId: (current?.requestId ?? 0) + 1,
     }));
   }
@@ -1417,6 +1437,25 @@ export default function App() {
               {saveError.title}
             </span>
           )}
+          <button
+            type="button"
+            title={saveStatus === "outcome_unknown"
+              ? "Save outcome unknown; reload from disk before running"
+              : isRunActive
+              ? "A run is already in progress"
+              : "Run the full graph"}
+            className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+            disabled={!editableGraph || isRunActive ||
+              saveStatus === "outcome_unknown"}
+            onClick={() => void handleRunGraph()}
+          >
+            <Play
+              aria-hidden="true"
+              className="h-4 w-4"
+              strokeWidth={2.25}
+            />
+            {isRunActive ? "Running…" : "Run graph"}
+          </button>
           <button
             type="button"
             aria-label={themeMode === "dark"
@@ -1694,7 +1733,6 @@ export default function App() {
               onTraceEnabledChange={setTraceEnabled}
               onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
               onRunToNode={handleRunToNode}
-              onRunGraph={handleRunGraph}
               onSelectionClear={() => setSelectedNodeId(null)}
               actionsBlocked={saveStatus === "outcome_unknown"}
               navigationRequest={inspectorNavigationRequest}

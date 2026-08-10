@@ -100,6 +100,22 @@ class RuntimePreviewTests(unittest.TestCase):
                 previews.TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
             )
 
+    def test_pandas_preview_preserves_its_index(self) -> None:
+        table = self._make_fake_pandas_preview()
+
+        self.assertIsNotNone(table)
+        assert table is not None
+        self.assertEqual(table["indexLabel"], "index")
+        self.assertEqual(table["index"], [previews.table_cell_preview(HUGE_TEXT)])
+
+    def test_polars_preview_adds_source_row_numbers(self) -> None:
+        table = self._make_fake_polars_preview()
+
+        self.assertIsNotNone(table)
+        assert table is not None
+        self.assertEqual(table["indexLabel"], "row")
+        self.assertEqual(table["index"], [0])
+
     def test_preview_identity_repr_and_warning_fields_are_byte_bounded(self) -> None:
         value_type = type(
             "HugeType",

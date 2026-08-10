@@ -29,6 +29,7 @@ export type TableCellPreview =
   | null
   | { kind: "nan" }
   | { kind: "datetime"; value: string }
+  | { kind: "integer"; value: string }
   | { kind: "repr"; value: string };
 
 export type TablePreview = {
@@ -38,6 +39,7 @@ export type TablePreview = {
   }>;
   rows: TableCellPreview[][];
   index?: TableCellPreview[];
+  indexLabel?: string;
   rowCount: number;
   columnCount: number;
   truncated: boolean;

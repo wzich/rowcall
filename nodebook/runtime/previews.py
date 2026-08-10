@@ -289,6 +289,7 @@ def make_pandas_table_preview(value: Any) -> dict[str, Any] | None:
             for column, dtype in zip(sliced.columns, sliced.dtypes)
         ],
         "index": [table_cell_preview(item) for item in sliced.index.tolist()],
+        "indexLabel": "index",
         "rows": [
             [table_cell_preview(item) for item in row]
             for row in sliced.itertuples(index=False, name=None)
@@ -317,6 +318,7 @@ def make_polars_table_preview(value: Any) -> dict[str, Any] | None:
     columns = sliced.columns[:TABLE_PREVIEW_MAX_COLUMNS]
     sliced = sliced.select(columns) if columns else sliced
     dtype_by_column = dict(zip(sliced.columns, sliced.dtypes))
+    rows = [[table_cell_preview(item) for item in row] for row in sliced.iter_rows()]
 
     return {
         "columns": [
@@ -332,7 +334,9 @@ def make_polars_table_preview(value: Any) -> dict[str, Any] | None:
             }
             for column in sliced.columns
         ],
-        "rows": [[table_cell_preview(item) for item in row] for row in sliced.iter_rows()],
+        "index": list(range(len(rows))),
+        "indexLabel": "row",
+        "rows": rows,
         "rowCount": row_count,
         "columnCount": column_count,
         "truncated": row_count > TABLE_PREVIEW_MAX_ROWS or column_count > TABLE_PREVIEW_MAX_COLUMNS,
