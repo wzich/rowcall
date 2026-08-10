@@ -71,8 +71,14 @@ This creates:
 ```text
 my-work/
   .gitignore
+  AGENTS.md
   graph.py
+  requirements.txt
 ```
+
+`AGENTS.md` gives coding agents a short project-specific workflow.
+`requirements.txt` lists the starter data packages without installing them;
+environment setup remains separate.
 
 Opening also creates `my-work/.venv` when the project does not already have one.
 To create and open with a specific interpreter instead, run:

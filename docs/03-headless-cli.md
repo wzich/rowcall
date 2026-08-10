@@ -18,8 +18,11 @@ Create a new Nodebook project:
 nodebook new path/to/project
 ```
 
-This creates `path/to/project/graph.py` and a `.gitignore`. To create and
-immediately open the canvas editor, pass `--open`:
+This creates `path/to/project/graph.py`, `.gitignore`, `AGENTS.md`, and
+`requirements.txt`. The agent instructions describe the edit/validate/run
+workflow, while the requirements file lists the starter data packages without
+installing them. To create and immediately open the canvas editor, pass
+`--open`:
 
 ```sh
 nodebook new path/to/project --open

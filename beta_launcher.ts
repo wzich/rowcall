@@ -118,6 +118,20 @@ __pycache__/
 *.py[cod]
 `;
 
+const defaultAgentInstructions = `# Nodebook
+
+- Edit \`graph.py\` directly. Node functions must follow \`nodebook help format\`.
+- After edits, run \`nodebook validate .\`; run \`nodebook run . --json=summary\` when execution is needed.
+- Do not relaunch Nodebook after every edit. The open UI reloads changes from disk.
+- Keep dependencies in \`requirements.txt\` and the project environment.
+- Canvas metadata, when present, is in \`graph.nodebook.json\`; match it to stable node IDs in \`graph.py\`.
+`;
+
+const defaultRequirements = `pandas
+polars
+matplotlib
+`;
+
 const exampleDocumentSource = `from pathlib import Path
 
 import polars as pl
@@ -195,6 +209,13 @@ Try:
   nodebook example my-example
   nodebook run my-example --json
   nodebook help format
+
+Working with coding agents:
+  Let an agent edit graph.py directly, then run nodebook validate <path>.
+  Run nodebook run <path> --json=summary when execution is needed. Open the
+  Nodebook UI once; it reloads changes from disk. New folder projects created
+  with nodebook new or nodebook example include a short project-specific
+  AGENTS.md.
 
 Opening a document creates or reuses its project .venv by default. Pass
 --python to use a specific interpreter or --managed-env to use Nodebook's
@@ -274,8 +295,10 @@ const newHelpText = `Usage:
   nodebook new <folder-or-document.py> [--open] [--python <path>] [--managed-env]
 
 If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
-creates graph.py and .gitignore inside the folder path. Opening without an
-explicit Python interpreter creates or reuses the project's .venv.
+creates graph.py, .gitignore, AGENTS.md, and requirements.txt inside the folder
+path. Existing .gitignore, AGENTS.md, and requirements.txt files are preserved.
+Opening without an explicit Python interpreter creates or reuses the project's
+.venv.
 
 Examples:
   nodebook new my-work
@@ -297,7 +320,8 @@ Examples:
 const exampleHelpText = `Usage:
   nodebook example <folder> [--open] [--python <path>] [--managed-env]
 
-Creates a sample Nodebook project with graph.py and data/orders.csv.
+Creates a sample Nodebook project with graph.py, data/orders.csv, lightweight
+agent guidance, and starter requirements.
 `;
 
 const doctorHelpText = `Usage:
@@ -708,7 +732,7 @@ export async function createNewDocument(targetPath: string): Promise<string> {
 
   await Deno.writeTextFile(documentPath, defaultDocumentSource);
   if (folderPath) {
-    await writeDefaultGitignore(folderPath);
+    await writeDefaultProjectFiles(folderPath);
   }
   console.info(`Created new Nodebook document: ${documentPath}`);
   return documentPath;
@@ -748,16 +772,33 @@ export async function createExampleProject(
   await Deno.mkdir(`${directory}/data`, { recursive: true });
   await Deno.writeTextFile(documentPath, exampleDocumentSource);
   await Deno.writeTextFile(dataPath, exampleOrdersCsv);
-  await writeDefaultGitignore(directory);
+  await writeDefaultProjectFiles(directory);
   console.info(`Created Nodebook example: ${directory}`);
   console.info(`Open it with: nodebook open ${directory}`);
   return documentPath;
 }
 
-async function writeDefaultGitignore(directory: string): Promise<void> {
-  const gitignorePath = `${directory}/.gitignore`;
-  if (!await pathExists(gitignorePath)) {
-    await Deno.writeTextFile(gitignorePath, defaultGitignore);
+async function writeDefaultProjectFiles(directory: string): Promise<void> {
+  await writeTextFileIfMissing(
+    `${directory}/.gitignore`,
+    defaultGitignore,
+  );
+  await writeTextFileIfMissing(
+    `${directory}/AGENTS.md`,
+    defaultAgentInstructions,
+  );
+  await writeTextFileIfMissing(
+    `${directory}/requirements.txt`,
+    defaultRequirements,
+  );
+}
+
+async function writeTextFileIfMissing(
+  path: string,
+  content: string,
+): Promise<void> {
+  if (!await pathExists(path)) {
+    await Deno.writeTextFile(path, content);
   }
 }
 
@@ -1351,16 +1392,18 @@ function ensureServerPortAvailable(
     listener = Deno.listen({ hostname, port });
   } catch (error) {
     if (error instanceof Deno.errors.AddrInUse) {
-      throw new Error(
-        `Port ${port} is already in use on ${hostname}. Stop the process using it, or start Nodebook with --port ${
-          port + 1
-        }.`,
-      );
+      throw new Error(formatPortInUseError(hostname, port));
     }
     throw error;
   } finally {
     listener?.close();
   }
+}
+
+export function formatPortInUseError(hostname: string, port: number): string {
+  return `Port ${port} is already in use on ${hostname}. Nodebook may already be running; return to the existing browser window. If you intentionally need another server, stop the process using the port or start Nodebook with --port ${
+    port + 1
+  }.`;
 }
 
 async function waitForServer(

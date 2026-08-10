@@ -10,6 +10,7 @@ import {
   createExampleProject,
   createNewDocument,
   ensureProjectEnvironment,
+  formatPortInUseError,
   helpTextForTopic,
   parseBetaCommand,
   resolveExistingDocumentPath,
@@ -24,6 +25,25 @@ Deno.test("format help teaches the strict generated return structure", () => {
   assertStringIncludes(help, "Use exactly one return statement");
   assertStringIncludes(help, "do not return expressions inline");
   assertStringIncludes(help, "nodebook validate");
+});
+
+Deno.test("main help teaches the open-once coding-agent workflow", () => {
+  const help = helpTextForTopic(undefined);
+
+  assertStringIncludes(help, "Working with coding agents");
+  assertStringIncludes(help, "nodebook validate <path>");
+  assertStringIncludes(help, "--json=summary");
+  assertStringIncludes(help, "Open the\n  Nodebook UI once");
+  assertStringIncludes(help, "New folder projects created");
+  assertStringIncludes(help, "AGENTS.md");
+});
+
+Deno.test("occupied-port guidance prioritizes the existing window", () => {
+  const message = formatPortInUseError("127.0.0.1", 8000);
+
+  assertStringIncludes(message, "Nodebook may already be running");
+  assertStringIncludes(message, "return to the existing browser window");
+  assertStringIncludes(message, "--port 8001");
 });
 
 Deno.test("parseBetaCommand maps help and version utility commands", () => {
@@ -292,21 +312,40 @@ Deno.test({
       await Deno.readTextFile(`${folder}/.gitignore`),
       ".venv/\n__pycache__/\n*.py[cod]\n",
     );
+    assertEquals(
+      await Deno.readTextFile(`${folder}/requirements.txt`),
+      "pandas\npolars\nmatplotlib\n",
+    );
+    const agentInstructions = await Deno.readTextFile(`${folder}/AGENTS.md`);
+    assertStringIncludes(agentInstructions, "nodebook help format");
+    assertStringIncludes(agentInstructions, "nodebook validate .");
+    assertStringIncludes(agentInstructions, "Do not relaunch Nodebook");
+    assertStringIncludes(agentInstructions, "stable node IDs");
   },
 });
 
 Deno.test({
-  name: "createNewDocument preserves an existing gitignore",
+  name: "createNewDocument preserves existing project files",
   permissions: { read: true, write: true },
   async fn() {
     const dir = await Deno.makeTempDir();
     const folder = `${dir}/new-project`;
     await Deno.mkdir(folder);
     await Deno.writeTextFile(`${folder}/.gitignore`, "custom/\n");
+    await Deno.writeTextFile(`${folder}/AGENTS.md`, "# Custom instructions\n");
+    await Deno.writeTextFile(`${folder}/requirements.txt`, "duckdb\n");
 
     await createNewDocument(folder);
 
     assertEquals(await Deno.readTextFile(`${folder}/.gitignore`), "custom/\n");
+    assertEquals(
+      await Deno.readTextFile(`${folder}/AGENTS.md`),
+      "# Custom instructions\n",
+    );
+    assertEquals(
+      await Deno.readTextFile(`${folder}/requirements.txt`),
+      "duckdb\n",
+    );
   },
 });
 
@@ -319,6 +358,14 @@ Deno.test({
     assertEquals(await createNewDocument(path), path);
     const source = await Deno.readTextFile(path);
     assertEquals(source.includes("from nodebook import node"), true);
+    await assertRejects(
+      () => Deno.stat(`${dir}/AGENTS.md`),
+      Deno.errors.NotFound,
+    );
+    await assertRejects(
+      () => Deno.stat(`${dir}/requirements.txt`),
+      Deno.errors.NotFound,
+    );
   },
 });
 
@@ -365,6 +412,14 @@ Deno.test({
     assertEquals(
       await Deno.readTextFile(`${folder}/.gitignore`),
       ".venv/\n__pycache__/\n*.py[cod]\n",
+    );
+    assertEquals(
+      await Deno.readTextFile(`${folder}/requirements.txt`),
+      "pandas\npolars\nmatplotlib\n",
+    );
+    assertStringIncludes(
+      await Deno.readTextFile(`${folder}/AGENTS.md`),
+      "Do not relaunch Nodebook",
     );
   },
 });
