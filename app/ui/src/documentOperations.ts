@@ -96,6 +96,7 @@ function getStructuralOperationKey(
     case "update_globals":
     case "update_node_body":
     case "update_node_outputs":
+    case "update_node_views":
     case "rename_node_function":
     case "move_node":
     case "update_node_title":
@@ -117,6 +118,7 @@ function getInverseEdgeOperationKey(
     case "update_globals":
     case "update_node_body":
     case "update_node_outputs":
+    case "update_node_views":
     case "rename_node_function":
     case "move_node":
     case "update_node_title":
@@ -159,6 +161,7 @@ function getReplaceableOperationKey(
       return "update_globals";
     case "update_node_body":
     case "update_node_outputs":
+    case "update_node_views":
     case "rename_node_function":
     case "move_node":
     case "update_node_title":
@@ -186,6 +189,7 @@ function operationTouchesNode(
       return operation.fromNode === nodeId || operation.toNode === nodeId;
     case "update_node_body":
     case "update_node_outputs":
+    case "update_node_views":
     case "rename_node_function":
     case "delete_node":
     case "move_node":

@@ -23,6 +23,7 @@ export function toRuntimeGraph(document: RowcallDocumentV1): RuntimeGraph {
         customReturn,
         editable,
         outputs,
+        views,
         position,
       },
     ) => {
@@ -38,6 +39,7 @@ export function toRuntimeGraph(document: RowcallDocumentV1): RuntimeGraph {
         customReturn,
         editable,
         outputs,
+        views,
         displayCode: code,
         ...(position ? { position } : {}),
       };

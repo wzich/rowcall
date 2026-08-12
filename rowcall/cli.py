@@ -473,6 +473,15 @@ def compact_preview(preview: Any) -> Any:
         ) or (isinstance(rows, list) and len(rows) > COMPACT_TABLE_ROWS)
         compact["table"] = compact_table
 
+    image = preview.get("image")
+    if isinstance(image, dict):
+        compact["image"] = {
+            key: image[key]
+            for key in ("mimeType", "width", "height", "sizeBytes")
+            if key in image
+        }
+        compact["image"]["dataOmitted"] = True
+
     return compact
 
 
@@ -540,6 +549,12 @@ def summary_payload(payload: dict[str, Any], *, trace_mode: str) -> dict[str, An
                 ]
             if result.get("error") is not None:
                 node_summary["error"] = compact_error(result["error"])
+            views = result.get("views")
+            if isinstance(views, dict) and views:
+                node_summary["views"] = {
+                    str(name): compact_preview(preview)
+                    for name, preview in views.items()
+                }
             node_summaries.append(node_summary)
 
     compact_response: dict[str, Any] = {
@@ -598,6 +613,7 @@ def document_summary(result: ParseResult) -> dict[str, Any]:
                 "id": node.id,
                 "functionName": node.function_name,
                 "outputs": list(node.outputs),
+                "views": list(node.views),
             }
             for node in result.document.nodes
         ],
@@ -632,6 +648,20 @@ def write_run_summary(payload: dict[str, Any], *, stdout: TextIO, stderr: TextIO
         for node_id, outputs in final_outputs.items():
             stdout.write(f"- {node_id}:\n")
             for name, preview in outputs.items():
+                stdout.write(f"  {name}: {format_preview(preview)}\n")
+
+    results_by_node = response.get("resultsByNode") or {}
+    rendered_views: list[tuple[str, dict[str, Any]]] = []
+    for node_id in executed_node_ids:
+        result = results_by_node.get(node_id)
+        views = result.get("views") if isinstance(result, dict) else None
+        if isinstance(views, dict) and views:
+            rendered_views.append((node_id, views))
+    if rendered_views:
+        stdout.write("Views:\n")
+        for node_id, views in rendered_views:
+            stdout.write(f"- {node_id}:\n")
+            for name, preview in views.items():
                 stdout.write(f"  {name}: {format_preview(preview)}\n")
 
     error = response.get("error")
@@ -709,6 +739,13 @@ def write_run_error(
 
 def format_preview(preview: Any) -> str:
     if isinstance(preview, dict):
+        image = preview.get("image")
+        if isinstance(image, dict):
+            width = image.get("width", "?")
+            height = image.get("height", "?")
+            size_bytes = image.get("sizeBytes", "?")
+            mime_type = image.get("mimeType", "image/png")
+            return f"<{mime_type} {width}x{height}, {size_bytes} bytes; image data omitted>"
         if "jsonValue" in preview:
             return json.dumps(preview["jsonValue"], ensure_ascii=False)
         if "summary" in preview:
@@ -719,8 +756,53 @@ def format_preview(preview: Any) -> str:
 
 
 def write_json(value: dict[str, Any], stream: TextIO) -> None:
-    stream.write(json.dumps(value, indent=2, ensure_ascii=False, default=str))
+    stream.write(
+        json.dumps(
+            omit_image_data(value),
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        )
+    )
     stream.write("\n")
+
+
+def omit_image_data(value: Any) -> Any:
+    """Return a CLI-safe copy with image payloads replaced by metadata."""
+    if isinstance(value, list):
+        return [omit_image_data(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    is_value_preview = all(
+        isinstance(value.get(key), str)
+        for key in ("name", "type", "repr")
+    )
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "jsonValue":
+            # This is user-owned JSON. It must remain byte-for-byte equivalent
+            # even when it resembles Rowcall's image transport shape.
+            result[key] = item
+        elif key == "image" and is_value_preview and _is_png_image_payload(item):
+            result[key] = {
+                image_key: image_value
+                for image_key, image_value in item.items()
+                if image_key != "dataBase64"
+            }
+            result[key]["dataOmitted"] = True
+        else:
+            result[key] = omit_image_data(item)
+    return result
+
+
+def _is_png_image_payload(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("mimeType") == "image/png"
+        and isinstance(value.get("dataBase64"), str)
+        and all(key in value for key in ("width", "height", "sizeBytes"))
+    )
 
 
 def resolve_display_path(path: str) -> str:

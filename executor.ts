@@ -240,9 +240,25 @@ export function printNodeRunResult(result: NodeRunResult): void {
   }
   console.log("outputs:");
   console.log(result.outputs);
-  if (result.displays.length > 0) {
-    console.log("displays:");
-    console.log(result.displays);
+  if (Object.keys(result.views).length > 0) {
+    console.log("views:");
+    console.log(
+      Object.fromEntries(
+        Object.entries(result.views).map(([name, preview]) => {
+          if (!preview.image) return [name, preview];
+          return [name, {
+            ...preview,
+            image: {
+              mimeType: preview.image.mimeType,
+              width: preview.image.width,
+              height: preview.image.height,
+              sizeBytes: preview.image.sizeBytes,
+              dataOmitted: true,
+            },
+          }];
+        }),
+      ),
+    );
   }
 
   if (!result.ok && result.error) {

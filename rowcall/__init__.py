@@ -18,11 +18,17 @@ class RowcallNodeError(TypeError):
     """Raised when node metadata is declared with an unsupported shape."""
 
 
-def node(*, id: str, outputs: Iterable[str]) -> Callable[[FunctionT], FunctionT]:
+def node(
+    *,
+    id: str,
+    outputs: Iterable[str],
+    views: Iterable[str] = (),
+) -> Callable[[FunctionT], FunctionT]:
     """Mark a function as a Rowcall node.
 
-    The decorator attaches simple metadata and returns the original function.
-    It does not wrap execution or change call semantics.
+    ``outputs`` names values that may flow downstream. ``views`` names ordered
+    values intended for human inspection. The decorator attaches metadata and
+    returns the original function without changing call semantics.
     """
 
     if not isinstance(id, str):
@@ -35,9 +41,17 @@ def node(*, id: str, outputs: Iterable[str]) -> Callable[[FunctionT], FunctionT]
     if not all(isinstance(name, str) for name in output_names):
         raise RowcallNodeError("node outputs must be an iterable of strings")
 
+    if isinstance(views, (str, bytes)):
+        raise RowcallNodeError("node views must be an iterable of strings")
+
+    view_names = list(views)
+    if not all(isinstance(name, str) for name in view_names):
+        raise RowcallNodeError("node views must be an iterable of strings")
+
     def decorate(function: FunctionT) -> FunctionT:
         setattr(function, "__rowcall_id__", id)
         setattr(function, "__rowcall_outputs__", output_names)
+        setattr(function, "__rowcall_views__", view_names)
         setattr(function, "__rowcall_dependencies__", [])
         setattr(function, "depends_on", _depends_on_for(function))
         return function
@@ -55,14 +69,4 @@ def _depends_on_for(function: FunctionT) -> Callable[..., FunctionT]:
     return depends_on
 
 
-def display(value: Any) -> None:
-    """Display a value when running inside Rowcall.
-
-    The active runtime replaces this function while executing a node. Outside
-    Rowcall it is intentionally a no-op so authored modules remain importable.
-    """
-
-    return None
-
-
-__all__ = ["RowcallNodeError", "display", "node"]
+__all__ = ["RowcallNodeError", "node"]

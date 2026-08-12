@@ -42,8 +42,8 @@ In source-backed Rowcall documents, every node function parameter must match a
 Declared Output from a direct upstream Node. Root nodes cannot declare
 parameters. Node functions may use only the `@node(...)` decorator; additional
 Python decorators are rejected because the strict runtime owns node invocation.
-`from rowcall import ...` declarations may only import `display` and `node`, and
-may not use aliases. For other package symbols, use a module import such as
+`from rowcall import ...` declarations may only import `node`, and may not use
+aliases. For other package symbols, use a module import such as
 `import rowcall as nb`.
 
 Namespace isolation is not process isolation. Nodes in the same Run currently
@@ -65,6 +65,24 @@ not return those Python objects directly. They return JSON-serializable
 `ValuePreview` records containing the output name, Python type, truncated
 `repr`, and optionally `jsonValue` when the value is a small plain
 JSON-compatible primitive or container.
+
+### Declared Views
+
+Declared Views are ordered variable names intended for human consumption. They
+are part of the Python document contract but are never provided to downstream
+Nodes. A value may be both an output and a view without being duplicated in the
+function's return dictionary.
+
+Views use the same dataframe, JSON, text, and `repr` preview machinery as
+outputs. A declared view containing `bytes`/`bytearray`, or an object with a
+callable `_repr_png_()` method, can additionally produce a static PNG preview.
+Rowcall does not invoke `_repr_png_()` for ordinary outputs and does not contain
+library-specific plotting adapters. Rendering failures become preview warnings
+rather than node failures.
+
+Each Node may declare at most 10 views. PNG data is limited to 5 MiB per view
+and 20 MiB per Run. The app response carries accepted image bytes as base64; the
+public CLI omits those bytes and exposes only image metadata.
 
 ### Edge
 
@@ -126,16 +144,16 @@ run endpoints receive `invalid_request` instead of having those inputs ignored.
 
 The browser-facing write API applies operation batches rather than replacing a
 whole document projection. `POST /document/operations` accepts a base revision
-and ordered operations such as node body/output updates, node/function additions
-and deletions, edge changes, globals edits, and sidecar metadata changes. The
-request has no idempotency key and must not be replayed after an uncertain
-response; reload the document first. The server rejects stale base revisions,
-calls the Python runtime worker's `apply_operations` operation to rewrite
-source, writes the returned Python source and `.rowcall.json` metadata, and
-reloads the canonical document response. Graph and output operations normalize
-standard editor-authored downstream function signatures to match direct upstream
-outputs. Documents with unsupported return structures fail validation before an
-operation batch can be applied.
+and ordered operations such as node body/output/view updates, node/function
+additions and deletions, edge changes, globals edits, and sidecar metadata
+changes. The request has no idempotency key and must not be replayed after an
+uncertain response; reload the document first. The server rejects stale base
+revisions, calls the Python runtime worker's `apply_operations` operation to
+rewrite source, writes the returned Python source and `.rowcall.json` metadata,
+and reloads the canonical document response. Graph and output operations
+normalize standard editor-authored downstream function signatures to match
+direct upstream outputs. Documents with unsupported return structures fail
+validation before an operation batch can be applied.
 
 External `GET /document` and `GET /document/status` reads are ordered after all
 document operations already accepted by the server. An explicit reload after an
@@ -225,7 +243,8 @@ The Python runtime worker writes runtime telemetry to its process stdout as
 newline-delimited JSON. User code `stdout` and `stderr` are redirected while
 each Node executes and included in that Node's result. Runtime preview and copy
 operations also capture stdout and stderr before telemetry resumes, so
-user-defined hooks such as `__repr__` cannot corrupt the worker protocol.
+user-defined hooks such as `__repr__` and `_repr_png_` cannot corrupt the worker
+protocol.
 
 The browser UI keeps one active run at a time. The API does not yet enforce
 server-side concurrency or resource limits for direct callers; that should be

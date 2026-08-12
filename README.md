@@ -272,6 +272,23 @@ def read_message():
     return {"message": message}
 ```
 
+Nodes can also declare ordered human-facing `views`, separately from values that
+flow downstream:
+
+```python
+@node(id="n_plot", outputs=["summary"], views=["summary", "chart"])
+def make_plot(data):
+    summary = data.describe()
+    chart = build_plot(summary)
+    return {"summary": summary, "chart": chart}
+```
+
+Views use Rowcall's existing dataframe/value previews. A view also renders as a
+static PNG when it is PNG `bytes`/`bytearray` or has a callable `_repr_png_()`
+method. Interactive JavaScript plots and library-specific adapters are not
+supported yet. See [ADR 0005](docs/adr/0005-declared-human-facing-views.md) for
+the full contract.
+
 The decorator records node metadata and returns the original function unchanged.
 `deno task setup` installs the local Python package into `.venv`. For local
 alpha testing from outside the repository, install the package into the active

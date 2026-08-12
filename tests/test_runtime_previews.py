@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import types
@@ -10,6 +11,9 @@ import rowcall.runtime.previews as previews
 
 
 HUGE_TEXT = "🔥" * 10_000
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class HugeText:
@@ -34,6 +38,20 @@ class FailedCopy:
     def __deepcopy__(self, memo: dict) -> object:
         del memo
         raise RuntimeError(HUGE_TEXT)
+
+
+class PngFigure:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def _repr_png_(self) -> bytes:
+        self.calls += 1
+        return PNG_1X1
+
+
+class BrokenPngFigure:
+    def _repr_png_(self) -> bytes:
+        raise RuntimeError("renderer unavailable")
 
 
 class RuntimePreviewTests(unittest.TestCase):
@@ -174,6 +192,88 @@ class RuntimePreviewTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "JSON preview too large"):
             previews.make_json_preview_value(value)
+
+    def test_declared_view_accepts_raw_png_bytes(self) -> None:
+        preview, used_bytes = previews.preview_view(
+            "chart",
+            PNG_1X1,
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, len(PNG_1X1))
+        self.assertEqual(preview["image"]["mimeType"], "image/png")
+        self.assertEqual(preview["image"]["width"], 1)
+        self.assertEqual(preview["image"]["height"], 1)
+        self.assertEqual(base64.b64decode(preview["image"]["dataBase64"]), PNG_1X1)
+
+    def test_png_hook_is_only_called_for_view_preview(self) -> None:
+        figure = PngFigure()
+
+        ordinary = previews.preview_value("figure", figure)
+        rendered, used_bytes = previews.preview_view(
+            "figure",
+            figure,
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertNotIn("image", ordinary)
+        self.assertEqual(figure.calls, 1)
+        self.assertEqual(used_bytes, len(PNG_1X1))
+        self.assertIn("image", rendered)
+
+    def test_png_render_failure_becomes_a_warning(self) -> None:
+        preview, used_bytes = previews.preview_view(
+            "chart",
+            BrokenPngFigure(),
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, 0)
+        self.assertNotIn("image", preview)
+        self.assertIn("Could not render view", preview["warning"])
+
+    def test_unsupported_rich_view_falls_back_to_repr_with_warning(self) -> None:
+        preview, used_bytes = previews.preview_view(
+            "chart",
+            object(),
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, 0)
+        self.assertNotIn("image", preview)
+        self.assertIn("showing its repr only", preview["warning"])
+
+    def test_png_view_limits_omit_image_without_failing_preview(self) -> None:
+        oversized = PNG_1X1 + b"x" * previews.VIEW_PNG_MAX_BYTES
+
+        preview, used_bytes = previews.preview_view(
+            "chart",
+            oversized,
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, 0)
+        self.assertNotIn("image", preview)
+        self.assertIn("per-view limit", preview["warning"])
+
+    def test_truncated_png_header_is_rejected(self) -> None:
+        truncated = (
+            previews.PNG_SIGNATURE
+            + (13).to_bytes(4, "big")
+            + b"IHDR"
+            + (1).to_bytes(4, "big")
+            + (1).to_bytes(4, "big")
+        )
+
+        preview, used_bytes = previews.preview_view(
+            "chart",
+            truncated,
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, 0)
+        self.assertNotIn("image", preview)
+        self.assertIn("valid PNG", preview["warning"])
 
     def _make_fake_pandas_preview(self) -> dict | None:
         class FakeSeries:

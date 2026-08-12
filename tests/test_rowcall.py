@@ -7,7 +7,7 @@ from rowcall import RowcallNodeError, node
 
 class RowcallPackageTest(unittest.TestCase):
     def test_node_decorator_attaches_metadata_without_wrapping_function(self):
-        @node(id="n_test", outputs=["x", "y"])
+        @node(id="n_test", outputs=["x", "y"], views=["y"])
         def make_values():
             x = 1
             y = 2
@@ -16,6 +16,7 @@ class RowcallPackageTest(unittest.TestCase):
         self.assertEqual(make_values(), {"x": 1, "y": 2})
         self.assertEqual(make_values.__rowcall_id__, "n_test")
         self.assertEqual(make_values.__rowcall_outputs__, ["x", "y"])
+        self.assertEqual(make_values.__rowcall_views__, ["y"])
 
     def test_depends_on_records_upstream_functions_and_returns_downstream(self):
         @node(id="n_parent", outputs=["x"])
@@ -39,6 +40,18 @@ class RowcallPackageTest(unittest.TestCase):
 
         with self.assertRaises(RowcallNodeError):
             node(id="n_test", outputs="x")
+
+    def test_node_rejects_non_string_views(self):
+        with self.assertRaises(RowcallNodeError):
+            node(id="n_test", outputs=[], views=["chart", 1])
+
+        with self.assertRaises(RowcallNodeError):
+            node(id="n_test", outputs=[], views="chart")
+
+    def test_display_is_not_part_of_the_public_api(self):
+        import rowcall
+
+        self.assertFalse(hasattr(rowcall, "display"))
 
     def test_generated_example_imports(self):
         path = Path("examples/hello_world.py")

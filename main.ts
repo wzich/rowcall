@@ -435,6 +435,7 @@ function formatDocument(document: RowcallDocumentV1): RowcallDocumentV1 {
       id: node.id,
       code: node.code,
       outputs: node.outputs,
+      views: node.views,
       ...(node.position ? { position: node.position } : {}),
       ...(node.title ? { title: node.title } : {}),
       ...(node.description ? { description: node.description } : {}),

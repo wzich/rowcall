@@ -25,12 +25,17 @@ from rowcall.document import (
     parse_source,
 )
 
-from .previews import copy_for_node_input, install_default_copy_handlers, preview_value
+from .previews import (
+    VIEW_PNG_RUN_MAX_BYTES,
+    copy_for_node_input,
+    install_default_copy_handlers,
+    preview_value,
+    preview_view,
+)
 
 
 NodeEventCallback = Callable[[dict[str, Any]], None]
 DEFAULT_CAPTURE_LIMIT_BYTES = 1024 * 1024
-DEFAULT_DISPLAY_EVENT_LIMIT = 100
 DEFAULT_ERROR_MESSAGE_LIMIT_BYTES = 16 * 1024
 _TRUNCATED_ERROR_SUFFIX = "\n[error message truncated]"
 _DOCUMENT_LOCAL_MODULE_PATHS: dict[str, frozenset[Path]] = {}
@@ -363,6 +368,7 @@ def execute_plan(
     results_by_node: dict[str, dict[str, Any]] = {}
     outputs_by_node: dict[str, dict[str, Any]] = {}
     executed_node_ids: list[str] = []
+    view_image_bytes = 0
     root_inputs = {} if root_inputs is None else dict(root_inputs)
 
     globals_result = build_document_globals(document)
@@ -400,7 +406,18 @@ def execute_plan(
                 }
             )
         inputs, input_warnings = build_inputs_for_step(step.depends_on, outputs_by_node, root_inputs)
-        result = execute_node(node, globals_scope, inputs, input_warnings, str(document.path))
+        result = execute_node(
+            node,
+            globals_scope,
+            inputs,
+            input_warnings,
+            str(document.path),
+            remaining_view_image_bytes=max(
+                0,
+                VIEW_PNG_RUN_MAX_BYTES - view_image_bytes,
+            ),
+        )
+        view_image_bytes += result.pop("_viewImageBytes", 0)
         results_by_node[node_id] = result
         executed_node_ids.append(node_id)
 
@@ -554,23 +571,21 @@ def execute_node(
     inputs: dict[str, Any],
     input_warnings: list[str],
     filename: str,
+    *,
+    remaining_view_image_bytes: int,
 ) -> dict[str, Any]:
     scope: dict[str, Any] = dict(globals_scope)
     scope.update(inputs)
     scope["__file__"] = filename
-    output_events: list[dict[str, Any]] = []
-    stdout_buffer = CapturedStdout(output_events)
+    stdout_buffer = BoundedTextBuffer(DEFAULT_CAPTURE_LIMIT_BYTES)
     stderr_buffer = BoundedTextBuffer(DEFAULT_CAPTURE_LIMIT_BYTES)
     result_warnings = list(input_warnings)
-    displays: list[dict[str, Any]] = []
-    scope["display"] = make_display_collector(displays, output_events, result_warnings)
 
     try:
-        with active_rowcall_display(scope["display"]):
-            with contextlib.redirect_stdout(stdout_buffer):
-                with contextlib.redirect_stderr(stderr_buffer):
-                    code = compile(node.runtime_code, filename, "exec")
-                    exec(code, scope, scope)
+        with contextlib.redirect_stdout(stdout_buffer):
+            with contextlib.redirect_stderr(stderr_buffer):
+                code = compile(node.runtime_code, filename, "exec")
+                exec(code, scope, scope)
     except Exception as exc:
         stderr_buffer.write(traceback.format_exc())
         error_details = classify_exception(exc, phase="node_execution", node_id=node.id)
@@ -580,8 +595,6 @@ def execute_node(
             stderr_buffer.getvalue(),
             error_details=error_details,
         )
-        result["displays"] = displays
-        result["outputEvents"] = output_events
         result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
         return result
 
@@ -594,23 +607,44 @@ def execute_node(
                 stdout_buffer.getvalue(),
                 stderr_buffer.getvalue(),
             )
-            result["displays"] = displays
-            result["outputEvents"] = output_events
             result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
             return result
 
         node_outputs[name] = scope[name]
         output_previews[name] = preview_value(name, scope[name])
 
+    view_previews: dict[str, Any] = {}
+    image_bytes = 0
+    for name in node.views:
+        if name not in scope:
+            result = make_error_result(
+                f"Declared view '{name}' was not defined by node code",
+                stdout_buffer.getvalue(),
+                stderr_buffer.getvalue(),
+            )
+            result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
+            return result
+        view_preview, used_bytes = preview_view(
+            name,
+            scope[name],
+            remaining_image_bytes=max(
+                0,
+                remaining_view_image_bytes - image_bytes,
+            ),
+            base_preview=output_previews.get(name),
+        )
+        view_previews[name] = view_preview
+        image_bytes += used_bytes
+
     return {
         "ok": True,
         "stdout": stdout_buffer.getvalue(),
         "stderr": stderr_buffer.getvalue(),
         "outputs": output_previews,
-        "displays": displays,
-        "outputEvents": output_events,
+        "views": view_previews,
         "warnings": [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)],
         "_rawOutputs": node_outputs,
+        "_viewImageBytes": image_bytes,
     }
 
 
@@ -626,8 +660,7 @@ def make_error_result(
         "stdout": stdout,
         "stderr": stderr,
         "outputs": {},
-        "displays": [],
-        "outputEvents": [],
+        "views": {},
         "warnings": [],
         "error": bound_diagnostic_text(message),
     }
@@ -689,15 +722,6 @@ def bound_diagnostic_text(
     return retained + _TRUNCATED_ERROR_SUFFIX
 
 
-def append_stdout_event(output_events: list[dict[str, Any]], text: str) -> None:
-    if not text:
-        return
-    if output_events and output_events[-1]["kind"] == "stdout":
-        output_events[-1]["text"] += text
-    else:
-        output_events.append({"kind": "stdout", "text": text})
-
-
 class BoundedTextBuffer(io.StringIO):
     def __init__(self, limit_bytes: int) -> None:
         super().__init__()
@@ -726,19 +750,6 @@ class BoundedTextBuffer(io.StringIO):
     def write(self, text: str) -> int:
         super().write(self._retain(text))
         return len(text)
-
-
-class CapturedStdout(BoundedTextBuffer):
-    def __init__(self, output_events: list[dict[str, Any]]) -> None:
-        super().__init__(DEFAULT_CAPTURE_LIMIT_BYTES)
-        self.output_events = output_events
-
-    def write(self, text: str) -> int:
-        result = super().write(text)
-        append_stdout_event(self.output_events, self.last_retained)
-        return result
-
-
 def _capture_warnings(stdout: BoundedTextBuffer, stderr: BoundedTextBuffer) -> list[str]:
     warnings: list[str] = []
     if stdout.truncated_bytes:
@@ -752,43 +763,6 @@ def _capture_warnings(stdout: BoundedTextBuffer, stderr: BoundedTextBuffer) -> l
             f"({stderr.truncated_bytes} additional bytes discarded)"
         )
     return warnings
-
-
-def make_display_collector(
-    displays: list[dict[str, Any]],
-    output_events: list[dict[str, Any]],
-    warnings: list[str],
-) -> Callable[[Any], None]:
-    def display(value: Any) -> None:
-        if len(displays) >= DEFAULT_DISPLAY_EVENT_LIMIT:
-            warning = f"display events were truncated after {DEFAULT_DISPLAY_EVENT_LIMIT} values"
-            if warning not in warnings:
-                warnings.append(warning)
-            return
-        display_preview = {"value": preview_value("display", value)}
-        displays.append(display_preview)
-        output_events.append({"kind": "display", "value": display_preview["value"]})
-
-    return display
-
-
-@contextlib.contextmanager
-def active_rowcall_display(display: Callable[[Any], None]) -> Iterator[None]:
-    try:
-        import rowcall
-    except ImportError:
-        yield
-        return
-
-    previous_display = getattr(rowcall, "display", None)
-    rowcall.display = display
-    try:
-        yield
-    finally:
-        if previous_display is None:
-            delattr(rowcall, "display")
-        else:
-            rowcall.display = previous_display
 
 
 def append_trace(
@@ -812,8 +786,7 @@ def append_trace(
             "stdout": result["stdout"],
             "stderr": result["stderr"],
             "outputs": result["outputs"],
-            "displays": result["displays"],
-            "outputEvents": result["outputEvents"],
+            "views": result["views"],
             "warnings": result["warnings"],
             "error": result.get("error"),
         }

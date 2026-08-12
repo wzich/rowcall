@@ -25,8 +25,7 @@ function completedPreview(value: number): ExecutionDisplayState {
           jsonValue: value,
         },
       },
-      displays: [],
-      outputEvents: [],
+      views: {},
       warnings: [],
     },
   };

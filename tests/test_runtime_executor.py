@@ -248,17 +248,15 @@ def load():
         self.assertEqual(updated["finalOutputsByNode"]["load"]["value"]["jsonValue"], "updated")
         self.assertEqual(switched["finalOutputsByNode"]["load"]["value"]["jsonValue"], "second")
 
-    def test_captured_output_and_display_events_are_bounded(self) -> None:
+    def test_captured_output_is_bounded(self) -> None:
         source = '''
-from rowcall import display, node
+from rowcall import node
 
 @node(id="loud", outputs=["x"])
 def loud():
     print("z" * (1024 * 1024 + 100))
     import sys
     print("e" * (1024 * 1024 + 100), file=sys.stderr)
-    for value in range(105):
-        display(value)
     x = 1
     return {"x": x}
 '''.lstrip()
@@ -268,10 +266,10 @@ def loud():
         self.assertTrue(result["ok"])
         self.assertLessEqual(len(node["stdout"].encode("utf-8")), 1024 * 1024)
         self.assertLessEqual(len(node["stderr"].encode("utf-8")), 1024 * 1024)
-        self.assertEqual(len(node["displays"]), 100)
         self.assertTrue(any("stdout was truncated" in item for item in node["warnings"]))
         self.assertTrue(any("stderr was truncated" in item for item in node["warnings"]))
-        self.assertTrue(any("display events were truncated" in item for item in node["warnings"]))
+        self.assertNotIn("displays", node)
+        self.assertNotIn("outputEvents", node)
 
     def test_preview_hooks_cannot_create_unbounded_telemetry(self) -> None:
         source = '''
@@ -493,16 +491,16 @@ def first():
         node_error = result["resultsByNode"]["first"]["errorDetails"]
         self.assertEqual(node_error["kind"], "missing_module")
 
-    def test_captures_stdout_and_display(self) -> None:
+    def test_captures_stdout_and_declared_view(self) -> None:
         source = """
-from rowcall import display, node
+from rowcall import node
 
-@node(id="talk", outputs=["value"])
+@node(id="talk", outputs=["value"], views=["seen"])
 def talk():
     print("hello stdout")
-    display({"seen": True})
+    seen = {"seen": True}
     value = 3
-    return {"value": value}
+    return {"value": value, "seen": seen}
 """.lstrip()
 
         result = run_source(source, Path("/tmp/display.py"), trace=True)
@@ -510,10 +508,42 @@ def talk():
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["talk"]
         self.assertEqual(node_result["stdout"], "hello stdout\n")
-        self.assertEqual(node_result["displays"][0]["value"]["jsonValue"], {"seen": True})
-        self.assertEqual(node_result["outputEvents"][0]["kind"], "stdout")
-        self.assertEqual(node_result["outputEvents"][1]["kind"], "display")
+        self.assertEqual(node_result["views"]["seen"]["jsonValue"], {"seen": True})
+        self.assertNotIn("displays", node_result)
+        self.assertNotIn("outputEvents", node_result)
         self.assertEqual(result["trace"][0]["stdout"], "hello stdout\n")
+        self.assertEqual(result["trace"][0]["views"]["seen"]["jsonValue"], {"seen": True})
+
+    def test_declared_view_uses_repr_png_without_becoming_an_output(self) -> None:
+        source = """
+import base64
+from rowcall import node
+
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+class Figure:
+    def _repr_png_(self):
+        return PNG
+
+@node(id="plot", outputs=[], views=["chart"])
+def plot():
+    chart = Figure()
+    return {"chart": chart}
+""".lstrip()
+
+        result = run_source(
+            source,
+            Path("/tmp/png_view.py"),
+            trace=True,
+        )
+
+        self.assertTrue(result["ok"])
+        node_result = result["resultsByNode"]["plot"]
+        self.assertEqual(node_result["outputs"], {})
+        self.assertEqual(node_result["views"]["chart"]["image"]["width"], 1)
+        self.assertEqual(result["finalOutputsByNode"]["plot"], {})
 
     def test_surrogate_output_repr_and_diagnostics_are_escaped_safely(self) -> None:
         stdout_source = '''
@@ -574,14 +604,12 @@ def value():
         json.dumps(repr_result).encode("utf-8")
         json.dumps(error_result).encode("utf-8")
 
-    def test_captures_display_through_rowcall_module_alias(self) -> None:
+    def test_view_can_overlap_output_without_duplicate_return_value(self) -> None:
         source = """
-import rowcall as nb
 from rowcall import node
 
-@node(id="talk", outputs=["value"])
+@node(id="talk", outputs=["value"], views=["value"])
 def talk():
-    nb.display({"seen": True})
     value = 3
     return {"value": value}
 """.lstrip()
@@ -590,8 +618,8 @@ def talk():
 
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["talk"]
-        self.assertEqual(node_result["displays"][0]["value"]["jsonValue"], {"seen": True})
-        self.assertEqual(node_result["outputEvents"][0]["kind"], "display")
+        self.assertEqual(node_result["outputs"]["value"]["jsonValue"], 3)
+        self.assertEqual(node_result["views"]["value"]["jsonValue"], 3)
 
     def test_rejects_return_that_omits_declared_output(self) -> None:
         source = """
@@ -609,7 +637,7 @@ def bad():
         self.assertEqual(result["error"]["kind"], "validation_error")
         issue = result["error"]["issues"][0]
         self.assertEqual(issue["kind"], "invalid_node_return")
-        self.assertIn("decorator declares ['value']", issue["message"])
+        self.assertIn("decorator requires ['value']", issue["message"])
 
 
 if __name__ == "__main__":

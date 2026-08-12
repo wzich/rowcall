@@ -71,16 +71,23 @@ matching values into the downstream function. For standard editor-authored
 nodes, UI graph/output edits may normalize downstream function signatures to
 match direct upstream outputs.
 
-Declared outputs are represented in the decorator and returned as a dictionary.
-The return shape is deliberately strict: a node has exactly one return statement
-as its final statement; it returns a dictionary literal; and its keys and values
-match the declared outputs in order, with every value referencing a same-named
-local variable; parameters already count as locals. Nodes with no outputs end
-with `return {}`. This constrained grammar keeps CLI execution and source
-rewrites aligned with the visual editor.
+Declared outputs and human-facing views are represented in the decorator and
+returned as a dictionary. Outputs participate in data flow; views do not. A name
+may be declared as both. The return shape is deliberately strict: a node has
+exactly one return statement as its final statement; it returns a dictionary
+literal; and its keys and values match the ordered union of outputs followed by
+views not already present, with every value referencing a same-named local
+variable. Parameters already count as locals. Nodes with neither outputs nor
+views end with `return {}`. This constrained grammar keeps CLI execution and
+source rewrites aligned with the visual editor. See
+[ADR 0005](0005-declared-human-facing-views.md) for the rendering contract.
 
 ```python
-@node(id="n_ab12cd", outputs=["clean_df", "row_count"])
+@node(
+    id="n_ab12cd",
+    outputs=["clean_df", "row_count"],
+    views=["clean_df"],
+)
 def clean_data(df):
     clean_df = df.dropna()
     row_count = len(clean_df)
@@ -105,10 +112,10 @@ in the graph inspector. Top-level mutable state is outside the isolated
 data-flow guarantee and should be documented as advanced behavior.
 
 `from rowcall import ...` is intentionally strict because those imports are
-removed from globals before execution. It may only import `node` and `display`,
-without aliases. Other Rowcall package symbols should be referenced through a
-module import such as `import rowcall` or `import rowcall as nb`, which is
-preserved in document globals.
+removed from globals before execution. It may only import `node`, without
+aliases. Other Rowcall package symbols should be referenced through a module
+import such as `import rowcall` or `import rowcall as nb`, which is preserved in
+document globals.
 
 Node functions should not call other node functions directly. Data dependencies
 must flow through explicit graph edges so the canvas remains authoritative for
@@ -150,15 +157,17 @@ The implemented split uses these boundaries:
 2. The Python document package parses a `.py` file into an executable document
    with source, globals, nodes, edges, validation issues, and planning metadata.
 3. The Python runtime owns source-backed validation, graph planning, execution,
-   value previews, stdout/stderr capture, display events, and CLI behavior.
+   output/view previews, static PNG rendering, stdout/stderr capture, and CLI
+   behavior.
 4. The Deno/Hono app server owns editing APIs, startup configuration, and the
    browser-facing API. Document operations and execution call the Python runtime
    worker. Selected-node runs freshly execute the complete upstream plan through
    that node; the invited beta has no execution cache.
 5. Normal UI-authored edits are sent as operation batches. The Python document
-   package owns source rewrites for node bodies, output declarations, function
-   names, node additions/deletions, graph edges, and globals. Unsupported return
-   structures fail validation before the document can be edited or run.
+   package owns source rewrites for node bodies, output/view declarations,
+   function names, node additions/deletions, graph edges, and globals.
+   Unsupported return structures fail validation before the document can be
+   edited or run.
 6. `.rowcall.json` sidecars remain UI-only metadata. They are not required to
    validate or run a Python document, but the app-facing revision includes
    normalized sidecar metadata so position/title/description edits participate

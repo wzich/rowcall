@@ -342,6 +342,60 @@ def large_value():
         )
         self.assertLess(len(stdout.getvalue()), 5_000)
 
+    def test_run_json_omits_png_data_but_keeps_view_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "view.py"
+            path.write_text(
+                """
+import base64
+from rowcall import node
+
+@node(id="plot", outputs=["metadata"], views=["chart"])
+def plot():
+    metadata = {
+        "mimeType": "image/png",
+        "dataBase64": "ordinary user data",
+        "width": 12,
+        "height": 34,
+        "sizeBytes": 56,
+    }
+    chart = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    return {"metadata": metadata, "chart": chart}
+""".lstrip()
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            exit_code = main(
+                ["run", str(path), "--json", "--trace"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0, stderr.getvalue())
+        self.assertNotIn("iVBOR", stdout.getvalue())
+        payload = json.loads(stdout.getvalue())
+        image = payload["response"]["resultsByNode"]["plot"]["views"]["chart"]["image"]
+        self.assertEqual(image["mimeType"], "image/png")
+        self.assertEqual(image["width"], 1)
+        self.assertEqual(image["height"], 1)
+        self.assertTrue(image["dataOmitted"])
+        self.assertNotIn("dataBase64", image)
+        self.assertEqual(
+            payload["response"]["finalOutputsByNode"]["plot"]["metadata"][
+                "jsonValue"
+            ],
+            {
+                "mimeType": "image/png",
+                "dataBase64": "ordinary user data",
+                "width": 12,
+                "height": 34,
+                "sizeBytes": 56,
+            },
+        )
+
     def test_trace_summary_requires_json_output(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

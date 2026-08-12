@@ -9,6 +9,7 @@ export type DocumentNode = {
   id: string;
   code: string;
   outputs: string[];
+  views: string[];
   position?: GraphPosition;
   title?: string;
   description?: string;
@@ -44,6 +45,7 @@ export type DocumentOperation =
   | { type: "update_globals"; code: string }
   | { type: "update_node_body"; nodeId: string; code: string }
   | { type: "update_node_outputs"; nodeId: string; outputs: string[] }
+  | { type: "update_node_views"; nodeId: string; views: string[] }
   | { type: "rename_node_function"; nodeId: string; functionName: string }
   | { type: "add_node"; node: DocumentOperationNode }
   | { type: "delete_node"; nodeId: string }
@@ -58,6 +60,7 @@ export type DocumentOperationNode = {
   functionName: string;
   code: string;
   outputs: string[];
+  views?: string[];
   position?: GraphPosition;
   title?: string;
   description?: string;
@@ -184,6 +187,16 @@ function decodeDocumentOperation(
         ? null
         : { type, nodeId, outputs };
     }
+    case "update_node_views": {
+      const nodeId = requiredString(record, "nodeId", `${path}.nodeId`, issues);
+      const views = requiredStringArray(
+        record,
+        "views",
+        `${path}.views`,
+        issues,
+      );
+      return nodeId === null || views === null ? null : { type, nodeId, views };
+    }
     case "rename_node_function": {
       const nodeId = requiredString(record, "nodeId", `${path}.nodeId`, issues);
       const functionName = requiredString(
@@ -290,6 +303,9 @@ function decodeDocumentOperationNode(
     `${path}.outputs`,
     issues,
   );
+  const views = record["views"] === undefined
+    ? []
+    : requiredStringArray(record, "views", `${path}.views`, issues);
   const positionValue = record["position"];
   const position = positionValue === undefined
     ? undefined
@@ -304,6 +320,7 @@ function decodeDocumentOperationNode(
 
   if (
     id === null || functionName === null || code === null || outputs === null ||
+    views === null ||
     position === null || title === null || description === null
   ) {
     return null;
@@ -314,6 +331,7 @@ function decodeDocumentOperationNode(
     functionName,
     code,
     outputs,
+    views,
     ...(position ? { position } : {}),
     ...(title !== undefined ? { title } : {}),
     ...(description !== undefined ? { description } : {}),
@@ -592,6 +610,7 @@ function decodeDocumentNode(
   const id = record["id"];
   const code = record["code"];
   const outputs = record["outputs"];
+  const views = record["views"];
   const position = record["position"];
   const title = record["title"];
   const description = record["description"];
@@ -636,6 +655,19 @@ function decodeDocumentNode(
       message: "Node outputs must all be strings",
       field: "outputs",
       path: `nodes[${index}].outputs`,
+    });
+    ok = false;
+  }
+
+  if (
+    views !== undefined &&
+    (!Array.isArray(views) || !views.every((view) => typeof view === "string"))
+  ) {
+    issues.push({
+      kind: "wrong_type",
+      message: "Node views must be an array of strings",
+      field: "views",
+      path: `nodes[${index}].views`,
     });
     ok = false;
   }
@@ -728,6 +760,7 @@ function decodeDocumentNode(
     id: id as string,
     code: code as string,
     outputs: outputs as string[],
+    views: Array.isArray(views) ? views as string[] : [],
     ...(decodedPosition ? { position: decodedPosition } : {}),
     ...(typeof title === "string" ? { title } : {}),
     ...(typeof description === "string" ? { description } : {}),

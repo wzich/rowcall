@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import polars as pl
-from rowcall import display, node
+from rowcall import node
 
 
 DATA_PATH = Path(__file__).parent / "data" / "orders.csv"
@@ -47,10 +47,9 @@ def summarize_by_region(orders):
     return {"summary": summary}
 
 
-@node(id="n_orders_render", outputs=[])
+@node(id="n_orders_render", outputs=[], views=["summary"])
 def render_summary(summary):
-    display(summary)
-    return {}
+    return {"summary": summary}
 
 
 # Rowcall graph

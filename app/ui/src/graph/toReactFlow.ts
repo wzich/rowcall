@@ -1,5 +1,5 @@
 import type { Edge as FlowEdge, Node as FlowNode } from "@xyflow/react";
-import type { OutputEvent, TablePreview } from "../../../../types.ts";
+import type { TablePreview } from "../../../../types.ts";
 import { createSimpleLayout } from "./layout.ts";
 import { prettifyFunctionName } from "./nodeNames.ts";
 import type { RuntimeGraph } from "./runtimeTypes.ts";
@@ -42,7 +42,7 @@ export type NodeCanvasPreview = {
     type: string;
     table?: TablePreview;
   }>;
-  outputEvents: OutputEvent[];
+  views: Array<{ name: string; type: string }>;
   stdout: string;
   stderr: string;
   error: string | null;

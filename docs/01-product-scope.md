@@ -74,6 +74,14 @@ such as name, Python type, `repr`, and an optional small `jsonValue` for plain
 JSON-compatible values, rather than attempting to send arbitrary Python objects
 to the browser. The contract between nodes remains explicit and inspectable.
 
+### Human-Facing Views
+
+A node may separately declare ordered **views**: values intended for a person to
+inspect rather than for downstream computation. Views can use the existing
+table, JSON, text, and value previews. Static PNGs are supported when the
+declared value is PNG bytes or supplies `_repr_png_()`. Interactive JavaScript
+visualizations and library-specific adapters are intentionally deferred.
+
 ### Manual Execution
 
 Nodes run when you ask them to. The invited beta supports freshly running the

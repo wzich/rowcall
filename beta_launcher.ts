@@ -153,7 +153,7 @@ def load_orders():
     return {"orders": orders}
 
 
-@node(id="n_summarize_orders", outputs=["summary"])
+@node(id="n_summarize_orders", outputs=["summary"], views=["summary"])
 def summarize_orders(orders):
     summary = (
         orders
@@ -231,10 +231,10 @@ environment.
 const formatHelpText = `Rowcall Python Document Format
 
 Rowcall documents are normal Python files. A node is a Python function
-decorated with @node. The decorator declares stable output names. Every output
-must exist as a same-named local variable (parameters already count). Assign
-computed outputs in the function body, then end with one generated return
-dictionary.
+decorated with @node. The decorator declares stable output names and optional
+human-facing view names. Every declared value must exist as a same-named local
+variable (parameters already count). Assign computed values in the function
+body, then end with one generated return dictionary.
 
 Example:
   from rowcall import node
@@ -244,7 +244,7 @@ Example:
       numbers = [1, 2, 3]
       return {"numbers": numbers}
 
-  @node(id="n_total", outputs=["total"])
+  @node(id="n_total", outputs=["total"], views=["total"])
   def total_numbers(numbers):
       total = sum(numbers)
       return {"total": total}
@@ -254,9 +254,14 @@ Example:
 Return requirements:
   - Use exactly one return statement, last in the node function.
   - Return a dictionary literal.
-  - Return every declared output exactly once, in declared order.
-  - Map each output name directly to its same-named variable.
-  - Use return {} when outputs=[]; do not return expressions inline.
+  - Return outputs first, then views not already present, in declared order.
+  - A name may be both an output and a view and is returned only once.
+  - Map each returned name directly to its same-named variable.
+  - Use return {} when outputs=[] and views=[]; do not return expressions inline.
+
+Outputs flow to downstream nodes. Views are only for human inspection. Views
+support normal table/value previews and static PNGs from PNG bytes or an
+object's _repr_png_() method. Interactive JavaScript views are not supported.
 
 Invalid:
   return {"total": sum(numbers)}
@@ -267,8 +272,8 @@ Valid:
 
 Edges are explicit: depends_on says which upstream nodes may provide inputs.
 Function parameters consume upstream outputs by name. Run rowcall validate
-<path> after every edit to check returns, IDs, outputs, edges, and parameter
-binding.
+<path> after every edit to check returns, IDs, outputs, views, edges, and
+parameter binding.
 `;
 
 const runHelpText = `Usage:

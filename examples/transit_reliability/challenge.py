@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-from rowcall import display, node
+from rowcall import node
 
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -123,7 +123,11 @@ def build_trip_facts(trips, routes, vehicle_maintenance):
     return {"trip_facts": trip_facts}
 
 
-@node(id="n_challenge_questions", outputs=["challenge_questions"])
+@node(
+    id="n_challenge_questions",
+    outputs=["challenge_questions"],
+    views=["challenge_questions"],
+)
 def challenge_questions():
     challenge_questions = pd.DataFrame(
         [
@@ -159,11 +163,14 @@ def challenge_questions():
             },
         ]
     )
-    display(challenge_questions)
     return {"challenge_questions": challenge_questions}
 
 
-@node(id="n_preview_joined_data", outputs=["joined_data_preview"])
+@node(
+    id="n_preview_joined_data",
+    outputs=["joined_data_preview"],
+    views=["joined_data_preview"],
+)
 def preview_joined_data(trip_facts):
     columns = [
         "trip_id",
@@ -179,11 +186,14 @@ def preview_joined_data(trip_facts):
         "high_severity_events",
     ]
     joined_data_preview = trip_facts[columns].head(10)
-    display(joined_data_preview)
     return {"joined_data_preview": joined_data_preview}
 
 
-@node(id="n_basic_reliability_starter", outputs=["basic_reliability"])
+@node(
+    id="n_basic_reliability_starter",
+    outputs=["basic_reliability"],
+    views=["basic_reliability"],
+)
 def basic_reliability_starter(trips):
     # TODO: fill in the values for scheduled_trips, completed_trips,
     basic_reliability = pd.DataFrame(
@@ -194,11 +204,14 @@ def basic_reliability_starter(trips):
             {"metric": "late_trip_rate", "value": None},
         ]
     )
-    display(basic_reliability)
     return {"basic_reliability": basic_reliability}
 
 
-@node(id="n_peak_route_starter", outputs=["peak_route_reliability"])
+@node(
+    id="n_peak_route_starter",
+    outputs=["peak_route_reliability"],
+    views=["peak_route_reliability"],
+)
 def peak_route_starter(trip_facts):
     peak_route_reliability = pd.DataFrame(
         columns=[
@@ -209,11 +222,14 @@ def peak_route_starter(trip_facts):
             "avg_arrival_delay_min",
         ]
     )
-    display(peak_route_reliability)
     return {"peak_route_reliability": peak_route_reliability}
 
 
-@node(id="n_maintenance_risk_starter", outputs=["maintenance_risk"])
+@node(
+    id="n_maintenance_risk_starter",
+    outputs=["maintenance_risk"],
+    views=["maintenance_risk"],
+)
 def maintenance_risk_starter(trip_facts):
     # TODO: summarize trip performance by vehicle_id, then compare it to
     maintenance_risk = pd.DataFrame(
@@ -227,11 +243,14 @@ def maintenance_risk_starter(trip_facts):
             "high_severity_events",
         ]
     )
-    display(maintenance_risk)
     return {"maintenance_risk": maintenance_risk}
 
 
-@node(id="n_priority_routes_starter", outputs=["priority_routes"])
+@node(
+    id="n_priority_routes_starter",
+    outputs=["priority_routes"],
+    views=["priority_routes"],
+)
 def priority_routes_starter(trip_facts):
     # TODO: build a route-region score using late rate, cancellation rate,
     priority_routes = pd.DataFrame(
@@ -245,7 +264,6 @@ def priority_routes_starter(trip_facts):
             "priority_score",
         ]
     )
-    display(priority_routes)
     return {"priority_routes": priority_routes}
 
 

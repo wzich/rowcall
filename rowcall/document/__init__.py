@@ -23,6 +23,7 @@ from .rewrite import (
     remove_edge,
     update_node_body,
     update_node_outputs,
+    update_node_views,
 )
 from .validation import (
     build_downstream_adjacency,
@@ -58,5 +59,6 @@ __all__ = [
     "remove_edge",
     "update_node_body",
     "update_node_outputs",
+    "update_node_views",
     "validate_document",
 ]

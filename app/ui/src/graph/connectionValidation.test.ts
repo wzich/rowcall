@@ -12,9 +12,9 @@ function createDocument(
 Deno.test("connection conflict finds duplicate outputs from direct parents", () => {
   const document = createDocument(
     [
-      { id: "left", code: "pass", outputs: ["df"] },
-      { id: "right", code: "pass", outputs: ["df"] },
-      { id: "merge", code: "pass", outputs: [] },
+      { id: "left", code: "pass", outputs: ["df"], views: [] },
+      { id: "right", code: "pass", outputs: ["df"], views: [] },
+      { id: "merge", code: "pass", outputs: [], views: [] },
     ],
     [{ fromNode: "left", toNode: "merge" }],
   );
@@ -28,10 +28,10 @@ Deno.test("connection conflict finds duplicate outputs from direct parents", () 
 Deno.test("connection conflict reports each ambiguous output and its owners", () => {
   const document = createDocument(
     [
-      { id: "first", code: "pass", outputs: ["df", "count"] },
-      { id: "second", code: "pass", outputs: ["df"] },
-      { id: "third", code: "pass", outputs: ["count"] },
-      { id: "merge", code: "pass", outputs: [] },
+      { id: "first", code: "pass", outputs: ["df", "count"], views: [] },
+      { id: "second", code: "pass", outputs: ["df"], views: [] },
+      { id: "third", code: "pass", outputs: ["count"], views: [] },
+      { id: "merge", code: "pass", outputs: [], views: [] },
     ],
     [
       { fromNode: "first", toNode: "merge" },
@@ -51,10 +51,10 @@ Deno.test("connection conflict reports each ambiguous output and its owners", ()
 Deno.test("connection conflict ignores matching outputs on transitive ancestors", () => {
   const document = createDocument(
     [
-      { id: "ancestor", code: "pass", outputs: ["df"] },
-      { id: "parent", code: "pass", outputs: ["prepared"] },
-      { id: "other", code: "pass", outputs: ["df"] },
-      { id: "merge", code: "pass", outputs: [] },
+      { id: "ancestor", code: "pass", outputs: ["df"], views: [] },
+      { id: "parent", code: "pass", outputs: ["prepared"], views: [] },
+      { id: "other", code: "pass", outputs: ["df"], views: [] },
+      { id: "merge", code: "pass", outputs: [], views: [] },
     ],
     [
       { fromNode: "ancestor", toNode: "parent" },
@@ -71,9 +71,9 @@ Deno.test("connection conflict ignores matching outputs on transitive ancestors"
 Deno.test("connection conflict allows direct parents with distinct outputs", () => {
   const document = createDocument(
     [
-      { id: "left", code: "pass", outputs: ["customers"] },
-      { id: "right", code: "pass", outputs: ["orders"] },
-      { id: "merge", code: "pass", outputs: [] },
+      { id: "left", code: "pass", outputs: ["customers"], views: [] },
+      { id: "right", code: "pass", outputs: ["orders"], views: [] },
+      { id: "merge", code: "pass", outputs: [], views: [] },
     ],
     [{ fromNode: "left", toNode: "merge" }],
   );

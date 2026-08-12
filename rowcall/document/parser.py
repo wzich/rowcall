@@ -19,7 +19,7 @@ from .models import (
 from .validation import validate_document
 
 
-SUPPORTED_ROWCALL_FROM_IMPORTS = {"display", "node"}
+SUPPORTED_ROWCALL_FROM_IMPORTS = {"node"}
 _ROWCALL_NODE = "rowcall_node"
 _ALIASED_ROWCALL_NODE = "aliased_rowcall_node"
 _ROWCALL_MODULE = "rowcall_module"
@@ -90,7 +90,8 @@ def _parse_source(
                 kind="missing_node",
                 message=(
                     "A Rowcall document must define at least one node using "
-                    '@node(id="...", outputs=[...]) on a synchronous function'
+                    '@node(id="...", outputs=[...]) on a synchronous function; '
+                    "views=[...] is optional"
                 ),
             )
         )
@@ -124,11 +125,13 @@ class _DecodedNode:
         function_def: ast.FunctionDef,
         node_id: str | None,
         outputs: tuple[str, ...] | None,
+        views: tuple[str, ...] | None,
         invalid_decorator: bool,
     ) -> None:
         self.function_def = function_def
         self.node_id = node_id
         self.outputs = outputs
+        self.views = views
         self.invalid_decorator = invalid_decorator
 
 
@@ -164,7 +167,10 @@ def _decode_nodes(
             issues.append(
                 ValidationIssue(
                     kind="wrong_type",
-                    message="Node decorators must provide keyword-only string id and list[str] outputs",
+                    message=(
+                        "Node decorators must provide keyword-only string id, "
+                        "list[str] outputs, and optional list[str] views"
+                    ),
                     node_id=node_id,
                     path=_statement_path(function_def),
                 )
@@ -173,11 +179,12 @@ def _decode_nodes(
         _validate_function_shape(function_def, node_id, issues)
         _validate_node_decorators(function_def, node_id, issues)
         _validate_no_direct_node_calls(function_def, node_id, node_function_names, issues)
-        if decoded_node.outputs is not None:
+        if decoded_node.outputs is not None and decoded_node.views is not None:
             _validate_node_return(
                 function_def,
                 node_id,
                 decoded_node.outputs,
+                decoded_node.views,
                 issues,
                 validate_output_bindings=validate_output_bindings,
             )
@@ -419,10 +426,11 @@ def _decode_node_decorator(
         if decorator_kinds.get(id(decorator)) != _SUPPORTED_DECORATOR:
             continue
         if not _is_node_call(decorator):
-            return _DecodedNode(function_def, None, None, True)
+            return _DecodedNode(function_def, None, None, None, True)
 
         node_id: str | None = None
         outputs: tuple[str, ...] | None = None
+        views: tuple[str, ...] | None = ()
         invalid = False
 
         if decorator.args:
@@ -445,6 +453,10 @@ def _decode_node_decorator(
                 outputs = _literal_string_tuple(keyword.value)
                 if outputs is None:
                     invalid = True
+            elif keyword.arg == "views":
+                views = _literal_string_tuple(keyword.value)
+                if views is None:
+                    invalid = True
             else:
                 invalid = True
                 issues.append(
@@ -459,7 +471,7 @@ def _decode_node_decorator(
         if node_id is None or outputs is None:
             invalid = True
 
-        return _DecodedNode(function_def, node_id, outputs, invalid)
+        return _DecodedNode(function_def, node_id, outputs, views, invalid)
 
     return None
 
@@ -558,11 +570,13 @@ def _validate_node_return(
     function_def: ast.FunctionDef,
     node_id: str,
     outputs: tuple[str, ...],
+    views: tuple[str, ...],
     issues: list[ValidationIssue],
     *,
     validate_output_bindings: bool,
 ) -> None:
     returns = _node_level_returns(function_def)
+    return_names = _declared_return_names(outputs, views)
     format_hint = " See `rowcall help format` for the required structure."
 
     if len(returns) != 1:
@@ -572,8 +586,8 @@ def _validate_node_return(
                 message=(
                     f"Node '{node_id}' must have exactly one return statement, "
                     "as the final statement in the function. Make every declared "
-                    "output available as a same-named variable, then return the generated "
-                    f"output dictionary.{format_hint}"
+                    "output and view available as a same-named variable, then return "
+                    f"the generated result dictionary.{format_hint}"
                 ),
                 node_id=node_id,
                 path=_statement_path(function_def),
@@ -588,8 +602,8 @@ def _validate_node_return(
                 kind="invalid_node_return",
                 message=(
                     f"Node '{node_id}' must place its only return statement last. "
-                    "Assign every declared output first, then end the function with "
-                    f"the generated output dictionary.{format_hint}"
+                    "Assign every declared output and view first, then end the function "
+                    f"with the generated result dictionary.{format_hint}"
                 ),
                 node_id=node_id,
                 path=_statement_path(return_statement),
@@ -604,8 +618,8 @@ def _validate_node_return(
                 kind="invalid_node_return",
                 message=(
                     f"Node '{node_id}' must return a dictionary literal whose keys "
-                    "and same-named variable values exactly match outputs="
-                    f"{list(outputs)!r}.{format_hint}"
+                    "and same-named variable values exactly match the declared outputs "
+                    f"and views {list(return_names)!r}.{format_hint}"
                 ),
                 node_id=node_id,
                 path=_statement_path(return_statement),
@@ -621,7 +635,7 @@ def _validate_node_return(
                 ValidationIssue(
                     kind="invalid_node_return",
                     message=(
-                        f"Node '{node_id}' must use literal output names in its "
+                        f"Node '{node_id}' must use literal result names in its "
                         "return dictionary; dictionary expansion and computed keys "
                         f"are not supported.{format_hint}"
                     ),
@@ -632,14 +646,14 @@ def _validate_node_return(
             return
         returned_keys.append(key_text)
 
-    if tuple(returned_keys) != outputs:
+    if tuple(returned_keys) != return_names:
         issues.append(
             ValidationIssue(
                 kind="invalid_node_return",
                 message=(
-                    f"Node '{node_id}' returns outputs {returned_keys!r}, but its "
-                    f"decorator declares {list(outputs)!r}. Return every declared "
-                    f"output exactly once in the declared order.{format_hint}"
+                    f"Node '{node_id}' returns values {returned_keys!r}, but its "
+                    f"decorator requires {list(return_names)!r}. Return every declared "
+                    f"output and view exactly once in the generated order.{format_hint}"
                 ),
                 node_id=node_id,
                 path=_statement_path(return_statement),
@@ -650,16 +664,16 @@ def _validate_node_return(
     local_bindings = (
         _node_local_bindings(function_def) if validate_output_bindings else None
     )
-    for output, value in zip(outputs, returned.values):
-        if isinstance(value, ast.Name) and value.id == output:
-            if local_bindings is not None and output not in local_bindings:
+    for name, value in zip(return_names, returned.values):
+        if isinstance(value, ast.Name) and value.id == name:
+            if local_bindings is not None and name not in local_bindings:
                 issues.append(
                     ValidationIssue(
                         kind="invalid_node_return",
                         message=(
-                            f"Output '{output}' on node '{node_id}' must be a local "
+                            f"Returned value '{name}' on node '{node_id}' must be a local "
                             "variable or parameter, but this name resolves outside "
-                            f"the node function. Assign '{output}' in the node body "
+                            f"the node function. Assign '{name}' in the node body "
                             f"before returning it.{format_hint}"
                         ),
                         node_id=node_id,
@@ -672,10 +686,10 @@ def _validate_node_return(
             ValidationIssue(
                 kind="invalid_node_return",
                 message=(
-                    f"Output '{output}' on node '{node_id}' must be returned from "
-                    f"the same-named variable '{output}', not the expression "
-                    f"'{expression}'. Assign the expression to '{output}' before "
-                    f"the return, then use `{output!r}: {output}`.{format_hint}"
+                    f"Returned value '{name}' on node '{node_id}' must use "
+                    f"the same-named variable '{name}', not the expression "
+                    f"'{expression}'. Assign the expression to '{name}' before "
+                    f"the return, then use `{name!r}: {name}`.{format_hint}"
                 ),
                 node_id=node_id,
                 path=_path_for(value.lineno, value.col_offset + 1),
@@ -789,7 +803,7 @@ def _validate_rowcall_imports(module: ast.Module, issues: list[ValidationIssue])
                 issues.append(
                     ValidationIssue(
                         kind="unsupported_python",
-                        message="from rowcall imports may only include display and node",
+                        message="from rowcall imports may only include node",
                         path=_statement_path(statement),
                     )
                 )
@@ -913,8 +927,9 @@ def _is_depends_on_call(value: ast.AST | None) -> bool:
 def _build_node(node: _DecodedNode, lines: list[str], globals_code: str) -> DocumentNode:
     function_def = node.function_def
     outputs = node.outputs or ()
+    views = node.views or ()
     parameters = _parameter_names(function_def)
-    standard_return = _has_standard_generated_return(function_def, outputs)
+    standard_return = _has_standard_generated_return(function_def, outputs, views)
     function_source = _extract_function_source(lines, function_def)
     display_code = _extract_display_code(lines, function_def, standard_return)
     runtime_code = _build_runtime_code(
@@ -922,11 +937,13 @@ def _build_node(node: _DecodedNode, lines: list[str], globals_code: str) -> Docu
         function_name=function_def.name,
         parameters=parameters,
         outputs=outputs,
+        views=views,
     )
     return DocumentNode(
         id=node.node_id if node.node_id is not None else function_def.name,
         function_name=function_def.name,
         outputs=outputs,
+        views=views,
         parameters=parameters,
         source_range=_function_source_range(function_def, standard_return),
         function_source=function_source,
@@ -1043,7 +1060,11 @@ def _parameter_names(function_def: ast.FunctionDef) -> tuple[str, ...]:
     return tuple(argument.arg for argument in [*function_def.args.args, *function_def.args.kwonlyargs])
 
 
-def _has_standard_generated_return(function_def: ast.FunctionDef, outputs: tuple[str, ...]) -> bool:
+def _has_standard_generated_return(
+    function_def: ast.FunctionDef,
+    outputs: tuple[str, ...],
+    views: tuple[str, ...],
+) -> bool:
     returns = _node_level_returns(function_def)
     if len(returns) != 1:
         return False
@@ -1063,7 +1084,8 @@ def _has_standard_generated_return(function_def: ast.FunctionDef, outputs: tuple
             return False
         keys.append(text)
         values.append(value.id)
-    return tuple(keys) == outputs and tuple(values) == outputs
+    return_names = _declared_return_names(outputs, views)
+    return tuple(keys) == return_names and tuple(values) == return_names
 
 
 def _build_runtime_code(
@@ -1072,32 +1094,42 @@ def _build_runtime_code(
     function_name: str,
     parameters: tuple[str, ...],
     outputs: tuple[str, ...],
+    views: tuple[str, ...],
 ) -> str:
+    return_names = _declared_return_names(outputs, views)
     parts = [function_source]
     parts.append(
         "\n".join(
             [
                 f"__rowcall_parameters = {list(parameters)!r}",
-                f"__rowcall_outputs = {list(outputs)!r}",
+                f"__rowcall_return_names = {list(return_names)!r}",
                 "__rowcall_call_inputs = {",
                 "    name: globals()[name]",
                 "    for name in __rowcall_parameters",
                 "}",
                 f"__rowcall_result = {function_name}(**__rowcall_call_inputs)",
                 "if not isinstance(__rowcall_result, dict):",
-                "    raise TypeError('Node function must return a dict of declared outputs')",
-                "__rowcall_missing_outputs = [",
-                "    name for name in __rowcall_outputs",
+                "    raise TypeError('Node function must return a dict of declared values')",
+                "__rowcall_missing_values = [",
+                "    name for name in __rowcall_return_names",
                 "    if name not in __rowcall_result",
                 "]",
-                "if __rowcall_missing_outputs:",
+                "if __rowcall_missing_values:",
                 "    raise NameError(",
-                "        'Node function did not return declared outputs: '",
-                "        + ', '.join(__rowcall_missing_outputs)",
+                "        'Node function did not return declared values: '",
+                "        + ', '.join(__rowcall_missing_values)",
                 "    )",
-                "for __rowcall_output_name in __rowcall_outputs:",
-                "    globals()[__rowcall_output_name] = __rowcall_result[__rowcall_output_name]",
+                "for __rowcall_return_name in __rowcall_return_names:",
+                "    globals()[__rowcall_return_name] = __rowcall_result[__rowcall_return_name]",
             ]
         )
     )
     return "\n\n".join(parts)
+
+
+def _declared_return_names(
+    outputs: tuple[str, ...],
+    views: tuple[str, ...],
+) -> tuple[str, ...]:
+    output_names = set(outputs)
+    return (*outputs, *(name for name in views if name not in output_names))

@@ -19,7 +19,16 @@ export type ValuePreview = {
   repr: string;
   jsonValue?: unknown;
   table?: TablePreview;
+  image?: ImagePreview;
   warning?: string;
+};
+
+export type ImagePreview = {
+  mimeType: "image/png";
+  dataBase64: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
 };
 
 export type TableCellPreview =
@@ -79,21 +88,12 @@ export type TableQueryResponse =
     };
   };
 
-export type DisplayPreview = {
-  value: ValuePreview;
-};
-
-export type OutputEvent =
-  | { kind: "stdout"; text: string }
-  | { kind: "display"; value: ValuePreview };
-
 export type NodeRunResult = {
   ok: boolean;
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
-  displays: DisplayPreview[];
-  outputEvents: OutputEvent[];
+  views: Record<string, ValuePreview>;
   warnings: string[];
   error?: string;
 };
@@ -111,6 +111,8 @@ export type ValidationIssue = {
     | "invalid_node_id"
     | "invalid_output"
     | "duplicate_output"
+    | "invalid_view"
+    | "duplicate_view"
     | "duplicate_edge"
     | "missing_node_reference"
     | "cycle"
@@ -164,8 +166,7 @@ export type ExecutionStepTrace = {
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
-  displays: DisplayPreview[];
-  outputEvents: OutputEvent[];
+  views: Record<string, ValuePreview>;
   warnings: string[];
   error: string | null;
 };

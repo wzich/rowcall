@@ -653,6 +653,7 @@ export default function App() {
       code: node.displayCode ?? node.code,
       editable: node.editable ?? true,
       outputs: node.outputs,
+      views: node.views,
       inferredOutputs: inferAssignableOutputs(node.displayCode ?? node.code),
       inputNames: node.parameters ?? [],
       inputGroups: getNodeInputGroups(
@@ -662,6 +663,10 @@ export default function App() {
         nodeRunStatuses,
       ),
       outputPreviews: getOutputPreviewsForNode(
+        node.id,
+        executionStateByNodeId,
+      ),
+      viewPreviews: getViewPreviewsForNode(
         node.id,
         executionStateByNodeId,
       ),
@@ -844,6 +849,32 @@ export default function App() {
     markDocumentEdited();
     queueOperation({ type: "update_node_outputs", nodeId, outputs });
     markNodesStale(staleNodeIds);
+    commitEditableDocument(nextDocument);
+  }, [
+    commitEditableDocument,
+    markDocumentEdited,
+    markNodesStale,
+    queueOperation,
+  ]);
+
+  const handleViewsChange = useCallback((
+    nodeId: string,
+    views: string[],
+  ) => {
+    const current = editableDocumentRef.current;
+    if (!current || saveOutcomeUnknownRef.current) return;
+    const node = current.nodes.find((item) => item.id === nodeId);
+    if (!node || areStringArraysEqual(node.views, views)) return;
+    const nextDocument = {
+      ...current,
+      nodes: current.nodes.map((item) =>
+        item.id === nodeId ? { ...item, views, runtimeCode: undefined } : item
+      ),
+    };
+
+    markDocumentEdited();
+    queueOperation({ type: "update_node_views", nodeId, views });
+    markNodesStale([nodeId]);
     commitEditableDocument(nextDocument);
   }, [
     commitEditableDocument,
@@ -1730,6 +1761,7 @@ export default function App() {
               onNodeMetadataChange={handleNodeMetadataChange}
               onGlobalsCodeChange={handleGlobalsCodeChange}
               onOutputsChange={handleOutputsChange}
+              onViewsChange={handleViewsChange}
               onTraceEnabledChange={setTraceEnabled}
               onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
               onRunToNode={handleRunToNode}
@@ -2174,6 +2206,7 @@ function toAddNodeOperationNode(node: RuntimeNode): Extract<
     functionName: node.functionName ?? node.id,
     code: node.code,
     outputs: node.outputs,
+    views: node.views,
     ...(node.position ? { position: node.position } : {}),
     ...(node.title ? { title: node.title } : {}),
     ...(node.description ? { description: node.description } : {}),
@@ -2262,7 +2295,7 @@ function getNodeCanvasPreview(
       return {
         ok: false,
         outputs: [],
-        outputEvents: [],
+        views: [],
         stdout: "",
         stderr: "",
         error: state.response.error.message,
@@ -2274,7 +2307,7 @@ function getNodeCanvasPreview(
     return {
       ok: false,
       outputs: [],
-      outputEvents: [],
+      views: [],
       stdout: "",
       stderr: "",
       error: state.message,
@@ -2296,7 +2329,12 @@ function resultToCanvasPreview(
         table: output.table,
       }))
       : [],
-    outputEvents: result.outputEvents ?? [],
+    views: result.ok
+      ? Object.entries(result.views).map(([name, view]) => ({
+        name: view.name || name,
+        type: view.type,
+      }))
+      : [],
     stdout: result.stdout,
     stderr: result.stderr,
     error: result.error ?? null,
@@ -2304,7 +2342,7 @@ function resultToCanvasPreview(
 
   if (
     preview.outputs.length === 0 &&
-    preview.outputEvents.length === 0 &&
+    preview.views.length === 0 &&
     preview.stdout.length === 0 &&
     preview.stderr.length === 0 &&
     preview.error === null
@@ -2400,6 +2438,24 @@ function getOutputPreviewsForNode(
   return {};
 }
 
+function getViewPreviewsForNode(
+  nodeId: string,
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Record<string, ValuePreview> {
+  const state = executionStateByNodeId[nodeId];
+  if (!state) return {};
+
+  if (state.status === "completed_node" || state.status === "failed_node") {
+    return state.result.views;
+  }
+
+  if (state.status === "completed") {
+    return state.response.resultsByNode[nodeId]?.views ?? {};
+  }
+
+  return {};
+}
+
 function getNodeDisplayTitle(node: RuntimeNode): string {
   return prettifyFunctionName(node.functionName);
 }
@@ -2457,6 +2513,7 @@ function createNewPythonNode(
     parameters: [],
     code: "pass",
     outputs: [],
+    views: [],
     customReturn: false,
     editable: true,
     position,

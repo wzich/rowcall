@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import copy
 import io
 import json
 import math
+import zlib
 from collections.abc import Callable
 from typing import Any
 
@@ -28,6 +30,9 @@ TABLE_PREVIEW_MAX_COLUMNS = 30
 TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT = 512
 TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT = 512
 TABLE_PREVIEW_MAX_INTEGER_BITS = 1_024
+VIEW_PNG_MAX_BYTES = 5 * 1024 * 1024
+VIEW_PNG_RUN_MAX_BYTES = 20 * 1024 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def register_copy_handler(predicate: Callable[[Any], bool], copier: Callable[[Any], Any], label: str) -> None:
@@ -577,6 +582,168 @@ def preview_value(name: str, value: Any, warning: str | None = None) -> dict[str
         pass
 
     return preview
+
+
+def preview_view(
+    name: str,
+    value: Any,
+    *,
+    remaining_image_bytes: int,
+    base_preview: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], int]:
+    """Preview a human-facing value and add a bounded PNG representation when available."""
+    preview = dict(base_preview) if base_preview is not None else preview_value(name, value)
+    png_bytes: bytes | None = None
+    png_warning: str | None = None
+
+    if isinstance(value, (bytes, bytearray)):
+        png_bytes = bytes(value)
+    else:
+        try:
+            renderer, stdout_text, stderr_text = run_with_captured_stdio(
+                lambda: getattr(value, "_repr_png_", None)
+            )
+            png_warning = captured_stdio_warning(
+                f"PNG renderer lookup for view '{name}'",
+                stdout_text,
+                stderr_text,
+            )
+        except Exception as exc:
+            renderer = None
+            png_warning = f"Could not inspect PNG renderer for view '{name}': {exc}"
+
+        if callable(renderer):
+            try:
+                rendered, stdout_text, stderr_text = run_with_captured_stdio(renderer)
+                png_warning = combine_warnings(
+                    png_warning,
+                    captured_stdio_warning(
+                        f"PNG rendering for view '{name}'",
+                        stdout_text,
+                        stderr_text,
+                    ),
+                )
+                if isinstance(rendered, (bytes, bytearray)):
+                    png_bytes = bytes(rendered)
+                else:
+                    png_warning = combine_warnings(
+                        png_warning,
+                        f"View '{name}' _repr_png_() did not return PNG bytes.",
+                    )
+            except Exception as exc:
+                png_warning = combine_warnings(
+                    png_warning,
+                    f"Could not render view '{name}' with _repr_png_(): {exc}",
+                )
+        elif "table" not in preview and "jsonValue" not in preview:
+            png_warning = combine_warnings(
+                png_warning,
+                f"View '{name}' has no supported rich renderer; showing its repr only.",
+            )
+
+    image_bytes = 0
+    if png_bytes is not None:
+        if len(png_bytes) > VIEW_PNG_MAX_BYTES:
+            png_warning = combine_warnings(
+                png_warning,
+                f"View '{name}' PNG is {len(png_bytes)} bytes; the per-view limit is {VIEW_PNG_MAX_BYTES} bytes.",
+            )
+        elif len(png_bytes) > remaining_image_bytes:
+            png_warning = combine_warnings(
+                png_warning,
+                f"View '{name}' PNG exceeds the remaining {remaining_image_bytes}-byte image budget for this run.",
+            )
+        else:
+            dimensions = png_dimensions(png_bytes)
+            if dimensions is None:
+                png_warning = combine_warnings(
+                    png_warning,
+                    f"View '{name}' did not contain a valid PNG image.",
+                )
+            else:
+                width, height = dimensions
+                preview["image"] = {
+                    "mimeType": "image/png",
+                    "dataBase64": base64.b64encode(png_bytes).decode("ascii"),
+                    "width": width,
+                    "height": height,
+                    "sizeBytes": len(png_bytes),
+                }
+                image_bytes = len(png_bytes)
+
+    combined_warning = combine_warnings(preview.get("warning"), png_warning)
+    if combined_warning:
+        preview["warning"] = truncate_utf8_text(
+            combined_warning,
+            PREVIEW_WARNING_BYTE_LIMIT,
+        )
+    return preview, image_bytes
+
+
+def png_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Return dimensions after validating PNG chunks and required structure."""
+    if len(data) < 8 or data[:8] != PNG_SIGNATURE:
+        return None
+
+    offset = len(PNG_SIGNATURE)
+    dimensions: tuple[int, int] | None = None
+    saw_image_data = False
+
+    while offset < len(data):
+        if len(data) - offset < 12:
+            return None
+        chunk_length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data_start = offset + 8
+        chunk_crc_start = chunk_data_start + chunk_length
+        chunk_end = chunk_crc_start + 4
+        if chunk_end > len(data):
+            return None
+
+        chunk_data = data[chunk_data_start:chunk_crc_start]
+        expected_crc = int.from_bytes(data[chunk_crc_start:chunk_end], "big")
+        actual_crc = zlib.crc32(chunk_type)
+        actual_crc = zlib.crc32(chunk_data, actual_crc) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            return None
+
+        if dimensions is None:
+            if chunk_type != b"IHDR" or chunk_length != 13:
+                return None
+            width = int.from_bytes(chunk_data[0:4], "big")
+            height = int.from_bytes(chunk_data[4:8], "big")
+            bit_depth = chunk_data[8]
+            color_type = chunk_data[9]
+            valid_depths = {
+                0: {1, 2, 4, 8, 16},
+                2: {8, 16},
+                3: {1, 2, 4, 8},
+                4: {8, 16},
+                6: {8, 16},
+            }
+            if (
+                width <= 0
+                or height <= 0
+                or bit_depth not in valid_depths.get(color_type, set())
+                or chunk_data[10] != 0
+                or chunk_data[11] != 0
+                or chunk_data[12] not in {0, 1}
+            ):
+                return None
+            dimensions = (width, height)
+        elif chunk_type == b"IHDR":
+            return None
+
+        if chunk_type == b"IDAT":
+            saw_image_data = True
+        elif chunk_type == b"IEND":
+            if chunk_length != 0 or not saw_image_data or chunk_end != len(data):
+                return None
+            return dimensions
+
+        offset = chunk_end
+
+    return None
 
 
 def copy_for_node_input(name: str, value: Any) -> tuple[Any, str | None]:

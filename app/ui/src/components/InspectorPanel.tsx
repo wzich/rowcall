@@ -1,8 +1,7 @@
 import type {
-  DisplayPreview,
   ExecutionResponse,
+  ImagePreview,
   NodeRunResult,
-  OutputEvent,
   ResultStoreIdentity,
   TableCellPreview,
   TablePreview,
@@ -21,6 +20,7 @@ import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
 import { ResultTable } from "./ResultTable.tsx";
 import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
 import { isJsonContainer } from "./jsonPreviewState.ts";
+import { hasResultPreviews, toggleOrderedName } from "./viewState.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -62,10 +62,12 @@ export type NodeInspectorSelection = {
   code: string;
   editable: boolean;
   outputs: string[];
+  views: string[];
   inferredOutputs: string[];
   inputNames: string[];
   inputGroups: NodeInspectorInputGroup[];
   outputPreviews: Record<string, ValuePreview>;
+  viewPreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   nodeLabelsById: Record<string, string>;
@@ -165,6 +167,7 @@ type InspectorPanelProps = {
   ) => void;
   onGlobalsCodeChange: (code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
+  onViewsChange: (nodeId: string, views: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
@@ -421,75 +424,32 @@ function CellValue({ value }: { value: TableCellPreview }) {
   );
 }
 
-function DisplayBlock({ displays }: { displays: DisplayPreview[] }) {
-  if (displays.length === 0) return null;
-
+function ImagePreviewBlock({
+  image,
+  alt,
+}: {
+  image: ImagePreview;
+  alt: string;
+}) {
   return (
-    <section>
-      <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-        Displays
-      </h4>
-      <div className="mt-2 space-y-2">
-        {displays.map((display, index) => (
-          <PreviewCard
-            key={index}
-            preview={{ ...display.value, name: `display ${index + 1}` }}
-          />
-        ))}
+    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+      <div className="flex max-h-[32rem] justify-center overflow-auto p-3">
+        <img
+          src={`data:${image.mimeType};base64,${image.dataBase64}`}
+          alt={alt}
+          className="h-auto max-w-full object-contain"
+        />
       </div>
-    </section>
+      <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+        {image.width} × {image.height} px · {formatImageSize(image.sizeBytes)}
+      </p>
+    </div>
   );
 }
 
-function InlineOutputBlock({
-  events,
-  stdout,
-  displays,
-}: {
-  events?: OutputEvent[];
-  stdout: string;
-  displays: DisplayPreview[];
-}) {
-  if (events && events.length > 0) {
-    let displayIndex = 0;
-
-    return (
-      <section>
-        <h4 className="text-xs font-semibold uppercase text-zinc-500">
-          Output
-        </h4>
-        <div className="mt-2 space-y-2">
-          {events.map((event, index) => {
-            if (event.kind === "stdout") {
-              return (
-                <pre
-                  key={index}
-                  className="max-h-48 overflow-auto rounded border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                >
-                  {event.text}
-                </pre>
-              );
-            }
-
-            displayIndex += 1;
-            return (
-              <PreviewCard
-                key={index}
-                preview={{ ...event.value, name: `display ${displayIndex}` }}
-              />
-            );
-          })}
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <>
-      <DisplayBlock displays={displays} />
-      <TextOutputBlock title="Stdout" value={stdout} />
-    </>
-  );
+function formatImageSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  return `${(sizeBytes / 1024).toFixed(1)} KiB`;
 }
 
 function PreviewCard({ preview }: { preview: ValuePreview }) {
@@ -508,7 +468,9 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
           {typeLabel}
         </span>
       </div>
-      {preview.table
+      {preview.image
+        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        : preview.table
         ? <TablePreviewBlock table={preview.table} />
         : <JsonPreview preview={preview} />}
       {preview.warning && (
@@ -548,6 +510,14 @@ function FlatPreview({
             </span>
           </>
         )}
+        {preview.image && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>
+              {preview.image.width} × {preview.image.height} px
+            </span>
+          </>
+        )}
         {metadataSuffix && (
           <>
             <span aria-hidden="true">·</span>
@@ -555,7 +525,9 @@ function FlatPreview({
           </>
         )}
       </div>
-      {preview.table
+      {preview.image
+        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        : preview.table
         ? interactiveTable
           ? (
             <ResultTable
@@ -606,7 +578,7 @@ function ResultOutputTabs({
           {title}
         </h4>
         <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-          No outputs.
+          No {title.toLowerCase()}.
         </p>
       </section>
     );
@@ -765,12 +737,10 @@ function RunResult({
 
         <div className="mt-4 space-y-4">
           <ResultOutputTabs previews={nodeResult.outputs} />
-
-          <InlineOutputBlock
-            events={nodeResult.outputEvents}
-            stdout={nodeResult.stdout}
-            displays={nodeResult.displays}
-          />
+          {Object.keys(nodeResult.views).length > 0 && (
+            <ResultOutputTabs previews={nodeResult.views} title="Views" />
+          )}
+          <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
           <WarningList warnings={nodeResult.warnings} />
           <TextOutputBlock
             title="Stderr"
@@ -837,6 +807,7 @@ function RunResult({
   }
 
   const outputs = nodeResult?.outputs ?? {};
+  const views = nodeResult?.views ?? {};
   const interactiveTable = response.resultStore &&
       (executionState.freshness === "fresh" ||
         executionState.freshness === "failed_run")
@@ -882,12 +853,10 @@ function RunResult({
           previews={outputs}
           interactiveTable={interactiveTable}
         />
-
-        <InlineOutputBlock
-          events={nodeResult?.outputEvents}
-          stdout={nodeResult?.stdout ?? ""}
-          displays={nodeResult?.displays ?? []}
-        />
+        {Object.keys(views).length > 0 && (
+          <ResultOutputTabs previews={views} title="Views" />
+        )}
+        <TextOutputBlock title="Stdout" value={nodeResult?.stdout ?? ""} />
         <WarningList warnings={nodeResult?.warnings ?? []} />
         <TextOutputBlock
           title="Stderr"
@@ -1097,7 +1066,7 @@ function GraphRunResult({
           No graph results yet
         </p>
         <p className="mt-1 max-w-sm text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-          Run the graph to inspect its sink outputs here.
+          Run the graph to inspect its declared views and sink outputs here.
         </p>
       </div>
     );
@@ -1110,7 +1079,7 @@ function GraphRunResult({
           Running graph…
         </p>
         <p className="mt-1 text-xs text-blue-700 dark:text-blue-300">
-          Sink outputs will appear when the run completes.
+          Views and sink outputs will appear when the run completes.
         </p>
       </div>
     );
@@ -1245,6 +1214,7 @@ function GraphFailureDetails({
 
 type GraphOutputOption = {
   key: string;
+  kind: "output" | "view";
   nodeId: string;
   nodeLabel: string;
   name: string;
@@ -1267,18 +1237,38 @@ function GraphOutputTabs({
   onSelectedKeyChange: (key: string) => void;
 }) {
   const options = useMemo<GraphOutputOption[]>(
-    () =>
-      response.finalNodeIds.flatMap((nodeId) =>
-        Object.entries(response.finalOutputsByNode[nodeId] ?? {}).map(
+    () => {
+      const viewOptions = response.executedNodeIds.flatMap((nodeId) =>
+        Object.entries(response.resultsByNode[nodeId]?.views ?? {}).map(
           ([name, preview]) => ({
-            key: `${nodeId}:${name}`,
+            key: `view:${nodeId}:${name}`,
+            kind: "view" as const,
             nodeId,
             nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
             name,
             preview,
           }),
         )
-      ),
+      );
+      const viewKeys = new Set(
+        viewOptions.map((option) => `${option.nodeId}\u0000${option.name}`),
+      );
+      const outputOptions = response.finalNodeIds.flatMap((nodeId) =>
+        Object.entries(response.finalOutputsByNode[nodeId] ?? {}).map(
+          ([name, preview]) => ({
+            key: `output:${nodeId}:${name}`,
+            kind: "output" as const,
+            nodeId,
+            nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
+            name,
+            preview,
+          }),
+        ).filter((option) =>
+          !viewKeys.has(`${option.nodeId}\u0000${option.name}`)
+        )
+      );
+      return [...viewOptions, ...outputOptions];
+    },
     [nodeLabelsById, response],
   );
   const duplicateNames = useMemo(() => {
@@ -1314,7 +1304,7 @@ function GraphOutputTabs({
           Graph completed
         </p>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          No sink outputs were produced.
+          No declared views or sink outputs were produced.
         </p>
       </div>
     );
@@ -1324,7 +1314,7 @@ function GraphOutputTabs({
     <section>
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-          Graph outputs
+          Graph results
         </h3>
         {freshness === "fresh" && (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
@@ -1355,7 +1345,10 @@ function GraphOutputTabs({
       <div className="py-3">
         <FlatPreview
           preview={{ ...selected.preview, name: selected.name }}
-          interactiveTable={response.resultStore &&
+          interactiveTable={response.finalOutputsByNode[selected.nodeId]?.[
+              selected.name
+            ] &&
+              response.resultStore &&
               (freshness === "fresh" || freshness === "failed_run")
             ? {
               identity: response.resultStore,
@@ -1365,7 +1358,7 @@ function GraphOutputTabs({
             : undefined}
           metadataSuffix={
             <span className="font-sans">
-              from{" "}
+              {selected.kind} from{" "}
               <button
                 type="button"
                 className="font-medium text-zinc-700 hover:underline dark:text-zinc-200"
@@ -1493,12 +1486,13 @@ function TraceStep({
           </h5>
           <PreviewBlock previews={step.outputs} />
         </section>
-
-        <InlineOutputBlock
-          events={step.outputEvents}
-          stdout={step.stdout}
-          displays={step.displays}
-        />
+        <section>
+          <h5 className="text-xs font-semibold uppercase text-zinc-500">
+            Views
+          </h5>
+          <PreviewBlock previews={step.views} />
+        </section>
+        <TextOutputBlock title="Stdout" value={step.stdout} />
         <WarningList warnings={step.warnings} />
         <TextOutputBlock title="Stderr" value={step.stderr} variant="danger" />
         {step.error && (
@@ -1526,6 +1520,7 @@ function NodeInspector({
   actionsDisabled,
   onCodeChange,
   onOutputsChange,
+  onViewsChange,
   onNodeMetadataChange,
   onNodeSelect,
   onRunToNode,
@@ -1544,6 +1539,7 @@ function NodeInspector({
   actionsDisabled: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
   onOutputsChange: (nodeId: string, outputs: string[]) => void;
+  onViewsChange: (nodeId: string, views: string[]) => void;
   onNodeMetadataChange: (
     nodeId: string,
     metadata: { description?: string },
@@ -1561,7 +1557,7 @@ function NodeInspector({
   const outputOptions = getOutputOptions(
     selectedNode.inputNames,
     selectedNode.inferredOutputs,
-    selectedNode.outputs,
+    [...selectedNode.outputs, ...selectedNode.views],
   );
   const missingSelectedOutputs = outputOptions
     .filter((option) =>
@@ -1601,7 +1597,7 @@ function NodeInspector({
     ]),
   ], [actionsDisabled, onRunToNode, selectedNode.id]);
   const inputStatus = getInputStatusLabel(selectedNode, runStatus);
-  const shouldShowPriorOutputPreviews = !hasCurrentRunOutputs(
+  const shouldShowPriorOutputPreviews = !hasCurrentRunPreviews(
     selectedNode.id,
     executionState,
   );
@@ -1666,6 +1662,13 @@ function NodeInspector({
     );
   };
 
+  const handleViewToggle = (name: string) => {
+    if (readOnly || !selectedNode.editable) return;
+    const nextViews = toggleOrderedName(selectedNode.views, name, 10);
+    if (nextViews === selectedNode.views) return;
+    onViewsChange(selectedNode.id, nextViews);
+  };
+
   const handleExposeOutput = (name: string) => {
     if (
       readOnly || !selectedNode.editable || selectedNode.outputs.includes(name)
@@ -1688,6 +1691,7 @@ function NodeInspector({
         outputsReadOnly={outputsReadOnly}
         actionsDisabled={actionsDisabled}
         onOutputToggle={handleOutputToggle}
+        onViewToggle={handleViewToggle}
         onNodeMetadataChange={onNodeMetadataChange}
         onNodeSelect={onNodeSelect}
         onDeleteNode={onDeleteNode}
@@ -1770,7 +1774,8 @@ function flattenInputPreviews(
 }
 
 function getPreferredPreviewName(options: InspectorPreviewOption[]): string {
-  return options.find((option) => option.preview?.table)?.name ??
+  return options.find((option) => option.preview?.image)?.name ??
+    options.find((option) => option.preview?.table)?.name ??
     options[0]?.name ?? "";
 }
 
@@ -2178,6 +2183,9 @@ function PreviewMetadata({
 }
 
 function CompactPreview({ preview }: { preview: ValuePreview }) {
+  if (preview.image) {
+    return <ImagePreviewBlock image={preview.image} alt={preview.name} />;
+  }
   if (!preview.table) {
     return <JsonPreview preview={preview} variant="compact" />;
   }
@@ -2366,6 +2374,7 @@ function NodeOverview({
   outputsReadOnly,
   actionsDisabled,
   onOutputToggle,
+  onViewToggle,
   onNodeMetadataChange,
   onNodeSelect,
   onDeleteNode,
@@ -2375,6 +2384,7 @@ function NodeOverview({
   outputsReadOnly: boolean;
   actionsDisabled: boolean;
   onOutputToggle: (name: string) => void;
+  onViewToggle: (name: string) => void;
   onNodeMetadataChange: (
     nodeId: string,
     metadata: { description?: string },
@@ -2417,11 +2427,35 @@ function NodeOverview({
               {selectedNode.outputs.length} selected
             </span>
           </div>
-          <DeclaredOutputsEditor
-            selectedNode={selectedNode}
+          <DeclaredValuesEditor
+            selectedNames={selectedNode.outputs}
             outputOptions={outputOptions}
             readOnly={outputsReadOnly}
             onToggle={onOutputToggle}
+            emptyLabel="No assignable outputs found."
+          />
+        </section>
+
+        <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+                Declared Views
+              </h3>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Human-facing values; never passed downstream.
+              </p>
+            </div>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {selectedNode.views.length} of 10 selected
+            </span>
+          </div>
+          <DeclaredValuesEditor
+            selectedNames={selectedNode.views}
+            outputOptions={outputOptions}
+            readOnly={outputsReadOnly}
+            onToggle={onViewToggle}
+            emptyLabel="No assignable views found."
           />
         </section>
 
@@ -2458,21 +2492,23 @@ function NodeOverview({
   );
 }
 
-function DeclaredOutputsEditor({
-  selectedNode,
+function DeclaredValuesEditor({
+  selectedNames,
   outputOptions,
   readOnly,
   onToggle,
+  emptyLabel,
 }: {
-  selectedNode: NodeInspectorSelection;
+  selectedNames: string[];
   outputOptions: OutputOption[];
   readOnly: boolean;
   onToggle: (name: string) => void;
+  emptyLabel: string;
 }) {
   if (outputOptions.length === 0) {
     return (
       <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-        No assignable outputs found.
+        {emptyLabel}
       </p>
     );
   }
@@ -2480,7 +2516,7 @@ function DeclaredOutputsEditor({
   return (
     <ul className="mt-2 space-y-1.5">
       {outputOptions.map((option) => {
-        const checked = selectedNode.outputs.includes(option.name);
+        const checked = selectedNames.includes(option.name);
         const isMissing = option.source === "missing" && checked;
         return (
           <li key={option.name}>
@@ -2579,7 +2615,13 @@ function NodeResults({
         />
         <div className={runStatus === "stale" ? "opacity-60" : ""}>
           {shouldShowPriorOutputPreviews && (
-            <OutputPreviewSection previews={selectedNode.outputPreviews} />
+            <>
+              <OutputPreviewSection previews={selectedNode.outputPreviews} />
+              <OutputPreviewSection
+                previews={selectedNode.viewPreviews}
+                title="View previews"
+              />
+            </>
           )}
           <RunResult
             selectedNode={selectedNode}
@@ -2625,7 +2667,7 @@ function getInputStatusLabel(
   return "Run through this step to execute its required upstream steps first.";
 }
 
-function hasCurrentRunOutputs(
+function hasCurrentRunPreviews(
   nodeId: string,
   executionState: ExecutionDisplayState | null,
 ): boolean {
@@ -2637,12 +2679,12 @@ function hasCurrentRunOutputs(
     executionState.status === "completed_node" ||
     executionState.status === "failed_node"
   ) {
-    return Object.keys(executionState.result.outputs).length > 0;
+    return hasResultPreviews(executionState.result);
   }
 
   if (executionState.status === "completed") {
     const nodeResult = executionState.response.resultsByNode[nodeId];
-    return Object.keys(nodeResult?.outputs ?? {}).length > 0;
+    return hasResultPreviews(nodeResult);
   }
 
   return false;
@@ -3058,8 +3100,10 @@ function InputPreviewSection({
 
 function OutputPreviewSection({
   previews,
+  title = "Output previews",
 }: {
   previews: Record<string, ValuePreview>;
+  title?: string;
 }) {
   const entries = Object.entries(previews);
   if (entries.length === 0) {
@@ -3068,7 +3112,7 @@ function OutputPreviewSection({
 
   return (
     <section className="border-t border-zinc-200 pt-4">
-      <ResultOutputTabs previews={previews} title="Output previews" />
+      <ResultOutputTabs previews={previews} title={title} />
     </section>
   );
 }
@@ -3242,6 +3286,7 @@ export function InspectorPanel({
   onNodeMetadataChange,
   onGlobalsCodeChange,
   onOutputsChange,
+  onViewsChange,
   onTraceEnabledChange,
   onDeleteNode,
   onRunToNode,
@@ -3483,6 +3528,7 @@ export function InspectorPanel({
                 actionsDisabled={areNodeActionsDisabled}
                 onCodeChange={onCodeChange}
                 onOutputsChange={onOutputsChange}
+                onViewsChange={onViewsChange}
                 onNodeMetadataChange={onNodeMetadataChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}

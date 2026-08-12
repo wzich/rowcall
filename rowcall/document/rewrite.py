@@ -158,7 +158,7 @@ def _update_node_body(
 
     lines, newline, final_newline = _split_source(source)
     body_lines = _render_body_lines(body_code, node.source_range.indent or "    ")
-    return_line = _render_return_line(node.outputs, node.source_range.indent or "    ")
+    return_line = _render_return_line(node.return_names, node.source_range.indent or "    ")
     _replace_lines(
         lines,
         node.source_range.body_start_line or node.source_range.return_line,
@@ -219,7 +219,7 @@ def _update_node_outputs(
         return _with_issue(source, parsed, custom_downstream_issue)
 
     next_outputs = tuple(outputs)
-    output_issue = _validate_outputs(node_id, next_outputs)
+    output_issue = _validate_names(node_id, next_outputs, "Output")
     if output_issue is not None:
         return _with_issue(source, parsed, output_issue)
 
@@ -234,10 +234,95 @@ def _update_node_outputs(
         lines,
         node.source_range.return_line,
         node.source_range.return_end_line,
-        [_render_return_line(next_outputs, node.source_range.indent or "    ")],
+        [
+            _render_return_line(
+                _declared_return_names(next_outputs, node.views),
+                node.source_range.indent or "    ",
+            )
+        ],
     )
-    _replace_lines(lines, decorator_range[0], decorator_range[1], [_render_decorator(node.id, next_outputs)])
+    _replace_lines(
+        lines,
+        decorator_range[0],
+        decorator_range[1],
+        [_render_decorator(node.id, next_outputs, node.views)],
+    )
     return _finish_rewrite_with_normalized_signatures(
+        lines,
+        newline,
+        final_newline,
+        document_path,
+        validate_output_bindings=validate_output_bindings,
+    )
+
+
+def update_node_views(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    views: list[str] | tuple[str, ...],
+) -> RewriteResult:
+    return _update_node_views(
+        source,
+        document_path,
+        node_id,
+        views,
+        validate_output_bindings=True,
+    )
+
+
+def _update_node_views(
+    source: str,
+    document_path: str | Path,
+    node_id: str,
+    views: list[str] | tuple[str, ...],
+    *,
+    validate_output_bindings: bool,
+) -> RewriteResult:
+    parsed = _parse_rewrite_source(
+        source,
+        document_path,
+        validate_output_bindings,
+    )
+    if not parsed.ok or not parsed.document:
+        return RewriteResult(source=source, parse_result=parsed)
+
+    node = _find_node(parsed.document.nodes, node_id)
+    rejection = _reject_uneditable_node(source, parsed, node_id, node)
+    if rejection is not None:
+        return rejection
+
+    assert node is not None
+    next_views = tuple(views)
+    view_issue = _validate_names(node_id, next_views, "View", maximum=10)
+    if view_issue is not None:
+        return _with_issue(source, parsed, view_issue)
+
+    decorator_range = _node_decorator_range(source, node)
+    if decorator_range is None:
+        return _unsupported(source, parsed, node_id, "Node decorator range could not be found.")
+    if node.source_range.return_line is None or node.source_range.return_end_line is None:
+        return _unsupported(source, parsed, node_id, "Node views cannot be rewritten without a generated return range.")
+
+    lines, newline, final_newline = _split_source(source)
+    _replace_lines(
+        lines,
+        node.source_range.return_line,
+        node.source_range.return_end_line,
+        [
+            _render_return_line(
+                _declared_return_names(node.outputs, next_views),
+                node.source_range.indent or "    ",
+            )
+        ],
+    )
+    _replace_lines(
+        lines,
+        decorator_range[0],
+        decorator_range[1],
+        [_render_decorator(node.id, node.outputs, next_views)],
+    )
+    return _finish_rewrite(
         lines,
         newline,
         final_newline,
@@ -390,6 +475,20 @@ def _apply_one_operation(
             document_path,
             node_id,
             tuple(outputs),
+            validate_output_bindings=False,
+        )
+        return _source_result_or_issue(result, metadata)
+
+    if operation_type == "update_node_views":
+        node_id = _text_field(operation, "nodeId", "node_id")
+        views = operation.get("views")
+        if node_id is None or not isinstance(views, list) or not all(isinstance(item, str) for item in views):
+            return _invalid_operation("update_node_views requires nodeId and views list.")
+        result = _update_node_views(
+            source,
+            document_path,
+            node_id,
+            tuple(views),
             validate_output_bindings=False,
         )
         return _source_result_or_issue(result, metadata)
@@ -597,18 +696,29 @@ def _add_node(
     node_id = _text_field(node_payload, "nodeId", "node_id", "id")
     function_name = _text_field(node_payload, "functionName", "function_name")
     outputs = node_payload.get("outputs", [])
+    views = node_payload.get("views", [])
     body_code = _text_field(node_payload, "bodyCode", "body_code", "code") or "pass"
-    if node_id is None or function_name is None or not isinstance(outputs, list) or not all(isinstance(item, str) for item in outputs):
-        return _invalid_operation("add_node requires nodeId, functionName, and outputs list.")
+    if (
+        node_id is None
+        or function_name is None
+        or not isinstance(outputs, list)
+        or not all(isinstance(item, str) for item in outputs)
+        or not isinstance(views, list)
+        or not all(isinstance(item, str) for item in views)
+    ):
+        return _invalid_operation("add_node requires nodeId, functionName, outputs list, and views list.")
     if any(node.id == node_id for node in parsed.document.nodes):
         return ValidationIssue(kind="duplicate_node_id", message=f"Node id '{node_id}' is already in use.", node_id=node_id)
     if any(node.function_name == function_name for node in parsed.document.nodes):
         return ValidationIssue(kind="unsupported_python", message=f"Function name '{function_name}' is already in use.", node_id=node_id)
     if not function_name.isidentifier() or keyword.iskeyword(function_name):
         return ValidationIssue(kind="unsupported_python", message=f"Function name '{function_name}' is invalid.", node_id=node_id)
-    output_issue = _validate_outputs(node_id, tuple(outputs))
+    output_issue = _validate_names(node_id, tuple(outputs), "Output")
     if output_issue is not None:
         return output_issue
+    view_issue = _validate_names(node_id, tuple(views), "View", maximum=10)
+    if view_issue is not None:
+        return view_issue
 
     lines, newline, final_newline = _split_source(source)
     lines = _strip_graph_lines(source, lines)
@@ -618,7 +728,15 @@ def _add_node(
         lines.pop()
     if lines:
         lines.append("")
-    lines.extend(_render_node_lines(node_id, function_name, tuple(outputs), body_code))
+    lines.extend(
+        _render_node_lines(
+            node_id,
+            function_name,
+            tuple(outputs),
+            tuple(views),
+            body_code,
+        )
+    )
     graph_lines = _render_graph_lines(parsed.document.nodes, [(edge.from_node, edge.to_node) for edge in parsed.document.edges])
     _append_graph(lines, graph_lines)
     next_metadata = _apply_metadata_fields(metadata, node_id, node_payload)
@@ -699,22 +817,41 @@ def _reject_uneditable_node(
     return None
 
 
-def _validate_outputs(node_id: str, outputs: tuple[str, ...]) -> ValidationIssue | None:
+def _validate_names(
+    node_id: str,
+    names: tuple[str, ...],
+    label: str,
+    *,
+    maximum: int | None = None,
+) -> ValidationIssue | None:
+    if maximum is not None and len(names) > maximum:
+        return ValidationIssue(
+            kind="unsupported_python",
+            message=f"Node {node_id} may declare at most {maximum} {label.lower()}s.",
+            node_id=node_id,
+        )
     seen: set[str] = set()
-    for output in outputs:
-        if not output.isidentifier() or keyword.iskeyword(output):
+    for name in names:
+        if (
+            not name.isidentifier()
+            or keyword.iskeyword(name)
+            or name.startswith("__rowcall_")
+        ):
             return ValidationIssue(
                 kind="unsupported_python",
-                message=f"Output '{output}' on node {node_id} must be a valid Python variable name.",
+                message=(
+                    f"{label} '{name}' on node {node_id} must be a valid Python "
+                    "variable name without the reserved '__rowcall_' prefix."
+                ),
                 node_id=node_id,
             )
-        if output in seen:
+        if name in seen:
             return ValidationIssue(
                 kind="unsupported_python",
-                message=f"Output '{output}' is declared more than once on node {node_id}.",
+                message=f"{label} '{name}' is declared more than once on node {node_id}.",
                 node_id=node_id,
             )
-        seen.add(output)
+        seen.add(name)
     return None
 
 
@@ -725,8 +862,13 @@ def _render_body_lines(body_code: str, indent: str) -> list[str]:
     return [f"{indent}{line}" if line else "" for line in code.splitlines()]
 
 
-def _render_decorator(node_id: str, outputs: tuple[str, ...]) -> str:
-    return f"@node(id={json.dumps(node_id)}, outputs={json.dumps(list(outputs))})"
+def _render_decorator(
+    node_id: str,
+    outputs: tuple[str, ...],
+    views: tuple[str, ...],
+) -> str:
+    suffix = f", views={json.dumps(list(views))}" if views else ""
+    return f"@node(id={json.dumps(node_id)}, outputs={json.dumps(list(outputs))}{suffix})"
 
 
 def _render_return_line(outputs: tuple[str, ...], indent: str) -> str:
@@ -773,14 +915,28 @@ def _render_graph_lines_for_names(
     return lines
 
 
-def _render_node_lines(node_id: str, function_name: str, outputs: tuple[str, ...], body_code: str) -> list[str]:
+def _render_node_lines(
+    node_id: str,
+    function_name: str,
+    outputs: tuple[str, ...],
+    views: tuple[str, ...],
+    body_code: str,
+) -> list[str]:
     body_lines = _render_body_lines(body_code, "    ")
     return [
-        _render_decorator(node_id, outputs),
+        _render_decorator(node_id, outputs, views),
         f"def {function_name}():",
         *body_lines,
-        _render_return_line(outputs, "    "),
+        _render_return_line(_declared_return_names(outputs, views), "    "),
     ]
+
+
+def _declared_return_names(
+    outputs: tuple[str, ...],
+    views: tuple[str, ...],
+) -> tuple[str, ...]:
+    output_names = set(outputs)
+    return (*outputs, *(name for name in views if name not in output_names))
 
 
 def _append_graph(lines: list[str], graph_lines: list[str]) -> None:
