@@ -2,11 +2,11 @@
   "version": "0.1.0",
   "downloads": {
     "darwin-arm64": {
-      "url": "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64",
+      "url": "https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     },
     "darwin-x64": {
-      "url": "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-x64",
+      "url": "https://releases.rowcall.io/v0.1.0/rowcall-darwin-x64",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   }

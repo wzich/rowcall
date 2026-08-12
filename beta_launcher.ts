@@ -1,5 +1,5 @@
 import { parseArgs } from "@std/cli/parse-args";
-import { buildNodebookUrl, startNodebookServer } from "./main.ts";
+import { buildRowcallUrl, startRowcallServer } from "./main.ts";
 import {
   type BetaPaths,
   getBetaPaths,
@@ -7,7 +7,7 @@ import {
 } from "./beta_paths.ts";
 import { getActiveEnvironmentPythonCandidates } from "./runtime_config.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
-import { nodebookVersion } from "./version.ts";
+import { rowcallVersion } from "./version.ts";
 
 export type BetaCommand =
   | { kind: "help"; topic?: string }
@@ -82,7 +82,7 @@ type LauncherInvocation = {
 
 const bundledSourceRoot = new URL(".", import.meta.url);
 // Increment when bundled runtime dependencies must refresh independently of
-// the public Nodebook version.
+// the public Rowcall version.
 export const managedEnvironmentRevision = 1;
 const sourceModePermissionArgs = [
   "--allow-read",
@@ -92,18 +92,18 @@ const sourceModePermissionArgs = [
   "--allow-env",
 ];
 
-const defaultDocumentSource = `from nodebook import node
+const defaultDocumentSource = `from rowcall import node
 
 
-# Nodebook documents are normal Python files.
+# Rowcall documents are normal Python files.
 # Nodes declare outputs; depends_on declares graph edges.
-# Run: nodebook validate . && nodebook run . --json
-# Help: nodebook help format
+# Run: rowcall validate . && rowcall run . --json
+# Help: rowcall help format
 
 
 @node(id="n_load", outputs=["message"])
 def load_message():
-    message = "hello from Nodebook"
+    message = "hello from Rowcall"
     return {"message": message}
 
 
@@ -121,13 +121,13 @@ __pycache__/
 *.py[cod]
 `;
 
-const defaultAgentInstructions = `# Nodebook
+const defaultAgentInstructions = `# Rowcall
 
-- Edit \`graph.py\` directly. Node functions must follow \`nodebook help format\`.
-- After edits, run \`nodebook validate .\`; run \`nodebook run . --json=summary\` when execution is needed.
-- Do not relaunch Nodebook after every edit. The open UI reloads changes from disk.
+- Edit \`graph.py\` directly. Node functions must follow \`rowcall help format\`.
+- After edits, run \`rowcall validate .\`; run \`rowcall run . --json=summary\` when execution is needed.
+- Do not relaunch Rowcall after every edit. The open UI reloads changes from disk.
 - Keep dependencies in \`requirements.txt\` and the project environment.
-- Canvas metadata, when present, is in \`graph.nodebook.json\`; match it to stable node IDs in \`graph.py\`.
+- Canvas metadata, when present, is in \`graph.rowcall.json\`; match it to stable node IDs in \`graph.py\`.
 `;
 
 const defaultRequirements = `pandas
@@ -138,13 +138,13 @@ matplotlib
 const exampleDocumentSource = `from pathlib import Path
 
 import polars as pl
-from nodebook import node
+from rowcall import node
 
 
-# Nodebook documents are normal Python files.
+# Rowcall documents are normal Python files.
 # Nodes declare outputs; depends_on declares graph edges.
-# Run: nodebook validate . && nodebook run . --json
-# Help: nodebook help format
+# Run: rowcall validate . && rowcall run . --json
+# Help: rowcall help format
 
 
 @node(id="n_load_orders", outputs=["orders"])
@@ -179,24 +179,24 @@ const exampleOrdersCsv = `order_id,category,amount
 1006,Games,21.25
 `;
 
-const helpText = `Nodebook ${nodebookVersion}
+const helpText = `Rowcall ${rowcallVersion}
 
 Usage:
-  nodebook                         Show this help
-  nodebook help [topic]            Show help for a command or topic
-  nodebook <path>                  Open an existing folder or .py document
-  nodebook open <path>             Open an existing folder or .py document
-  nodebook new <path>              Create a Nodebook folder or .py document
-  nodebook example <folder>        Create a sample Nodebook project
-  nodebook run <path>              Run a document without opening the UI
-  nodebook validate <path>         Validate a document without opening the UI
-  nodebook doctor                  Inspect the local Nodebook install
-  nodebook reset-env               Recreate the managed Python environment
-  nodebook update                  Check for a launcher update
+  rowcall                         Show this help
+  rowcall help [topic]            Show help for a command or topic
+  rowcall <path>                  Open an existing folder or .py document
+  rowcall open <path>             Open an existing folder or .py document
+  rowcall new <path>              Create a Rowcall folder or .py document
+  rowcall example <folder>        Create a sample Rowcall project
+  rowcall run <path>              Run a document without opening the UI
+  rowcall validate <path>         Validate a document without opening the UI
+  rowcall doctor                  Inspect the local Rowcall install
+  rowcall reset-env               Recreate the managed Python environment
+  rowcall update                  Check for a launcher update
 
 Options:
   --python <path>                  Use a specific Python 3.10+ interpreter
-  --managed-env                    Use Nodebook's managed Python environment
+  --managed-env                    Use Rowcall's managed Python environment
   --port <port>                    Start the UI server on a custom port
   --hostname <host>                Bind the UI server to a custom host
   --no-open                        Do not open the browser after starting
@@ -204,40 +204,40 @@ Options:
   --version                        Print the launcher version
 
 Paths:
-  Folders resolve to graph.py inside the folder. For example, nodebook run
+  Folders resolve to graph.py inside the folder. For example, rowcall run
   my-work runs my-work/graph.py. Passing a .py path uses that exact file.
 
 Try:
-  nodebook new my-work --open
-  nodebook example my-example
-  nodebook run my-example --json
-  nodebook help format
+  rowcall new my-work --open
+  rowcall example my-example
+  rowcall run my-example --json
+  rowcall help format
 
 Working with coding agents:
-  Let an agent edit graph.py directly, then run nodebook validate <path>.
-  Run nodebook run <path> --json=summary when execution is needed. Open the
-  Nodebook UI once; it reloads changes from disk. New folder projects created
-  with nodebook new or nodebook example include a short project-specific
+  Let an agent edit graph.py directly, then run rowcall validate <path>.
+  Run rowcall run <path> --json=summary when execution is needed. Open the
+  Rowcall UI once; it reloads changes from disk. New folder projects created
+  with rowcall new or rowcall example include a short project-specific
   AGENTS.md.
 
 Open and run prefer an existing project .venv, then an active virtualenv or
 Conda environment. If neither exists, they create a project .venv and install
 its requirements.txt once. Validate uses the same existing-environment order
 but never creates an environment or installs packages. Pass --python to use a
-specific interpreter or --managed-env to use Nodebook's shared starter
+specific interpreter or --managed-env to use Rowcall's shared starter
 environment.
 `;
 
-const formatHelpText = `Nodebook Python Document Format
+const formatHelpText = `Rowcall Python Document Format
 
-Nodebook documents are normal Python files. A node is a Python function
+Rowcall documents are normal Python files. A node is a Python function
 decorated with @node. The decorator declares stable output names. Every output
 must exist as a same-named local variable (parameters already count). Assign
 computed outputs in the function body, then end with one generated return
 dictionary.
 
 Example:
-  from nodebook import node
+  from rowcall import node
 
   @node(id="n_load", outputs=["numbers"])
   def load_numbers():
@@ -266,14 +266,14 @@ Valid:
   return {"total": total}
 
 Edges are explicit: depends_on says which upstream nodes may provide inputs.
-Function parameters consume upstream outputs by name. Run nodebook validate
+Function parameters consume upstream outputs by name. Run rowcall validate
 <path> after every edit to check returns, IDs, outputs, edges, and parameter
 binding.
 `;
 
 const runHelpText = `Usage:
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary] [--python <path>] [--managed-env]
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only [--python <path>] [--managed-env]
+  rowcall run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary] [--python <path>] [--managed-env]
+  rowcall run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
 Run prefers a compatible project .venv, then an active virtualenv or Conda
@@ -281,79 +281,79 @@ environment. If neither exists, it creates .venv and installs requirements.txt
 once. Existing environments are never modified automatically.
 
 Examples:
-  nodebook run my-work
-  nodebook run my-work --to total_numbers --json
-  nodebook run my-work --to total_numbers --outputs-only
-  nodebook run my-work --json=summary --trace=summary
-  nodebook run my-work/graph.py --json --trace
+  rowcall run my-work
+  rowcall run my-work --to total_numbers --json
+  rowcall run my-work --to total_numbers --outputs-only
+  rowcall run my-work --json=summary --trace=summary
+  rowcall run my-work/graph.py --json --trace
 `;
 
 const validateHelpText = `Usage:
-  nodebook validate <folder-or-document.py> [--json] [--python <path>] [--managed-env]
+  rowcall validate <folder-or-document.py> [--json] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
-See nodebook help format for the required node and return structure.
+See rowcall help format for the required node and return structure.
 Validate prefers an existing project .venv, then an active environment, then
 system Python. It never creates .venv or installs requirements.txt.
 
 Examples:
-  nodebook validate my-work
-  nodebook validate my-work/graph.py --json
+  rowcall validate my-work
+  rowcall validate my-work/graph.py --json
 `;
 
 const newHelpText = `Usage:
-  nodebook new <folder-or-document.py> [--open] [--python <path>] [--managed-env]
+  rowcall new <folder-or-document.py> [--open] [--python <path>] [--managed-env]
 
-If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
+If the path ends with .py, Rowcall creates that file. Otherwise Rowcall
 creates graph.py, .gitignore, AGENTS.md, and requirements.txt inside the folder
 path. Existing .gitignore, AGENTS.md, and requirements.txt files are preserved.
 Opening prefers an existing project .venv, then an active environment. If
 neither exists, it creates the project's .venv and installs requirements.txt.
 
 Examples:
-  nodebook new my-work
-  nodebook new my-work --open
-  nodebook new my-work --open --python /path/to/python
-  nodebook new graph.py
+  rowcall new my-work
+  rowcall new my-work --open
+  rowcall new my-work --open --python /path/to/python
+  rowcall new graph.py
 `;
 
 const openHelpText = `Usage:
-  nodebook open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>] [--python <path>] [--managed-env]
+  rowcall open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder. The path must already exist.
 Open prefers an existing project .venv, then an active environment. If neither
 exists, it creates the project's .venv and installs requirements.txt once.
 
 Examples:
-  nodebook open my-work
-  nodebook open my-work/explore.py
+  rowcall open my-work
+  rowcall open my-work/explore.py
 `;
 
 const exampleHelpText = `Usage:
-  nodebook example <folder> [--open] [--python <path>] [--managed-env]
+  rowcall example <folder> [--open] [--python <path>] [--managed-env]
 
-Creates a sample Nodebook project with graph.py, data/orders.csv, lightweight
+Creates a sample Rowcall project with graph.py, data/orders.csv, lightweight
 agent guidance, and starter requirements.
 `;
 
 const doctorHelpText = `Usage:
-  nodebook doctor [--updates] [--json] [--python <path>] [--managed-env]
+  rowcall doctor [--updates] [--json] [--python <path>] [--managed-env]
 
-Inspects the local Nodebook install, selected Python environment, dependency
-availability, and log path without modifying Nodebook state.
+Inspects the local Rowcall install, selected Python environment, dependency
+availability, and log path without modifying Rowcall state.
 `;
 
 const resetEnvHelpText = `Usage:
-  nodebook reset-env
+  rowcall reset-env
 
 Recreates the managed Python environment used by the launcher.
 `;
 
 const updateHelpText = `Usage:
-  nodebook update
+  rowcall update
 
 Checks for launcher updates. Update checks are not implemented yet; rerun the
-beta installer to upgrade Nodebook.
+beta installer to upgrade Rowcall.
 `;
 
 export function parseBetaCommand(args: string[]): BetaCommand {
@@ -372,7 +372,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
 
   if (args[0] === "help") {
     if (args.length > 2) {
-      throw new Error("Usage: nodebook help [topic]");
+      throw new Error("Usage: rowcall help [topic]");
     }
     const topic = args[1];
     return topic ? { kind: "help", topic } : { kind: "help" };
@@ -408,7 +408,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "reset-env" };
     }
     if (args.length > 1) {
-      throw new Error("Usage: nodebook reset-env");
+      throw new Error("Usage: rowcall reset-env");
     }
     return { kind: "reset-env" };
   }
@@ -418,7 +418,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
       return { kind: "help", topic: "update" };
     }
     if (args.length > 1) {
-      throw new Error("Usage: nodebook update");
+      throw new Error("Usage: rowcall update");
     }
     return { kind: "update" };
   }
@@ -434,7 +434,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     });
     rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-      throw new Error("Usage: nodebook new <folder-or-document.py> [--open]");
+      throw new Error("Usage: rowcall new <folder-or-document.py> [--open]");
     }
     return {
       kind: "new",
@@ -458,7 +458,7 @@ export function parseBetaCommand(args: string[]): BetaCommand {
     });
     rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-      throw new Error("Usage: nodebook example <folder> [--open]");
+      throw new Error("Usage: rowcall example <folder> [--open]");
     }
     return {
       kind: "example",
@@ -532,27 +532,27 @@ export async function runBetaCommand(
       console.info(helpTextForTopic(command.topic));
       return { code: 0 };
     case "version":
-      console.info(nodebookVersion);
+      console.info(rowcallVersion);
       return { code: 0 };
     case "doctor":
       await printDoctor(command, paths);
       return { code: 0 };
     case "reset-env":
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       await resetManagedEnvironment(paths);
       await ensureManagedEnvironment(paths);
       console.info(`Recreated managed Python environment: ${paths.venvDir}`);
       return { code: 0 };
     case "update":
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       console.info(
-        "Update checks are not implemented yet. Rerun the beta installer to upgrade Nodebook.",
+        "Update checks are not implemented yet. Rerun the beta installer to upgrade Rowcall.",
       );
       return { code: 1 };
     case "new": {
       const documentPath = await createNewDocument(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       const runtime = await resolveLaunchRuntime(paths, documentPath, {
         managedEnv: command.managedEnv,
         pythonCommand: command.pythonCommand,
@@ -574,7 +574,7 @@ export async function runBetaCommand(
     case "example": {
       const documentPath = await createExampleProject(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       const runtime = await resolveLaunchRuntime(paths, documentPath, {
         managedEnv: command.managedEnv,
         pythonCommand: command.pythonCommand,
@@ -594,7 +594,7 @@ export async function runBetaCommand(
       }, paths);
     }
     case "headless": {
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       const preflight = preflightHeadlessCommand(
         command.cliCommand,
         command.args,
@@ -623,7 +623,7 @@ export async function runBetaCommand(
         }
         const status = await runChild(runtime.pythonCommand, [
           "-m",
-          "nodebook",
+          "rowcall",
           command.cliCommand,
           ...command.args,
         ], runtime.mode === "user" ? pythonRuntimeEnv(paths) : undefined);
@@ -635,7 +635,7 @@ export async function runBetaCommand(
       }
     }
     case "launch": {
-      await appendLog(paths, `nodebook ${command.kind}`);
+      await appendLog(paths, `rowcall ${command.kind}`);
       command = {
         ...command,
         documentPath: await resolveExistingDocumentPath(command.documentPath),
@@ -655,7 +655,7 @@ export async function runBetaCommand(
       return await launchServer(command, paths);
     }
     case "server":
-      await startNodebookServer(command.args, {
+      await startRowcallServer(command.args, {
         ...(command.uiDistPath ? { uiDistPath: command.uiDistPath } : {}),
       });
       return { code: 0 };
@@ -703,17 +703,17 @@ export async function resolveExistingDocumentPath(
       });
       if (!documentStat?.isFile) {
         throw new Error(
-          `Nodebook folder does not contain graph.py: ${path}\n\nCreate it with:\n  nodebook new ${path}`,
+          `Rowcall folder does not contain graph.py: ${path}\n\nCreate it with:\n  rowcall new ${path}`,
         );
       }
       return documentPath;
     }
     if (!stat.isFile) {
-      throw new Error(`Nodebook path is not a file or directory: ${path}`);
+      throw new Error(`Rowcall path is not a file or directory: ${path}`);
     }
     if (!path.endsWith(".py")) {
       throw new Error(
-        "Nodebook document path must be a .py file or a folder containing graph.py.",
+        "Rowcall document path must be a .py file or a folder containing graph.py.",
       );
     }
     return path;
@@ -723,9 +723,9 @@ export async function resolveExistingDocumentPath(
     }
   }
 
-  const noun = path.endsWith(".py") ? "Nodebook document" : "Nodebook folder";
+  const noun = path.endsWith(".py") ? "Rowcall document" : "Rowcall folder";
   throw new Error(
-    `Path not found: ${path}\n\nCreate a new ${noun}:\n  nodebook new ${path}\n\nCreate and open it:\n  nodebook new ${path} --open`,
+    `Path not found: ${path}\n\nCreate a new ${noun}:\n  rowcall new ${path}\n\nCreate and open it:\n  rowcall new ${path} --open`,
   );
 }
 
@@ -739,9 +739,9 @@ export async function createNewDocument(targetPath: string): Promise<string> {
   try {
     const stat = await Deno.stat(documentPath);
     if (stat.isFile) {
-      throw new Error(`Nodebook document already exists: ${documentPath}`);
+      throw new Error(`Rowcall document already exists: ${documentPath}`);
     }
-    throw new Error(`Nodebook document path is not a file: ${documentPath}`);
+    throw new Error(`Rowcall document path is not a file: ${documentPath}`);
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) {
       throw error;
@@ -761,7 +761,7 @@ export async function createNewDocument(targetPath: string): Promise<string> {
       } catch (error) {
         if (error instanceof Deno.errors.NotFound) {
           throw new Error(
-            `Parent directory does not exist: ${parent}. Create it first, or pass a folder path to nodebook new.`,
+            `Parent directory does not exist: ${parent}. Create it first, or pass a folder path to rowcall new.`,
           );
         }
         throw error;
@@ -773,7 +773,7 @@ export async function createNewDocument(targetPath: string): Promise<string> {
   if (folderPath) {
     await writeDefaultProjectFiles(folderPath);
   }
-  console.info(`Created new Nodebook document: ${documentPath}`);
+  console.info(`Created new Rowcall document: ${documentPath}`);
   return documentPath;
 }
 
@@ -781,13 +781,13 @@ export async function createExampleProject(
   targetPath: string,
 ): Promise<string> {
   if (targetPath.endsWith(".py")) {
-    throw new Error("nodebook example expects a folder path, not a .py file.");
+    throw new Error("rowcall example expects a folder path, not a .py file.");
   }
   const directory = targetPath.replace(/\/+$/, "");
   const documentPath = `${directory}/graph.py`;
   const dataPath = `${directory}/data/orders.csv`;
   if (await pathExists(documentPath)) {
-    throw new Error(`Nodebook document already exists: ${documentPath}`);
+    throw new Error(`Rowcall document already exists: ${documentPath}`);
   }
   if (await pathExists(dataPath)) {
     throw new Error(`Example data file already exists: ${dataPath}`);
@@ -812,8 +812,8 @@ export async function createExampleProject(
   await Deno.writeTextFile(documentPath, exampleDocumentSource);
   await Deno.writeTextFile(dataPath, exampleOrdersCsv);
   await writeDefaultProjectFiles(directory);
-  console.info(`Created Nodebook example: ${directory}`);
-  console.info(`Open it with: nodebook open ${directory}`);
+  console.info(`Created Rowcall example: ${directory}`);
+  console.info(`Open it with: rowcall open ${directory}`);
   return documentPath;
 }
 
@@ -886,13 +886,13 @@ async function resolveRuntimeSelection(
   if (
     !await commandWorks(
       pythonCommand,
-      ["-c", "import nodebook.runtime.worker"],
+      ["-c", "import rowcall.runtime.worker"],
       pythonRuntimeEnv(paths),
     )
   ) {
     throw new Error(
-      `Selected Python could not start Nodebook: ${pythonCommand}\n\n` +
-        "Try --managed-env to use Nodebook's starter environment, or pass a different Python with --python.",
+      `Selected Python could not start Rowcall: ${pythonCommand}\n\n` +
+        "Try --managed-env to use Rowcall's starter environment, or pass a different Python with --python.",
     );
   }
   return {
@@ -1040,7 +1040,7 @@ async function completeProjectEnvironmentSetup(
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
         `Could not install project dependencies from ${absoluteRequirementsPath}.\n` +
-          `Nodebook will retry this one-time setup on the next open or run.\n\n${detail}`,
+          `Rowcall will retry this one-time setup on the next open or run.\n\n${detail}`,
       );
     }
   }
@@ -1060,20 +1060,20 @@ async function finishProjectEnvironmentCreation(
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Could not finish creating the project environment: ${venvDirectory}\n` +
-        `Nodebook will retry creation on the next open or run.\n\n${detail}`,
+        `Rowcall will retry creation on the next open or run.\n\n${detail}`,
     );
   }
   const venvPython = getVenvPythonPath(venvDirectory);
   if (!await isCompatiblePython(venvPython)) {
     throw new Error(
       `Created project environment could not run Python 3.10 or newer: ${venvDirectory}\n` +
-        "Nodebook will retry creation on the next open or run.",
+        "Rowcall will retry creation on the next open or run.",
     );
   }
 }
 
 function projectEnvironmentSetupPath(venvDirectory: string): string {
-  return `${venvDirectory}/.nodebook-setup`;
+  return `${venvDirectory}/.rowcall-setup`;
 }
 
 async function readOptionalTextFile(path: string): Promise<string | null> {
@@ -1109,7 +1109,7 @@ async function installBundledPythonRuntime(
   await ensureBundledAssets(paths);
   if (!await pathExists(paths.bundledPythonPackageDir)) {
     throw new Error(
-      `Bundled Nodebook Python package was not materialized at ${paths.bundledPythonPackageDir}`,
+      `Bundled Rowcall Python package was not materialized at ${paths.bundledPythonPackageDir}`,
     );
   }
   await runChecked(venvPython, [
@@ -1150,11 +1150,11 @@ async function writeManagedEnvironmentStamp(paths: BetaPaths): Promise<void> {
 }
 
 function managedEnvironmentStamp(): string {
-  return `${nodebookVersion}:${managedEnvironmentRevision}`;
+  return `${rowcallVersion}:${managedEnvironmentRevision}`;
 }
 
 function managedEnvironmentStampPath(paths: BetaPaths): string {
-  return `${paths.venvDir}/.nodebook-version`;
+  return `${paths.venvDir}/.rowcall-version`;
 }
 
 async function ensureBundledAssets(paths: BetaPaths): Promise<void> {
@@ -1164,8 +1164,8 @@ async function ensureBundledAssets(paths: BetaPaths): Promise<void> {
     paths.bundledRequirementsPath,
   );
   await copyDirectoryIfExists(
-    bundledSource("nodebook"),
-    `${paths.bundledPythonPackageDir}/nodebook`,
+    bundledSource("rowcall"),
+    `${paths.bundledPythonPackageDir}/rowcall`,
   );
   await copyIfExists(
     bundledSource("pyproject.toml"),
@@ -1179,7 +1179,7 @@ type DoctorCheckStatus = "ok" | "missing" | "not_checked";
 type DoctorReport = {
   ok: boolean;
   command: "doctor";
-  nodebookVersion: string;
+  rowcallVersion: string;
   dataDirectory: string;
   managedEnvironment: string;
   logFile: string;
@@ -1192,7 +1192,7 @@ type DoctorReport = {
       error?: string;
     };
     imports: Record<
-      "nodebook" | "pandas" | "polars" | "matplotlib",
+      "rowcall" | "pandas" | "polars" | "matplotlib",
       DoctorCheckStatus
     >;
   };
@@ -1231,7 +1231,7 @@ export async function buildDoctorReport(
     PYTHONDONTWRITEBYTECODE: "1",
   };
   const imports = {
-    nodebook: await inspectPythonImport(pythonCommand, "nodebook", runtimeEnv),
+    rowcall: await inspectPythonImport(pythonCommand, "rowcall", runtimeEnv),
     pandas: await inspectPythonImport(pythonCommand, "pandas", runtimeEnv),
     polars: await inspectPythonImport(pythonCommand, "polars", runtimeEnv),
     matplotlib: await inspectPythonImport(
@@ -1242,9 +1242,9 @@ export async function buildDoctorReport(
   };
 
   return {
-    ok: Boolean(pythonCommand) && imports.nodebook === "ok",
+    ok: Boolean(pythonCommand) && imports.rowcall === "ok",
     command: "doctor",
-    nodebookVersion,
+    rowcallVersion,
     dataDirectory: paths.dataDir,
     managedEnvironment: paths.venvDir,
     logFile: paths.logFile,
@@ -1287,7 +1287,7 @@ async function printDoctor(
     return;
   }
 
-  console.info(`Nodebook ${report.nodebookVersion}`);
+  console.info(`Rowcall ${report.rowcallVersion}`);
   console.info(`Data directory: ${report.dataDirectory}`);
   console.info(`Managed venv: ${report.managedEnvironment}`);
   console.info(`Log file: ${report.logFile}`);
@@ -1305,7 +1305,7 @@ async function printDoctor(
   if (report.runtime.python.error) {
     console.info(`Runtime error: ${report.runtime.python.error}`);
   }
-  console.info(`nodebook package: ${report.runtime.imports.nodebook}`);
+  console.info(`rowcall package: ${report.runtime.imports.rowcall}`);
   console.info(`pandas: ${report.runtime.imports.pandas}`);
   console.info(`polars: ${report.runtime.imports.polars}`);
   console.info(`matplotlib: ${report.runtime.imports.matplotlib}`);
@@ -1318,10 +1318,10 @@ async function printDoctor(
     Object.values(report.runtime.imports).some((status) => status !== "ok")
   ) {
     console.info("");
-    console.info("Fix: nodebook reset-env");
+    console.info("Fix: rowcall reset-env");
   } else if (!command.managedEnv && report.runtime.python.status !== "ok") {
     console.info("");
-    console.info("Fix: nodebook doctor --managed-env");
+    console.info("Fix: rowcall doctor --managed-env");
   }
 }
 
@@ -1363,7 +1363,7 @@ async function launchServer(
   ];
   if (!command.managedEnv) {
     serverArgs.push(
-      "--nodebook-python-package",
+      "--rowcall-python-package",
       paths.bundledPythonPackageDir,
     );
   }
@@ -1376,7 +1376,7 @@ async function launchServer(
   const stdoutDone = teeProcessOutput(server.stdout, Deno.stdout, paths);
   const stderrDone = teeProcessOutput(server.stderr, Deno.stderr, paths);
   const serverStatus = server.status;
-  const url = buildNodebookUrl(command.hostname, command.port, authToken);
+  const url = buildRowcallUrl(command.hostname, command.port, authToken);
   try {
     await waitForServer(url, serverStatus);
   } catch (error) {
@@ -1387,7 +1387,7 @@ async function launchServer(
     }
     throw error;
   }
-  console.info(`Nodebook is running at ${url}`);
+  console.info(`Rowcall is running at ${url}`);
   if (command.openBrowser) {
     await openBrowser(url);
   }
@@ -1597,7 +1597,7 @@ async function findCompatibleUserPython(): Promise<string> {
     // Use the user-facing message below, which includes the launcher escapes.
   }
   throw new Error(
-    "Could not find Python 3.10 or newer. Pass --managed-env to use Nodebook's starter environment, or pass --python /path/to/python.",
+    "Could not find Python 3.10 or newer. Pass --managed-env to use Rowcall's starter environment, or pass --python /path/to/python.",
   );
 }
 
@@ -1711,7 +1711,7 @@ function ensureServerPortAvailable(
 }
 
 export function formatPortInUseError(hostname: string, port: number): string {
-  return `Port ${port} is already in use on ${hostname}. Nodebook may already be running; return to the existing browser window. If you intentionally need another server, stop the process using the port or start Nodebook with --port ${
+  return `Port ${port} is already in use on ${hostname}. Rowcall may already be running; return to the existing browser window. If you intentionally need another server, stop the process using the port or start Rowcall with --port ${
     port + 1
   }.`;
 }
@@ -1736,11 +1736,11 @@ async function waitForServer(
     if (result === "ready") return;
     if (typeof result === "object" && result.kind === "exited") {
       throw new Error(
-        `Nodebook server exited before it was ready (exit code ${result.code})`,
+        `Rowcall server exited before it was ready (exit code ${result.code})`,
       );
     }
   }
-  throw new Error(`Timed out waiting for Nodebook server at ${url}`);
+  throw new Error(`Timed out waiting for Rowcall server at ${url}`);
 }
 
 function delay(ms: number): Promise<void> {
@@ -1768,7 +1768,7 @@ async function appendLog(paths: BetaPaths, message: string): Promise<void> {
   await Deno.writeTextFile(paths.logFile, `[${timestamp}] ${message}\n`, {
     append: true,
   }).catch(() => {
-    // Logging should never prevent Nodebook from starting.
+    // Logging should never prevent Rowcall from starting.
   });
 }
 

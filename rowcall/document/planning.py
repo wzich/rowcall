@@ -1,4 +1,4 @@
-"""Run planning helpers for parsed Nodebook documents."""
+"""Run planning helpers for parsed Rowcall documents."""
 
 from __future__ import annotations
 

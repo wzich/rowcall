@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   ]);
 
   console.info("");
-  console.info("Nodebook Python environment is ready.");
+  console.info("Rowcall Python environment is ready.");
   console.info(`Run: deno task dev`);
 }
 

@@ -1,4 +1,4 @@
-import { nodebookFetch } from "./auth.ts";
+import { rowcallFetch } from "./auth.ts";
 
 const pythonRuntimePath = "/runtime/python";
 
@@ -10,7 +10,7 @@ export type PythonRuntimeInfo = {
   runtimeMode: "user" | "managed";
   condaPrefix?: string;
   virtualEnv?: string;
-  nodebookImport: {
+  rowcallImport: {
     ok: boolean;
     path?: string;
     error?: string;
@@ -40,7 +40,7 @@ export class RuntimeApiRequestError extends Error {
 }
 
 export async function loadPythonRuntime(): Promise<LoadPythonRuntimeSuccess> {
-  const response = await nodebookFetch(pythonRuntimePath);
+  const response = await rowcallFetch(pythonRuntimePath);
   const result = await response.json() as LoadPythonRuntimeResult;
 
   if (!result.ok) {

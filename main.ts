@@ -6,7 +6,7 @@ import type {
 } from "./types.ts";
 import {
   decodeDocumentOperationsRequest,
-  type NodebookDocumentV1,
+  type RowcallDocumentV1,
 } from "./document.ts";
 import {
   applyPythonDocumentOperations,
@@ -32,7 +32,7 @@ import { parseStartupOptions } from "./startup_args.ts";
 export const app = new Hono();
 let uiDistPath: string | URL = "app/ui/dist";
 let activeDocumentPath = "";
-let serverSecurity: NodebookServerSecurity = {
+let serverSecurity: RowcallServerSecurity = {
   hostname: "127.0.0.1",
   port: 8000,
   authToken: "secret-token",
@@ -42,7 +42,7 @@ let serverSecurity: NodebookServerSecurity = {
 const executionStreamInitialPaddingBytes = 2048;
 const executionStreamHeartbeatPaddingBytes = 1024;
 const executionStreamHeartbeatIntervalMs = 750;
-const defaultNewDocumentSource = `from nodebook import node
+const defaultNewDocumentSource = `from rowcall import node
 
 
 @node(id="n_start", outputs=["message"])
@@ -54,12 +54,12 @@ def start():
 export function setActiveDocumentPathForTests(path: string): void {
   activeDocumentPath = path;
 }
-export type NodebookServerOptions = {
+export type RowcallServerOptions = {
   uiDistPath?: string | URL;
   authToken?: string;
 };
 
-export type NodebookServerSecurity = {
+export type RowcallServerSecurity = {
   hostname: string;
   port: number;
   authToken: string;
@@ -73,15 +73,15 @@ type RequestSecurityFailure = {
 
 type RequestSecurityResult = { ok: true } | RequestSecurityFailure;
 
-export async function startNodebookServer(
+export async function startRowcallServer(
   args = Deno.args,
-  options: NodebookServerOptions = {},
+  options: RowcallServerOptions = {},
 ): Promise<void> {
   const startupOptions = getStartupOptions(args);
   configurePythonRuntime({
     command: startupOptions.pythonCommand,
-    pythonPathEntries: startupOptions.nodebookPythonPackagePath
-      ? [startupOptions.nodebookPythonPackagePath]
+    pythonPathEntries: startupOptions.rowcallPythonPackagePath
+      ? [startupOptions.rowcallPythonPackagePath]
       : [],
     runtimeMode: startupOptions.runtimeMode,
   });
@@ -98,10 +98,10 @@ export async function startNodebookServer(
     createIfMissing: createActiveDocumentIfMissing,
   });
   activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
-  console.info(`Nodebook document: ${activeDocumentPath}`);
+  console.info(`Rowcall document: ${activeDocumentPath}`);
   console.info(
-    `Nodebook URL: ${
-      buildNodebookUrl(
+    `Rowcall URL: ${
+      buildRowcallUrl(
         startupOptions.hostname,
         startupOptions.port,
         serverSecurity.authToken,
@@ -158,7 +158,7 @@ function errorResponse(error: ApiError): ApiErrorResponse {
 function documentDecodeError(issues: ValidationIssue[]): ApiErrorResponse {
   return errorResponse({
     kind: "document_decode_error",
-    message: "Nodebook document decoding failed",
+    message: "Rowcall document decoding failed",
     issues,
   });
 }
@@ -172,7 +172,7 @@ function getStartupOptions(args: string[]) {
   }
 }
 
-export function buildNodebookUrl(
+export function buildRowcallUrl(
   hostname: string,
   port: number,
   authToken: string,
@@ -190,7 +190,7 @@ function formatUrlHost(hostname: string): string {
 
 export function validateLocalRequest(
   request: Request,
-  security: NodebookServerSecurity,
+  security: RowcallServerSecurity,
 ): RequestSecurityResult {
   if (!isAllowedHostHeader(request.headers.get("host"), security.hostname)) {
     return {
@@ -215,13 +215,13 @@ export function validateLocalRequest(
     return { ok: true };
   }
 
-  const requestToken = request.headers.get("x-nodebook-token") ??
+  const requestToken = request.headers.get("x-rowcall-token") ??
     url.searchParams.get("token");
   if (!security.authToken || requestToken !== security.authToken) {
     return {
       ok: false,
       status: 401,
-      message: "Missing or invalid Nodebook authorization token.",
+      message: "Missing or invalid Rowcall authorization token.",
     };
   }
 
@@ -304,29 +304,29 @@ async function ensureActiveDocumentExists(
   try {
     const stat = await Deno.stat(path);
     if (!stat.isFile) {
-      console.error(`Nodebook document path is not a file: ${path}`);
+      console.error(`Rowcall document path is not a file: ${path}`);
       Deno.exit(1);
     }
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) {
-      console.error(`Unable to inspect Nodebook document path: ${path}`);
+      console.error(`Unable to inspect Rowcall document path: ${path}`);
       console.error(error);
       Deno.exit(1);
     }
 
     if (options.createIfMissing) {
-      await createNodebookDocument(path);
-      console.info(`Created Nodebook Python document: ${path}`);
+      await createRowcallDocument(path);
+      console.info(`Created Rowcall Python document: ${path}`);
       return;
     }
 
-    console.error(`Nodebook Python document does not exist: ${path}`);
+    console.error(`Rowcall Python document does not exist: ${path}`);
     console.error(`Pass --create to initialize it.`);
     Deno.exit(1);
   }
 }
 
-async function createNodebookDocument(path: string): Promise<void> {
+async function createRowcallDocument(path: string): Promise<void> {
   const directory = getParentDirectory(path);
   if (directory) {
     await Deno.mkdir(directory, { recursive: true });
@@ -428,7 +428,7 @@ function formatStreamComment(comment: string, paddingBytes = 0): string {
   return `: ${comment}${" ".repeat(paddingBytes)}\n\n`;
 }
 
-function formatDocument(document: NodebookDocumentV1): NodebookDocumentV1 {
+function formatDocument(document: RowcallDocumentV1): RowcallDocumentV1 {
   return {
     version: document.version,
     nodes: document.nodes.map((node) => ({
@@ -551,7 +551,7 @@ export function streamExecutionEvents(
       try {
         enqueueFrame(
           formatStreamComment(
-            "nodebook stream padding",
+            "rowcall stream padding",
             executionStreamInitialPaddingBytes,
           ),
         );
@@ -578,7 +578,7 @@ export function streamExecutionEvents(
           if (result.kind === "heartbeat") {
             enqueueFrame(
               formatStreamComment(
-                "nodebook keep-alive",
+                "rowcall keep-alive",
                 executionStreamHeartbeatPaddingBytes,
               ),
             );
@@ -685,7 +685,7 @@ app.get("/document", async (c) => {
           ? errorResponse({
             kind: "file_read_error",
             message: decoded.issues[0]?.message ??
-              `Unable to read Nodebook document: ${activeDocumentPath}`,
+              `Unable to read Rowcall document: ${activeDocumentPath}`,
             issues: decoded.issues,
           })
           : documentDecodeError(decoded.issues),
@@ -702,7 +702,7 @@ app.get("/document", async (c) => {
     return c.json(
       errorResponse({
         kind: "file_read_error",
-        message: `Unable to read Nodebook document: ${activeDocumentPath}`,
+        message: `Unable to read Rowcall document: ${activeDocumentPath}`,
       }),
       500,
     );
@@ -723,7 +723,7 @@ app.get("/document/status", async (c) => {
     return c.json(
       errorResponse({
         kind: "file_read_error",
-        message: `Unable to read Nodebook document: ${activeDocumentPath}`,
+        message: `Unable to read Rowcall document: ${activeDocumentPath}`,
       }),
       500,
     );
@@ -742,7 +742,7 @@ app.get("/runtime/python", async (c) => {
     return c.json(
       errorResponse({
         kind: "runtime_inspection_error",
-        message: "Unable to inspect the Python runtime Nodebook will use.",
+        message: "Unable to inspect the Python runtime Rowcall will use.",
       }),
       500,
     );
@@ -757,10 +757,10 @@ app.post("/document/operations", async (c) => {
     return c.json(
       errorResponse({
         kind: "invalid_json",
-        message: "Unable to parse provided Nodebook document",
+        message: "Unable to parse provided Rowcall document",
         issues: [{
           kind: "invalid_json",
-          message: "Unable to parse provided Nodebook document",
+          message: "Unable to parse provided Rowcall document",
         }],
       }),
       400,
@@ -800,9 +800,9 @@ app.post("/document/operations", async (c) => {
           message: stale
             ? "The Python document changed on disk after it was loaded. Reload before applying edits."
             : readFailed
-            ? "Unable to read the Nodebook document before applying edits."
+            ? "Unable to read the Rowcall document before applying edits."
             : writeFailed
-            ? "Unable to write Nodebook document."
+            ? "Unable to write Rowcall document."
             : "Document operation validation failed",
           issues: saved.issues,
         }),
@@ -817,13 +817,13 @@ app.post("/document/operations", async (c) => {
     });
   } catch (error) {
     console.error(
-      `Failed to apply Python Nodebook document operations at ${activeDocumentPath}:`,
+      `Failed to apply Python Rowcall document operations at ${activeDocumentPath}:`,
     );
     console.error(error);
     return c.json(
       errorResponse({
         kind: "document_write_error",
-        message: `Unable to write Nodebook document: ${activeDocumentPath}`,
+        message: `Unable to write Rowcall document: ${activeDocumentPath}`,
       }),
       500,
     );
@@ -1128,5 +1128,5 @@ app.get("/assets/*", (c) => {
 app.get("*", () => serveBuiltUiIndex());
 
 if (import.meta.main) {
-  await startNodebookServer();
+  await startRowcallServer();
 }

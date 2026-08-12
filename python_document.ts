@@ -1,7 +1,7 @@
 import {
   type DocumentOperation,
   type GraphPosition,
-  type NodebookDocumentV1,
+  type RowcallDocumentV1,
 } from "./document.ts";
 import type { ValidationIssue } from "./types.ts";
 import {
@@ -10,11 +10,11 @@ import {
 } from "./python_worker_client.ts";
 
 export type LoadPythonDocumentResult =
-  | { ok: true; document: NodebookDocumentV1; issues: [] }
+  | { ok: true; document: RowcallDocumentV1; issues: [] }
   | { ok: false; issues: ValidationIssue[] };
 
 export type ApplyPythonDocumentOperationsResult =
-  | { ok: true; document: NodebookDocumentV1; issues: [] }
+  | { ok: true; document: RowcallDocumentV1; issues: [] }
   | { ok: false; issues: ValidationIssue[] };
 
 export type PythonDocumentStatus = {
@@ -134,7 +134,7 @@ export async function loadPythonDocument(
       };
     }
 
-    if (!isNodebookDocument(event["document"])) {
+    if (!isRowcallDocument(event["document"])) {
       return {
         ok: false,
         issues: [{
@@ -260,7 +260,7 @@ async function readPythonDocumentSnapshot(
     resolvedPath = await canonicalDocumentPath(path);
   } catch (error) {
     throw new DocumentReadError(
-      `Unable to resolve Nodebook document ${path}: ${errorMessage(error)}`,
+      `Unable to resolve Rowcall document ${path}: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -276,7 +276,7 @@ async function readPythonDocumentSnapshot(
       } catch (fallbackError) {
         if (fallbackError instanceof DocumentReadError) throw fallbackError;
         throw new DocumentReadError(
-          `Unable to read Nodebook document ${resolvedPath} without modifying its read-only directory: ${
+          `Unable to read Rowcall document ${resolvedPath} without modifying its read-only directory: ${
             errorMessage(fallbackError)
           }`,
           { cause: fallbackError },
@@ -284,9 +284,7 @@ async function readPythonDocumentSnapshot(
       }
     }
     throw new DocumentReadError(
-      `Unable to read Nodebook document ${resolvedPath}: ${
-        errorMessage(error)
-      }`,
+      `Unable to read Rowcall document ${resolvedPath}: ${errorMessage(error)}`,
       { cause: error },
     );
   } finally {
@@ -315,7 +313,7 @@ async function readStablePythonDocumentSnapshotWithoutLock(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (await pathExists(transactionPath)) {
       throw new DocumentReadError(
-        `Nodebook cannot recover a pending document transaction in the read-only directory containing ${resolvedPath}.`,
+        `Rowcall cannot recover a pending document transaction in the read-only directory containing ${resolvedPath}.`,
       );
     }
     const first = await readPythonDocumentSnapshotUnlocked(resolvedPath);
@@ -329,7 +327,7 @@ async function readStablePythonDocumentSnapshotWithoutLock(
     }
   }
   throw new DocumentReadError(
-    `The Nodebook document changed repeatedly while it was being read: ${resolvedPath}`,
+    `The Rowcall document changed repeatedly while it was being read: ${resolvedPath}`,
   );
 }
 
@@ -374,7 +372,7 @@ async function inspectPythonDocumentSnapshot(
       };
     }
 
-    if (!isNodebookDocument(event["document"])) {
+    if (!isRowcallDocument(event["document"])) {
       return {
         ok: false,
         issues: [{
@@ -479,7 +477,7 @@ async function applyPythonDocumentOperationsUnlocked(
 
     const nextSidecarMetadata = event.sidecarMetadata ??
       event["sidecar_metadata"] ??
-      (isNodebookDocument(event.document)
+      (isRowcallDocument(event.document)
         ? sidecarMetadataFromDocument(event.document)
         : sidecarMetadata);
 
@@ -571,7 +569,7 @@ export function postCommitInspectionResult(
     issues: [{
       kind: "document_write_error",
       message:
-        "The document files were committed, but Nodebook could not inspect the saved state. Reload from disk before editing." +
+        "The document files were committed, but Rowcall could not inspect the saved state. Reload from disk before editing." +
         (detail ? ` ${detail}` : ""),
     }],
   };
@@ -590,7 +588,7 @@ function workerValidationIssues(
   }];
 }
 
-function isNodebookDocument(value: unknown): value is NodebookDocumentV1 {
+function isRowcallDocument(value: unknown): value is RowcallDocumentV1 {
   const record = asRecord(value);
   return typeof record?.["version"] === "number" &&
     Array.isArray(record["nodes"]) &&
@@ -599,8 +597,8 @@ function isNodebookDocument(value: unknown): value is NodebookDocumentV1 {
 
 export function sidecarPathForPythonDocument(path: string): string {
   return path.endsWith(".py")
-    ? `${path.slice(0, -3)}.nodebook.json`
-    : `${path}.nodebook.json`;
+    ? `${path.slice(0, -3)}.rowcall.json`
+    : `${path}.rowcall.json`;
 }
 
 type SidecarNodeMetadata = {
@@ -622,9 +620,9 @@ type SidecarDocumentMetadata = {
 };
 
 async function applySidecarMetadata(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
   sidecar: SidecarDocumentMetadata,
-): Promise<NodebookDocumentV1> {
+): Promise<RowcallDocumentV1> {
   const revision = await documentRevisionWithSidecar(
     document.revision,
     sidecar,
@@ -717,7 +715,7 @@ function sidecarNodeMetadata(
 }
 
 function sidecarMetadataFromDocument(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
 ): SidecarDocumentMetadata {
   return {
     version: 1,
@@ -832,7 +830,7 @@ async function commitDocumentTransaction(
   if (!sourceChanged && nextSidecar !== null) {
     const sidecarTempPath = await writeSyncedTempFile(
       sidecarDirectory,
-      ".nodebook-sidecar-",
+      ".rowcall-sidecar-",
       nextSidecar,
       sidecarInfo?.mode,
     );
@@ -858,7 +856,7 @@ async function commitDocumentTransaction(
   if (!sidecarChanged) {
     const sourceTempPath = await writeSyncedTempFile(
       sourceDirectory,
-      ".nodebook-source-",
+      ".rowcall-source-",
       nextSource,
       sourceInfo.mode,
     );
@@ -882,11 +880,11 @@ async function commitDocumentTransaction(
     return;
   }
   if (nextSidecar === null) {
-    throw new Error("Cannot remove Nodebook sidecar metadata during a save.");
+    throw new Error("Cannot remove Rowcall sidecar metadata during a save.");
   }
   const sourceTempPath = await writeSyncedTempFile(
     sourceDirectory,
-    ".nodebook-source-",
+    ".rowcall-source-",
     nextSource,
     sourceInfo.mode,
   );
@@ -894,7 +892,7 @@ async function commitDocumentTransaction(
   try {
     sidecarTempPath = await writeSyncedTempFile(
       sidecarDirectory,
-      ".nodebook-sidecar-",
+      ".rowcall-sidecar-",
       nextSidecar,
       sidecarInfo?.mode,
     );
@@ -927,7 +925,7 @@ async function commitDocumentTransaction(
     );
 
     // Revalidate after publishing the journal as well. The lock coordinates
-    // Nodebook writers, but an editor or another process can still replace
+    // Rowcall writers, but an editor or another process can still replace
     // either user file while a save is being prepared.
     try {
       await assertDocumentFilesUnchanged(
@@ -1014,7 +1012,7 @@ async function assertCommittedSourceAndSidecarReady(
   const sidecar = await readOptionalTextFile(sidecarPath);
   if (source !== committedSource || sidecar !== expectedSidecar) {
     throw new Error(
-      "A document file changed after the Python save commit point. Nodebook preserved the external file and left the transaction journal for explicit recovery.",
+      "A document file changed after the Python save commit point. Rowcall preserved the external file and left the transaction journal for explicit recovery.",
     );
   }
 }
@@ -1039,12 +1037,12 @@ async function recoverDocumentTransaction(path: string): Promise<void> {
       isPreparedTransactionPath(
         path,
         parsed.sourceTempPath,
-        ".nodebook-source-",
+        ".rowcall-source-",
       ) &&
       isPreparedTransactionPath(
         expectedSidecarPath,
         parsed.sidecarTempPath,
-        ".nodebook-sidecar-",
+        ".rowcall-sidecar-",
       )
     ) {
       transaction = parsed as DocumentTransaction;
@@ -1054,7 +1052,7 @@ async function recoverDocumentTransaction(path: string): Promise<void> {
   }
   if (!transaction) {
     throw new Error(
-      `Cannot recover malformed Nodebook transaction journal: ${journalPath}`,
+      `Cannot recover malformed Rowcall transaction journal: ${journalPath}`,
     );
   }
 
@@ -1080,7 +1078,7 @@ async function recoverDocumentTransaction(path: string): Promise<void> {
       await syncDirectory(containingDirectory(transaction.sidecarPath));
     } else {
       throw new Error(
-        `Cannot recover Nodebook transaction after the Python file was committed: ${journalPath}`,
+        `Cannot recover Rowcall transaction after the Python file was committed: ${journalPath}`,
       );
     }
   }
@@ -1109,14 +1107,14 @@ async function captureDocumentAliasBindings(
 ): Promise<DocumentAliasBindings> {
   const source = await capturePathAlias(path);
   if (!source.exists || !source.targetResolved) {
-    throw new DocumentReadError(`Nodebook document does not exist: ${path}`);
+    throw new DocumentReadError(`Rowcall document does not exist: ${path}`);
   }
   const sidecar = await capturePathAlias(
     sidecarPathForPythonDocument(source.targetPath),
   );
   if (sidecar.exists && !sidecar.targetResolved) {
     throw new DocumentReadError(
-      `Nodebook sidecar is a dangling symlink: ${sidecar.requestedPath}`,
+      `Rowcall sidecar is a dangling symlink: ${sidecar.requestedPath}`,
     );
   }
   return { source: { ...source, exists: true }, sidecar };
@@ -1233,14 +1231,14 @@ async function openDocumentLock(path: string): Promise<Deno.FsFile> {
 
 function lockPathForPythonDocument(path: string): string {
   const document = splitPath(path);
-  return joinPath(document.directory, `.${document.name}.nodebook.lock`);
+  return joinPath(document.directory, `.${document.name}.rowcall.lock`);
 }
 
 function transactionPathForPythonDocument(path: string): string {
   const document = splitPath(path);
   return joinPath(
     document.directory,
-    `.${document.name}.nodebook-transaction.json`,
+    `.${document.name}.rowcall-transaction.json`,
   );
 }
 
@@ -1256,7 +1254,7 @@ async function atomicReplaceTextFile(
   const directory = containingDirectory(path);
   const tempPath = await writeSyncedTempFile(
     directory,
-    ".nodebook-marker-",
+    ".rowcall-marker-",
     text,
     mode,
   );
@@ -1372,7 +1370,7 @@ async function writeTextToOpenFile(
   while (written < bytes.length) {
     const count = await file.write(bytes.subarray(written));
     if (count === 0) {
-      throw new Error("Unable to write Nodebook document file.");
+      throw new Error("Unable to write Rowcall document file.");
     }
     written += count;
   }

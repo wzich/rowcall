@@ -1,4 +1,4 @@
-from nodebook import node
+from rowcall import node
 
 
 @node(id="n_load", outputs=["message"])
@@ -13,5 +13,5 @@ def shout_message(message):
     return {"message": message}
 
 
-# NodeBook graph
+# Rowcall graph
 shout_message.depends_on(read_message)

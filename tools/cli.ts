@@ -2,7 +2,7 @@ import { resolvePythonCommand } from "../runtime_config.ts";
 
 if (import.meta.main) {
   const command = new Deno.Command(await resolvePythonCommand(), {
-    args: ["-m", "nodebook", ...Deno.args],
+    args: ["-m", "rowcall", ...Deno.args],
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -13,7 +13,7 @@ if (import.meta.main) {
     Deno.exit(status.code);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to run Python Nodebook CLI: ${message}`);
+    console.error(`Failed to run Python Rowcall CLI: ${message}`);
     Deno.exit(2);
   }
 }

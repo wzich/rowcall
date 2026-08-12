@@ -2,10 +2,10 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-from nodebook import NodebookNodeError, node
+from rowcall import RowcallNodeError, node
 
 
-class NodebookPackageTest(unittest.TestCase):
+class RowcallPackageTest(unittest.TestCase):
     def test_node_decorator_attaches_metadata_without_wrapping_function(self):
         @node(id="n_test", outputs=["x", "y"])
         def make_values():
@@ -14,8 +14,8 @@ class NodebookPackageTest(unittest.TestCase):
             return {"x": x, "y": y}
 
         self.assertEqual(make_values(), {"x": 1, "y": 2})
-        self.assertEqual(make_values.__nodebook_id__, "n_test")
-        self.assertEqual(make_values.__nodebook_outputs__, ["x", "y"])
+        self.assertEqual(make_values.__rowcall_id__, "n_test")
+        self.assertEqual(make_values.__rowcall_outputs__, ["x", "y"])
 
     def test_depends_on_records_upstream_functions_and_returns_downstream(self):
         @node(id="n_parent", outputs=["x"])
@@ -31,13 +31,13 @@ class NodebookPackageTest(unittest.TestCase):
         result = child.depends_on(parent)
 
         self.assertIs(result, child)
-        self.assertEqual(child.__nodebook_dependencies__, [parent])
+        self.assertEqual(child.__rowcall_dependencies__, [parent])
 
     def test_node_rejects_non_string_outputs(self):
-        with self.assertRaises(NodebookNodeError):
+        with self.assertRaises(RowcallNodeError):
             node(id="n_test", outputs=["x", 1])
 
-        with self.assertRaises(NodebookNodeError):
+        with self.assertRaises(RowcallNodeError):
             node(id="n_test", outputs="x")
 
     def test_generated_example_imports(self):
@@ -49,8 +49,8 @@ class NodebookPackageTest(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        self.assertEqual(module.read_message.__nodebook_id__, "n_load")
-        self.assertEqual(module.shout_message.__nodebook_dependencies__, [
+        self.assertEqual(module.read_message.__rowcall_id__, "n_load")
+        self.assertEqual(module.shout_message.__rowcall_dependencies__, [
             module.read_message,
         ])
 

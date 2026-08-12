@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Nodebook Runtime and App Split Plan</title>
+    <title>Rowcall Runtime and App Split Plan</title>
     <style>
       :root {
         color-scheme: light;
@@ -561,9 +561,9 @@
       <section class="hero" id="top">
         <div class="hero-main">
           <p class="eyebrow">Architecture plan</p>
-          <h1>Nodebook Runtime and App Split</h1>
+          <h1>Rowcall Runtime and App Split</h1>
           <p class="hero-copy">
-            This plan describes how Nodebook should evolve from one beta codebase
+            This plan describes how Rowcall should evolve from one beta codebase
             into a monorepo with a Python-owned runtime and a TypeScript-owned
             app. The goal is a standalone Python execution tool, with the canvas
             app acting as the human-friendly editor and runtime client.
@@ -580,7 +580,7 @@
           <div>
             <h2>Target shape</h2>
             <p>
-              A Nodebook document is a real Python file that can be validated
+              A Rowcall document is a real Python file that can be validated
               and run without the canvas. The app edits that file through a
               structured source-aware workflow.
             </p>
@@ -625,8 +625,8 @@
           <article class="card">
             <h3>Python source is the executable truth</h3>
             <p>
-              A <code>.py</code> Nodebook document must be complete enough for
-              <code>nodebook validate</code> and <code>nodebook run</code>
+              A <code>.py</code> Rowcall document must be complete enough for
+              <code>rowcall validate</code> and <code>rowcall run</code>
               without opening the app. The app may hold unsaved source text, but
               runtime behavior starts from source plus document path.
             </p>
@@ -634,7 +634,7 @@
           <article class="card">
             <h3>Sidecars are app metadata</h3>
             <p>
-              A <code>.nodebook.json</code> sidecar stores editor-only details
+              A <code>.rowcall.json</code> sidecar stores editor-only details
               such as canvas position and descriptions. The runtime ignores it
               by default so CLI, agents, and CI can run the Python file alone.
             </p>
@@ -658,7 +658,7 @@
           <article class="card">
             <h3>Strict documents are acceptable</h3>
             <p>
-              Nodebook documents are not arbitrary Python programs. They use a
+              Rowcall documents are not arbitrary Python programs. They use a
               recognizable top-level structure with <code>@node</code> functions
               and top-level <code>depends_on</code> calls.
             </p>
@@ -701,7 +701,7 @@
               <h3>Python Runtime Package</h3>
               <p>
                 Parses, validates, plans, executes, streams events, and exposes
-                <code>nodebook</code> CLI plus a worker protocol.
+                <code>rowcall</code> CLI plus a worker protocol.
               </p>
             </div>
             <div class="arrow">&lt;-&gt;</div>
@@ -728,7 +728,7 @@
         <div class="grid-2">
           <article class="card">
             <h3>Local CLI flow</h3>
-            <pre><code>nodebook run ~/Desktop/analysis.py --json
+            <pre><code>rowcall run ~/Desktop/analysis.py --json
   read source from documentPath
   parse source without import side effects
   validate and plan
@@ -761,7 +761,7 @@
         </div>
 
         <div class="repo-tree">
-          <pre><code>nodebook/
+          <pre><code>rowcall/
   __init__.py
   __main__.py
   cli.py
@@ -805,7 +805,7 @@ tests/
               </thead>
               <tbody>
                 <tr>
-                  <td><code>nodebook.document</code></td>
+                  <td><code>rowcall.document</code></td>
                   <td>Python source model, parsing, planning, source rewriting</td>
                   <td>
                     Replaces current TypeScript/Python split for document
@@ -813,7 +813,7 @@ tests/
                   </td>
                 </tr>
                 <tr>
-                  <td><code>nodebook.runtime</code></td>
+                  <td><code>rowcall.runtime</code></td>
                   <td>Execution, sessions, previews, copying, display events</td>
                   <td>
                     Owns source-backed full-graph and upstream-to-node
@@ -822,7 +822,7 @@ tests/
                   </td>
                 </tr>
                 <tr>
-                  <td><code>nodebook.protocol</code></td>
+                  <td><code>rowcall.protocol</code></td>
                   <td>Versioned request and response messages</td>
                   <td>
                     Currently implemented as newline-delimited JSON worker
@@ -860,7 +860,7 @@ tests/
           </div>
           <p class="section-lede">
             The runtime should be useful on its own. A user, script, CI job, or
-            agent should be able to validate and execute a Nodebook document
+            agent should be able to validate and execute a Rowcall document
             without launching the canvas app.
           </p>
         </div>
@@ -872,7 +872,7 @@ tests/
           </div>
           <div class="flow-step">
             <strong>Parse</strong>
-            <span>Use AST parsing to decode strict Nodebook syntax without import side effects.</span>
+            <span>Use AST parsing to decode strict Rowcall syntax without import side effects.</span>
           </div>
           <div class="flow-step">
             <strong>Validate</strong>
@@ -891,10 +891,10 @@ tests/
         <div class="grid-2" style="margin-top: 16px;">
           <article class="card">
             <h3>CLI commands</h3>
-            <pre><code>nodebook validate path/to/document.py
-nodebook run path/to/document.py --json
-nodebook run path/to/document.py --to build_customer_facts --json --trace
-python -m nodebook run path/to/document.py --json</code></pre>
+            <pre><code>rowcall validate path/to/document.py
+rowcall run path/to/document.py --json
+rowcall run path/to/document.py --to build_customer_facts --json --trace
+python -m rowcall run path/to/document.py --json</code></pre>
             <p>
               The public CLI is Python-owned. Existing Deno tasks may remain
               only as wrappers to the Python CLI.
@@ -1101,7 +1101,7 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <div>
               <h3>Python runtime executor</h3>
               <p>
-                Extract execution behavior into <code>nodebook.runtime</code>.
+                Extract execution behavior into <code>rowcall.runtime</code>.
                 Keep namespace isolation, display events, stdout/stderr capture,
                 output previews, table previews, and type-aware copying.
               </p>
@@ -1119,13 +1119,13 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <div>
               <h3>Python public CLI</h3>
               <p>
-                Make <code>nodebook</code> and <code>python -m nodebook</code>
+                Make <code>rowcall</code> and <code>python -m rowcall</code>
                 the public runtime interface. Convert the Deno CLI task to a
                 thin wrapper so there is only one runtime behavior.
               </p>
               <ul>
-                <li><code>nodebook validate path.py</code></li>
-                <li><code>nodebook run path.py --json --trace --to target</code></li>
+                <li><code>rowcall validate path.py</code></li>
+                <li><code>rowcall run path.py --json --trace --to target</code></li>
                 <li>Clear exit codes for usage, validation, and execution failures.</li>
                 <li>Document that the CLI ignores sidecars by default.</li>
               </ul>
@@ -1173,7 +1173,7 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <div>
               <h3>Python source rewrite APIs</h3>
               <p>
-                Move source editing into <code>nodebook.document.rewrite</code>.
+                Move source editing into <code>rowcall.document.rewrite</code>.
                 The first implementation supports constrained body/output edits
                 and <code>depends_on</code> changes. Full node creation,
                 deletion, and save-time app integration remain follow-up work.
@@ -1182,7 +1182,7 @@ python -m nodebook run path/to/document.py --json</code></pre>
                 <li>Edit node bodies and declared outputs under strict constraints.</li>
                 <li>Add and remove <code>depends_on</code> lines.</li>
                 <li>Next: add, rename, and delete nodes through the Python rewrite layer.</li>
-                <li>Next: normalize Nodebook-managed regions while preserving unrelated top-level code.</li>
+                <li>Next: normalize Rowcall-managed regions while preserving unrelated top-level code.</li>
               </ul>
             </div>
           </article>
@@ -1228,7 +1228,7 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <h3>Agent A <span class="status target">First</span></h3>
             <p><strong>Python document parser and planner.</strong></p>
             <ul>
-              <li>Create or reorganize <code>nodebook.document</code>.</li>
+              <li>Create or reorganize <code>rowcall.document</code>.</li>
               <li>Parse from source text and document path.</li>
               <li>Decode nodes, outputs, parameters, source ranges, and edges.</li>
               <li>Validate strict format without importing user code.</li>
@@ -1253,7 +1253,7 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <h3>Agent C <span class="status target">After A</span></h3>
             <p><strong>Python runtime executor.</strong></p>
             <ul>
-              <li>Move execution behavior behind <code>nodebook.runtime</code>.</li>
+              <li>Move execution behavior behind <code>rowcall.runtime</code>.</li>
               <li>Keep namespace isolation and output-copy behavior.</li>
               <li>Preserve display, stdout, stderr, warnings, and previews.</li>
               <li>Execute with scoped cwd, <code>__file__</code>, and import path.</li>
@@ -1264,8 +1264,8 @@ python -m nodebook run path/to/document.py --json</code></pre>
             <h3>Agent D <span class="status target">After A/C</span></h3>
             <p><strong>Python CLI and packaging.</strong></p>
             <ul>
-              <li>Add <code>nodebook</code> console entry point.</li>
-              <li>Add <code>python -m nodebook</code>.</li>
+              <li>Add <code>rowcall</code> console entry point.</li>
+              <li>Add <code>python -m rowcall</code>.</li>
               <li>Implement validate/run/options/exit codes.</li>
               <li>Convert Deno CLI implementation into a thin Python CLI wrapper.</li>
             </ul>
@@ -1368,9 +1368,9 @@ python -m nodebook run path/to/document.py --json</code></pre>
         <div class="card" style="margin-top: 16px;">
           <h3>Candidate commands</h3>
           <pre><code>python -m unittest
-python -m nodebook validate examples/hello_world.py
-python -m nodebook run examples/hello_world.py --json
-python -m nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+python -m rowcall validate examples/hello_world.py
+python -m rowcall run examples/hello_world.py --json
+python -m rowcall run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
 deno task cli validate examples/hello_world.py  # wrapper smoke test
 deno task cli run examples/hello_world.py --json  # wrapper smoke test
 deno task build</code></pre>
@@ -1426,7 +1426,7 @@ deno task build</code></pre>
               </tr>
               <tr>
                 <td>Source rewriting damages user code</td>
-                <td>Normalize only Nodebook-managed regions; preserve unrelated top-level code where possible.</td>
+                <td>Normalize only Rowcall-managed regions; preserve unrelated top-level code where possible.</td>
                 <td>Golden source rewrite fixtures.</td>
               </tr>
               <tr>
@@ -1452,7 +1452,7 @@ deno task build</code></pre>
 
       <footer>
         <p>
-          This document is a planning artifact for the Nodebook beta. It favors
+          This document is a planning artifact for the Rowcall beta. It favors
           clear runtime/app ownership before any future repository split.
         </p>
       </footer>

@@ -1,10 +1,10 @@
-import { buildNodebookUrl } from "../main.ts";
+import { buildRowcallUrl } from "../main.ts";
 import { parseStartupOptions } from "../startup_args.ts";
 
 type LauncherOptions = ReturnType<typeof parseLauncherOptions>;
 
 const serverUrl = (options: LauncherOptions, authToken: string) =>
-  buildNodebookUrl(options.hostname, options.port, authToken);
+  buildRowcallUrl(options.hostname, options.port, authToken);
 
 async function main(): Promise<void> {
   let options: LauncherOptions;
@@ -15,12 +15,12 @@ async function main(): Promise<void> {
     Deno.exit(1);
   }
 
-  console.info("Building Nodebook...");
+  console.info("Building Rowcall...");
   await runChecked([Deno.execPath(), "task", "build"]);
-  console.info("Preparing Nodebook server...");
+  console.info("Preparing Rowcall server...");
   await runChecked([Deno.execPath(), "cache", "main.ts"]);
 
-  console.info(`Starting Nodebook for ${options.documentPath}`);
+  console.info(`Starting Rowcall for ${options.documentPath}`);
   if (options.pythonCommand) {
     console.info(`Using Python: ${options.pythonCommand}`);
   }
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     }
     throw error;
   }
-  console.info(`Nodebook is running at ${url}`);
+  console.info(`Rowcall is running at ${url}`);
 
   if (options.openBrowser) {
     await openBrowser(url);
@@ -117,7 +117,7 @@ function ensureServerPortAvailable(options: LauncherOptions): void {
     if (error instanceof Deno.errors.AddrInUse) {
       throw new Error(
         `Port ${options.port} is already in use on ${options.hostname}. ` +
-          `Stop the process using it, or start Nodebook with --port ${
+          `Stop the process using it, or start Rowcall with --port ${
             options.port + 1
           }.`,
       );
@@ -153,12 +153,12 @@ async function waitForServer(
 
     if (typeof result === "object" && result.kind === "exited") {
       throw new Error(
-        `Nodebook server exited before it was ready (exit code ${result.code})`,
+        `Rowcall server exited before it was ready (exit code ${result.code})`,
       );
     }
   }
 
-  throw new Error(`Timed out waiting for Nodebook server at ${url}`);
+  throw new Error(`Timed out waiting for Rowcall server at ${url}`);
 }
 
 function delay(ms: number): Promise<void> {

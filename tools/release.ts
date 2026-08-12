@@ -1,8 +1,8 @@
-const releaseDownloadBaseUrl = Deno.env.get("NODEBOOK_RELEASE_DOWNLOAD_BASE") ??
-  "https://releases.nodebook.rodeo";
-const pagesProjectName = "nodebook-rodeo";
-const r2BucketName = Deno.env.get("NODEBOOK_R2_BUCKET") ??
-  "nodebook-rodeo-releases";
+const releaseDownloadBaseUrl = Deno.env.get("ROWCALL_RELEASE_DOWNLOAD_BASE") ??
+  "https://releases.rowcall.io";
+const pagesProjectName = "rowcall-io";
+const r2BucketName = Deno.env.get("ROWCALL_R2_BUCKET") ??
+  "rowcall-io-releases";
 
 const releaseDir = "dist/release";
 const siteSourceDir = "site";
@@ -14,7 +14,7 @@ const compileIncludes = [
   "VERSION",
   "pyproject.toml",
   "requirements-alpha.txt",
-  "nodebook",
+  "rowcall",
   "app/ui/dist",
 ];
 
@@ -22,13 +22,13 @@ const releaseAssets = [
   {
     key: "darwin-arm64",
     target: "aarch64-apple-darwin",
-    fileName: "nodebook-darwin-arm64",
+    fileName: "rowcall-darwin-arm64",
     nativeArchitecture: "arm64",
   },
   {
     key: "darwin-x64",
     target: "x86_64-apple-darwin",
-    fileName: "nodebook-darwin-x64",
+    fileName: "rowcall-darwin-x64",
     nativeArchitecture: "x64",
   },
 ];
@@ -168,7 +168,7 @@ async function assembleReleaseSite() {
   );
 
   console.info(
-    `Assembled ${siteDistDir} and ${r2DistDir} for Nodebook ${version}`,
+    `Assembled ${siteDistDir} and ${r2DistDir} for Rowcall ${version}`,
   );
 }
 

@@ -1,8 +1,8 @@
 import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   app,
-  buildNodebookUrl,
-  type NodebookServerSecurity,
+  buildRowcallUrl,
+  type RowcallServerSecurity,
   setActiveDocumentPathForTests,
   validateLocalRequest,
 } from "./main.ts";
@@ -12,15 +12,15 @@ import {
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
 
-const security: NodebookServerSecurity = {
+const security: RowcallServerSecurity = {
   hostname: "127.0.0.1",
   port: 8000,
   authToken: "secret-token",
 };
 
-Deno.test("buildNodebookUrl includes the server auth token", () => {
+Deno.test("buildRowcallUrl includes the server auth token", () => {
   assertEquals(
-    buildNodebookUrl("127.0.0.1", 8000, "secret-token"),
+    buildRowcallUrl("127.0.0.1", 8000, "secret-token"),
     "http://127.0.0.1:8000/?token=secret-token",
   );
 });
@@ -41,7 +41,7 @@ Deno.test("validateLocalRequest requires a token for API requests", () => {
     {
       ok: false,
       status: 401,
-      message: "Missing or invalid Nodebook authorization token.",
+      message: "Missing or invalid Rowcall authorization token.",
     },
   );
   assertEquals(
@@ -68,7 +68,7 @@ Deno.test("validateLocalRequest requires a token for document operations", () =>
     {
       ok: false,
       status: 401,
-      message: "Missing or invalid Nodebook authorization token.",
+      message: "Missing or invalid Rowcall authorization token.",
     },
   );
   assertEquals(
@@ -96,7 +96,7 @@ Deno.test("validateLocalRequest requires a token for result queries", () => {
     {
       ok: false,
       status: 401,
-      message: "Missing or invalid Nodebook authorization token.",
+      message: "Missing or invalid Rowcall authorization token.",
     },
   );
   assertEquals(
@@ -347,7 +347,7 @@ Deno.test("POST /document/operations applies operations", async () => {
   assertEquals(
     await Deno.readTextFile(documentPath),
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -601,7 +601,7 @@ function request(
 ): Request {
   const headers = new Headers({ host: options.host });
   if (options.origin) headers.set("origin", options.origin);
-  if (options.token) headers.set("x-nodebook-token", options.token);
+  if (options.token) headers.set("x-rowcall-token", options.token);
   return new Request(`http://${options.host}${path}`, {
     method: options.method ?? "GET",
     headers,
@@ -612,7 +612,7 @@ function jsonRequest(path: string, body: unknown): Request {
   const headers = new Headers({
     host: "127.0.0.1:8000",
     "content-type": "application/json",
-    "x-nodebook-token": "secret-token",
+    "x-rowcall-token": "secret-token",
   });
   return new Request(`http://127.0.0.1:8000${path}`, {
     method: "POST",
@@ -627,7 +627,7 @@ async function writeRouteTestDocument(filename: string): Promise<string> {
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",

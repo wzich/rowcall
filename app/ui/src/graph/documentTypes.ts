@@ -1,6 +1,6 @@
 import type { RuntimeGraph, RuntimeNode } from "./runtimeTypes.ts";
 
-export type NodebookDocumentV1 = {
+export type RowcallDocumentV1 = {
   version: 1;
   nodes: RuntimeNode[];
   edges: RuntimeGraph["edges"];
@@ -9,7 +9,7 @@ export type NodebookDocumentV1 = {
   revision?: string;
 };
 
-export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
+export function toRuntimeGraph(document: RowcallDocumentV1): RuntimeGraph {
   const inputsByNodeId = getDirectInputNamesByNodeId(document);
 
   return {
@@ -47,7 +47,7 @@ export function toRuntimeGraph(document: NodebookDocumentV1): RuntimeGraph {
 }
 
 function getDirectInputNamesByNodeId(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
 ): Map<string, string[]> {
   const nodesById = new Map(document.nodes.map((node) => [node.id, node]));
   const inputsByNodeId = new Map<string, string[]>(

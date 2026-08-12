@@ -1,14 +1,14 @@
-# Nodebook product positioning
+# Rowcall product positioning
 
-This document is an internal source of truth for describing Nodebook. It is not
+This document is an internal source of truth for describing Rowcall. It is not
 marketing copy. The language in here should be plain, specific, and anchored in
 the current product while explaining the larger product direction.
 
 ## Summary
 
-Nodebook is a workspace for exploring and building with data.
+Rowcall is a workspace for exploring and building with data.
 
-Nodebook bridges exploration and production. A one-off analysis is structured so
+Rowcall bridges exploration and production. A one-off analysis is structured so
 that it can be inspected, extended, and rerun instead of being rebuilt for
 production.
 
@@ -48,7 +48,7 @@ other maintained artifact.
 
 Logic is rewritten, context is lost, results become separated from the
 transformations that produced them, and later changes must be carried across
-different artifacts. The central problem Nodebook is intended to solve is having
+different artifacts. The central problem Rowcall is intended to solve is having
 to **start over** when exploratory work becomes important.
 
 Coding agents do not solve this problem; they magnify it. They can produce and
@@ -59,7 +59,7 @@ the same continuity problem, not a separate agent-specific problem.
 
 ## Current product
 
-A user opens a Nodebook project as a visual graph of an analysis. Selecting a
+A user opens a Rowcall project as a visual graph of an analysis. Selecting a
 step opens an inspector where they can change its code, run the analysis through
 that step, and examine its inputs, outputs, logs, and errors. They can also run
 the complete graph, return later to extend it, or share the project with another
@@ -79,11 +79,11 @@ useful, but external sources are a normal part of the model.
 
 ## Product hypothesis
 
-Nodebook is designed so that ordinary exploration leaves behind a structured,
+Rowcall is designed so that ordinary exploration leaves behind a structured,
 runnable graph. The user should not have to adopt a production workflow before
 they know whether the work will be reused.
 
-Nodebook introduces a small amount of structure during exploration: separate
+Rowcall introduces a small amount of structure during exploration: separate
 steps, explicit data flow, and a runnable graph. The resulting work should be
 easier to inspect, extend, and operate later. The product succeeds if this
 structure feels natural during exploration rather than like premature production
@@ -104,12 +104,12 @@ rewritten.
 
 ## Ways of working
 
-Nodebook supports direct and delegated work. A person can edit code and graph
+Rowcall supports direct and delegated work. A person can edit code and graph
 structure in the workspace, or a coding agent can edit the same Python file and
 use the CLI to validate and run it. These modes can be mixed within one project.
 
 Agent support is intended to be first-class, but it is not a prerequisite for
-using or understanding Nodebook. Both modes operate on the same computation, and
+using or understanding Rowcall. Both modes operate on the same computation, and
 the human can review the work at the level appropriate to the situation: results
 first, graph structure when useful, and code when necessary.
 
@@ -121,9 +121,9 @@ change. It has identifiable inputs and produces an output someone can use. Its
 user may be the creator's future self, a technical teammate, or eventually a
 non-technical consumer.
 
-The current version of Nodebook primarily supports reusable technical analyses.
+The current version of Rowcall primarily supports reusable technical analyses.
 An analysis, derived dataset, model, report, dashboard, scheduled workflow, or
-API can all be forms of data products at different levels of maturity. Nodebook
+API can all be forms of data products at different levels of maturity. Rowcall
 does not require a reader to understand this term in order to understand the
 basic product: it is a workspace for exploring and building with data.
 
@@ -145,7 +145,7 @@ can inspect.
 
 ## Claim boundaries
 
-- Nodebook currently provides a path toward production; it is not yet a complete
+- Rowcall currently provides a path toward production; it is not yet a complete
   production orchestration or hosting system.
 - "Repeatable" means that the same computation can be run again against
   available inputs. Exact reproducibility also depends on preserving or pinning

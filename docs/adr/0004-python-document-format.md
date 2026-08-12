@@ -1,4 +1,4 @@
-# ADR 0004: Use Python Files As The Canonical Nodebook Document
+# ADR 0004: Use Python Files As The Canonical Rowcall Document
 
 ## Status
 
@@ -6,11 +6,11 @@ Accepted and implemented for the beta runtime split.
 
 ## Context
 
-The first Nodebook prototype stored node code as strings inside JSON files. That
+The first Rowcall prototype stored node code as strings inside JSON files. That
 made graph loading and canvas persistence simple, but it made user code harder
-to review, search, refactor, lint, test, and edit outside the Nodebook UI.
+to review, search, refactor, lint, test, and edit outside the Rowcall UI.
 
-Nodebook should feel like a visual editor for a real Python program, not like an
+Rowcall should feel like a visual editor for a real Python program, not like an
 application-private document format that happens to contain Python snippets.
 Users and agents should be able to work with the underlying Python file directly
 while still benefiting from the graph editor.
@@ -22,31 +22,31 @@ than notebook cell order.
 
 ## Decision
 
-Python files are the canonical computational document format for Nodebook. A
+Python files are the canonical computational document format for Rowcall. A
 normal `.py` file can be opened by the editor without any sidecar file. If no
 sidecar metadata exists, the editor may choose an automatic layout.
 
-For first-run CLI UX, Nodebook recommends folder-backed projects:
-`nodebook new my-work` creates `my-work/graph.py`, and public CLI folder paths
+For first-run CLI UX, Rowcall recommends folder-backed projects:
+`rowcall new my-work` creates `my-work/graph.py`, and public CLI folder paths
 resolve to `graph.py` inside the folder. This keeps generated canvas metadata
 and future `data/` files close to the document without making users manage a
 loose sidecar on the Desktop. Passing a `.py` path remains supported for users
 who want a standalone Python document or multiple documents in one folder.
 
-Nodebook may store optional canvas metadata in a sibling `.nodebook.json` file
+Rowcall may store optional canvas metadata in a sibling `.rowcall.json` file
 named after the Python source file. The sidecar is not the source of truth for
 computation. It stores UI-only data such as node positions and future visual
 preferences. Deleting the sidecar must not destroy or invalidate the
-computational document. For example, `graph.py` uses `graph.nodebook.json`, and
-`explore.py` uses `explore.nodebook.json`.
+computational document. For example, `graph.py` uses `graph.rowcall.json`, and
+`explore.py` uses `explore.rowcall.json`.
 
-Nodebook nodes are persisted as Python functions decorated with `@node`.
-Function names are human-readable and may change over time. Stable opaque node
-IDs are stored separately in the decorator and are the durable identity used by
-the editor, sidecar metadata, graph validation, and runtime references.
+Rowcall nodes are persisted as Python functions decorated with `@node`. Function
+names are human-readable and may change over time. Stable opaque node IDs are
+stored separately in the decorator and are the durable identity used by the
+editor, sidecar metadata, graph validation, and runtime references.
 
 ```python
-from nodebook import node
+from rowcall import node
 
 @node(id="n_8x4k2p", outputs=["df"])
 def read_data():
@@ -59,14 +59,14 @@ def clean_data(df):
     return {"df": df}
 
 
-# NodeBook graph
+# Rowcall graph
 clean_data.depends_on(read_data)
 ```
 
 Edges are explicit and should be declared in a graph block after node
 definitions. Function parameters declare which input names a node consumes;
 explicit edges declare which upstream nodes may provide values. At runtime,
-Nodebook gathers outputs from directly connected upstream nodes and passes
+Rowcall gathers outputs from directly connected upstream nodes and passes
 matching values into the downstream function. For standard editor-authored
 nodes, UI graph/output edits may normalize downstream function signatures to
 match direct upstream outputs.
@@ -89,14 +89,14 @@ def clean_data(df):
 
 The graph editor should let users write node bodies in a script-like style even
 though the persisted document uses function-shaped nodes. The function wrapper,
-parameters, decorator, and generated return block may be managed by Nodebook for
+parameters, decorator, and generated return block may be managed by Rowcall for
 ordinary UI-authored nodes.
 
-Nodebook-authored files remain normal Python files. Users and agents may edit
+Rowcall-authored files remain normal Python files. Users and agents may edit
 them directly. If raw edits change wrappers, signatures, or return statements,
-Nodebook validates the file on load and rejects unsupported shapes with
+Rowcall validates the file on load and rejects unsupported shapes with
 actionable validation errors. The installed CLI exposes the authoring contract
-through `nodebook help format`; agents should run `nodebook validate` after
+through `rowcall help format`; agents should run `rowcall validate` after
 editing a document.
 
 Top-level imports, constants, helper functions, and classes are allowed. The UI
@@ -104,10 +104,10 @@ should eventually expose code outside node functions through a "Globals" section
 in the graph inspector. Top-level mutable state is outside the isolated
 data-flow guarantee and should be documented as advanced behavior.
 
-`from nodebook import ...` is intentionally strict because those imports are
+`from rowcall import ...` is intentionally strict because those imports are
 removed from globals before execution. It may only import `node` and `display`,
-without aliases. Other Nodebook package symbols should be referenced through a
-module import such as `import nodebook` or `import nodebook as nb`, which is
+without aliases. Other Rowcall package symbols should be referenced through a
+module import such as `import rowcall` or `import rowcall as nb`, which is
 preserved in document globals.
 
 Node functions should not call other node functions directly. Data dependencies
@@ -137,7 +137,7 @@ contract and avoids ambiguous parameter binding.
   state.
 - Direct node-to-node function calls must be prevented or clearly rejected to
   keep the graph as the execution authority.
-- Saving becomes more complex because Nodebook needs to preserve hand-written
+- Saving becomes more complex because Rowcall needs to preserve hand-written
   Python where possible while still managing generated wrappers and return
   blocks for UI-authored nodes.
 
@@ -145,7 +145,7 @@ contract and avoids ambiguous parameter binding.
 
 The implemented split uses these boundaries:
 
-1. A small Python `nodebook` authoring API declares node functions and explicit
+1. A small Python `rowcall` authoring API declares node functions and explicit
    `depends_on` edges.
 2. The Python document package parses a `.py` file into an executable document
    with source, globals, nodes, edges, validation issues, and planning metadata.
@@ -159,7 +159,7 @@ The implemented split uses these boundaries:
    package owns source rewrites for node bodies, output declarations, function
    names, node additions/deletions, graph edges, and globals. Unsupported return
    structures fail validation before the document can be edited or run.
-6. `.nodebook.json` sidecars remain UI-only metadata. They are not required to
+6. `.rowcall.json` sidecars remain UI-only metadata. They are not required to
    validate or run a Python document, but the app-facing revision includes
    normalized sidecar metadata so position/title/description edits participate
    in stale-write detection.
@@ -176,9 +176,9 @@ The implemented split uses these boundaries:
 - Consider concrete-syntax editing for future operations that need broader
   comment and formatting preservation. The beta implementation uses constrained
   Python-owned source rewrites for supported editor operations.
-- Create the `<document-name>.nodebook.json` sidecar on first canvas save. A
-  bare `.py` file remains sufficient to open and run the document.
-- Treat external file writes as authoritative. Nodebook should reload cleanly
+- Create the `<document-name>.rowcall.json` sidecar on first canvas save. A bare
+  `.py` file remains sufficient to open and run the document.
+- Treat external file writes as authoritative. Rowcall should reload cleanly
   when there are no unsaved canvas edits and should avoid overwriting newer
   external file contents with stale canvas state.
 - Keep proactive external-change detection independent from save-conflict

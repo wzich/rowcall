@@ -1,4 +1,4 @@
-"""Run the public Nodebook CLI with `python -m nodebook`."""
+"""Run the public Rowcall CLI with `python -m rowcall`."""
 
 from __future__ import annotations
 

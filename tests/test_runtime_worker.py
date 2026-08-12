@@ -11,8 +11,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from nodebook.runtime import RuntimeSession
-from nodebook.runtime.worker import run_worker
+from rowcall.runtime import RuntimeSession
+from rowcall.runtime.worker import run_worker
 
 
 DOCUMENT_PATH = str(Path("/tmp/worker_doc.py"))
@@ -20,7 +20,7 @@ RESOLVED_DOCUMENT_PATH = str(Path(DOCUMENT_PATH).resolve())
 
 
 HELLO_SOURCE = """
-from nodebook import node
+from rowcall import node
 
 @node(id="hello", outputs=["message"])
 def hello():
@@ -154,7 +154,7 @@ class RuntimeWorkerTests(unittest.TestCase):
 
     def test_worker_validate_candidate_source_reports_validation_issues(self) -> None:
         candidate_source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="same", outputs=["x"])
 def first():
@@ -183,7 +183,7 @@ def second():
 
     def test_worker_apply_operations_returns_completed_event(self) -> None:
         editable_source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="hello", outputs=["message"])
 def hello():
@@ -419,7 +419,7 @@ world.depends_on(hello)
             }, 0
 
         worker_stdout = io.StringIO()
-        with patch("nodebook.runtime.session.query_table_preview", noisy_query):
+        with patch("rowcall.runtime.session.query_table_preview", noisy_query):
             with redirect_stdout(worker_stdout):
                 query = session.query_table(
                     run_id="run-1",
@@ -474,7 +474,7 @@ world.depends_on(hello)
     def test_pandas_table_query_pages_and_sorts_columns_and_index(self) -> None:
         source = """
 import pandas as pd
-from nodebook import node
+from rowcall import node
 
 @node(id="frame", outputs=["data"])
 def frame():
@@ -523,7 +523,7 @@ def frame():
     def test_polars_table_query_preserves_source_rows_while_sorting(self) -> None:
         source = """
 import polars as pl
-from nodebook import node
+from rowcall import node
 
 @node(id="frame", outputs=["data"])
 def frame():
@@ -629,7 +629,7 @@ def frame():
 
     def test_worker_module_subprocess_shutdown(self) -> None:
         process = subprocess.run(
-            [sys.executable, "-m", "nodebook.runtime.worker"],
+            [sys.executable, "-m", "rowcall.runtime.worker"],
             input=json.dumps(request("shutdown", request_id="sub")) + "\n",
             text=True,
             capture_output=True,

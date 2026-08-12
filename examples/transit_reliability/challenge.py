@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-from nodebook import display, node
+from rowcall import display, node
 
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -249,7 +249,7 @@ def priority_routes_starter(trip_facts):
     return {"priority_routes": priority_routes}
 
 
-# NodeBook graph
+# Rowcall graph
 prepare_trips.depends_on(load_trips)
 prepare_routes.depends_on(load_routes)
 prepare_maintenance.depends_on(load_maintenance)

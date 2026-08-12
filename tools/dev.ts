@@ -31,9 +31,9 @@ async function main(): Promise<void> {
   const ui = new Deno.Command(Deno.execPath(), {
     args: ["task", "--cwd", "app/ui", "dev"],
     env: {
-      NODEBOOK_DEV_API_ORIGIN: apiOrigin,
-      NODEBOOK_DEV_AUTH_TOKEN: authToken,
-      NODEBOOK_DEV_UI_PORT: String(options.uiPort),
+      ROWCALL_DEV_API_ORIGIN: apiOrigin,
+      ROWCALL_DEV_AUTH_TOKEN: authToken,
+      ROWCALL_DEV_UI_PORT: String(options.uiPort),
     },
     stdout: "inherit",
     stderr: "inherit",
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
       waitForServer(viteOrigin, "UI", uiStatus),
     ]);
 
-    console.info(`Nodebook development server: ${viteOrigin}`);
+    console.info(`Rowcall development server: ${viteOrigin}`);
     if (options.openBrowser) {
       await openBrowser(viteOrigin);
     }
@@ -129,8 +129,8 @@ function buildServerArgs(options: DevOptions, authToken: string): string[] {
     authToken,
     ...(options.create ? ["--create"] : []),
     ...(options.pythonCommand ? ["--python", options.pythonCommand] : []),
-    ...(options.nodebookPythonPackagePath
-      ? ["--nodebook-python-package", options.nodebookPythonPackagePath]
+    ...(options.rowcallPythonPackagePath
+      ? ["--rowcall-python-package", options.rowcallPythonPackagePath]
       : []),
     ...(options.runtimeMode ? ["--runtime-mode", options.runtimeMode] : []),
     ...(options.uiDistPath ? ["--ui-dist", options.uiDistPath] : []),

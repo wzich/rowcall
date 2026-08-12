@@ -1,6 +1,6 @@
 export type JsonPreviewMode = "tree" | "raw";
 
-export const jsonPreviewModeStorageKey = "nodebook:json-preview-mode";
+export const jsonPreviewModeStorageKey = "rowcall:json-preview-mode";
 
 type ModeStorage = Pick<Storage, "getItem" | "setItem">;
 type ClipboardWriter = Pick<Clipboard, "writeText">;

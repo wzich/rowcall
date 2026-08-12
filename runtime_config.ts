@@ -12,7 +12,7 @@ export type PythonEnvironmentInfo = {
   runtimeMode: PythonRuntimeMode;
   condaPrefix?: string;
   virtualEnv?: string;
-  nodebookImport: PythonImportStatus;
+  rowcallImport: PythonImportStatus;
 };
 
 export type PythonRuntimeMode = "user" | "managed";
@@ -102,19 +102,19 @@ export async function getPythonEnvironmentInfo(): Promise<
       "-c",
       [
         "import importlib.util, json, os, platform, sys",
-        "spec = importlib.util.find_spec('nodebook')",
-        "nodebook_import = {'ok': spec is not None}",
+        "spec = importlib.util.find_spec('rowcall')",
+        "rowcall_import = {'ok': spec is not None}",
         "if spec is not None:",
-        "    nodebook_import['path'] = spec.origin",
+        "    rowcall_import['path'] = spec.origin",
         "else:",
-        "    nodebook_import['error'] = 'Python cannot import nodebook'",
+        "    rowcall_import['error'] = 'Python cannot import rowcall'",
         "print(json.dumps({",
         "    'executable': sys.executable,",
         "    'version': platform.python_version(),",
         "    'implementation': platform.python_implementation(),",
         "    'condaPrefix': os.environ.get('CONDA_PREFIX'),",
         "    'virtualEnv': os.environ.get('VIRTUAL_ENV'),",
-        "    'nodebookImport': nodebook_import,",
+        "    'rowcallImport': rowcall_import,",
         "}))",
       ].join("\n"),
     ],
@@ -140,15 +140,15 @@ export async function getPythonEnvironmentInfo(): Promise<
     implementation?: unknown;
     condaPrefix?: unknown;
     virtualEnv?: unknown;
-    nodebookImport?: unknown;
+    rowcallImport?: unknown;
   };
-  const nodebookImport = asRecord(parsed.nodebookImport);
+  const rowcallImport = asRecord(parsed.rowcallImport);
 
   if (
     typeof parsed.executable !== "string" ||
     typeof parsed.version !== "string" ||
     typeof parsed.implementation !== "string" ||
-    typeof nodebookImport?.["ok"] !== "boolean"
+    typeof rowcallImport?.["ok"] !== "boolean"
   ) {
     throw new Error(`Python runtime probe returned an invalid response`);
   }
@@ -165,13 +165,13 @@ export async function getPythonEnvironmentInfo(): Promise<
     ...(typeof parsed.virtualEnv === "string" && parsed.virtualEnv.length > 0
       ? { virtualEnv: parsed.virtualEnv }
       : {}),
-    nodebookImport: {
-      ok: nodebookImport["ok"],
-      ...(typeof nodebookImport["path"] === "string"
-        ? { path: nodebookImport["path"] }
+    rowcallImport: {
+      ok: rowcallImport["ok"],
+      ...(typeof rowcallImport["path"] === "string"
+        ? { path: rowcallImport["path"] }
         : {}),
-      ...(typeof nodebookImport["error"] === "string"
-        ? { error: nodebookImport["error"] }
+      ...(typeof rowcallImport["error"] === "string"
+        ? { error: rowcallImport["error"] }
         : {}),
     },
   };

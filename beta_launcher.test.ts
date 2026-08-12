@@ -21,7 +21,7 @@ import {
   runBetaCommand,
 } from "./beta_launcher.ts";
 import { getBetaPaths, getVenvPythonPath } from "./beta_paths.ts";
-import { nodebookVersion } from "./version.ts";
+import { rowcallVersion } from "./version.ts";
 
 Deno.test("format help teaches the strict generated return structure", () => {
   const help = helpTextForTopic("format");
@@ -30,16 +30,16 @@ Deno.test("format help teaches the strict generated return structure", () => {
   assertStringIncludes(help, 'return {"numbers": numbers}');
   assertStringIncludes(help, "Use exactly one return statement");
   assertStringIncludes(help, "do not return expressions inline");
-  assertStringIncludes(help, "nodebook validate");
+  assertStringIncludes(help, "rowcall validate");
 });
 
 Deno.test("main help teaches the open-once coding-agent workflow", () => {
   const help = helpTextForTopic(undefined);
 
   assertStringIncludes(help, "Working with coding agents");
-  assertStringIncludes(help, "nodebook validate <path>");
+  assertStringIncludes(help, "rowcall validate <path>");
   assertStringIncludes(help, "--json=summary");
-  assertStringIncludes(help, "Open the\n  Nodebook UI once");
+  assertStringIncludes(help, "Open the\n  Rowcall UI once");
   assertStringIncludes(help, "New folder projects created");
   assertStringIncludes(help, "AGENTS.md");
 });
@@ -59,7 +59,7 @@ Deno.test("command help explains project environment setup boundaries", () => {
 Deno.test("occupied-port guidance prioritizes the existing window", () => {
   const message = formatPortInUseError("127.0.0.1", 8000);
 
-  assertStringIncludes(message, "Nodebook may already be running");
+  assertStringIncludes(message, "Rowcall may already be running");
   assertStringIncludes(message, "return to the existing browser window");
   assertStringIncludes(message, "--port 8001");
 });
@@ -289,7 +289,7 @@ Deno.test("parseBetaCommand maps doctor/reset/update commands", () => {
 });
 
 Deno.test({
-  name: "doctor inspection does not create Nodebook state",
+  name: "doctor inspection does not create Rowcall state",
   permissions: { read: true, run: true, env: true, write: true },
   async fn() {
     const tempDir = await Deno.makeTempDir();
@@ -305,7 +305,7 @@ Deno.test({
 
     assertEquals(report.runtime.mode, "managed");
     assertEquals(report.runtime.python.status, "missing");
-    assertEquals(report.runtime.imports.nodebook, "not_checked");
+    assertEquals(report.runtime.imports.rowcall, "not_checked");
     assertEquals(report.runtime.imports.matplotlib, "not_checked");
     await assertRejects(() => Deno.stat(paths.dataDir), Deno.errors.NotFound);
   },
@@ -328,16 +328,16 @@ Deno.test({
     );
     await Deno.chmod(python, 0o755);
     await Deno.writeTextFile(
-      `${paths.venvDir}/.nodebook-version`,
-      `${nodebookVersion}\n`,
+      `${paths.venvDir}/.rowcall-version`,
+      `${rowcallVersion}\n`,
     );
 
     assertEquals(await ensureManagedEnvironment(paths), python);
     const firstCalls = await Deno.readTextFile(callsPath);
     assertEquals(countOccurrences(firstCalls, "-m pip install"), 2);
     assertEquals(
-      await Deno.readTextFile(`${paths.venvDir}/.nodebook-version`),
-      `${nodebookVersion}:${managedEnvironmentRevision}\n`,
+      await Deno.readTextFile(`${paths.venvDir}/.rowcall-version`),
+      `${rowcallVersion}:${managedEnvironmentRevision}\n`,
     );
 
     assertEquals(await ensureManagedEnvironment(paths), python);
@@ -389,11 +389,11 @@ Deno.test("parseBetaCommand maps new and example commands", () => {
 Deno.test("buildLauncherInvocation re-execs compiled launchers directly", () => {
   assertEquals(
     buildLauncherInvocation(["__server", "--port", "8000"], {
-      execPath: "/Users/me/.local/bin/nodebook",
-      mainModule: "file:///var/folders/deno-compile-nodebook/beta_launcher.ts",
+      execPath: "/Users/me/.local/bin/rowcall",
+      mainModule: "file:///var/folders/deno-compile-rowcall/beta_launcher.ts",
     }),
     {
-      command: "/Users/me/.local/bin/nodebook",
+      command: "/Users/me/.local/bin/rowcall",
       args: ["__server", "--port", "8000"],
     },
   );
@@ -403,7 +403,7 @@ Deno.test("buildLauncherInvocation runs the launcher module in source mode", () 
   assertEquals(
     buildLauncherInvocation(["__server", "--port", "8000"], {
       execPath: "/Users/me/.deno/bin/deno",
-      mainModule: "file:///Users/me/src/nodebook/beta_launcher.ts",
+      mainModule: "file:///Users/me/src/rowcall/beta_launcher.ts",
     }),
     {
       command: "/Users/me/.deno/bin/deno",
@@ -414,7 +414,7 @@ Deno.test("buildLauncherInvocation runs the launcher module in source mode", () 
         "--allow-net",
         "--allow-run",
         "--allow-env",
-        "file:///Users/me/src/nodebook/beta_launcher.ts",
+        "file:///Users/me/src/rowcall/beta_launcher.ts",
         "__server",
         "--port",
         "8000",
@@ -471,7 +471,7 @@ Deno.test({
     await assertRejects(
       () => resolveExistingDocumentPath(`${dir}/missing`),
       Error,
-      "nodebook new",
+      "rowcall new",
     );
   },
 });
@@ -485,7 +485,7 @@ Deno.test({
     const path = await createNewDocument(folder);
     assertEquals(path, `${folder}/graph.py`);
     const source = await Deno.readTextFile(path);
-    assertEquals(source.includes("from nodebook import node"), true);
+    assertEquals(source.includes("from rowcall import node"), true);
     assertEquals(
       source.includes("shout_message.depends_on(load_message)"),
       true,
@@ -499,9 +499,9 @@ Deno.test({
       "pandas\npolars\nmatplotlib\n",
     );
     const agentInstructions = await Deno.readTextFile(`${folder}/AGENTS.md`);
-    assertStringIncludes(agentInstructions, "nodebook help format");
-    assertStringIncludes(agentInstructions, "nodebook validate .");
-    assertStringIncludes(agentInstructions, "Do not relaunch Nodebook");
+    assertStringIncludes(agentInstructions, "rowcall help format");
+    assertStringIncludes(agentInstructions, "rowcall validate .");
+    assertStringIncludes(agentInstructions, "Do not relaunch Rowcall");
     assertStringIncludes(agentInstructions, "stable node IDs");
   },
 });
@@ -539,7 +539,7 @@ Deno.test({
     const path = `${dir}/new.py`;
     assertEquals(await createNewDocument(path), path);
     const source = await Deno.readTextFile(path);
-    assertEquals(source.includes("from nodebook import node"), true);
+    assertEquals(source.includes("from rowcall import node"), true);
     await assertRejects(
       () => Deno.stat(`${dir}/AGENTS.md`),
       Deno.errors.NotFound,
@@ -601,7 +601,7 @@ Deno.test({
     );
     assertStringIncludes(
       await Deno.readTextFile(`${folder}/AGENTS.md`),
-      "Do not relaunch Nodebook",
+      "Do not relaunch Rowcall",
     );
   },
 });
@@ -621,7 +621,7 @@ Deno.test({
     assertEquals(first.includes(`${folder}/.venv/`), true);
     assertEquals((await Deno.stat(first)).isFile, true);
     assertEquals(
-      await Deno.readTextFile(`${folder}/.venv/.nodebook-setup`),
+      await Deno.readTextFile(`${folder}/.venv/.rowcall-setup`),
       "complete\n",
     );
   },
@@ -757,7 +757,7 @@ Deno.test({
     await Deno.writeTextFile(documentPath, "print('graph')\n");
     await createPythonVenv(venvDirectory);
     await Deno.writeTextFile(
-      `${venvDirectory}/.nodebook-setup`,
+      `${venvDirectory}/.rowcall-setup`,
       "incomplete\n",
     );
     await Deno.writeTextFile(
@@ -771,14 +771,14 @@ Deno.test({
       "will retry this one-time setup",
     );
     assertEquals(
-      await Deno.readTextFile(`${venvDirectory}/.nodebook-setup`),
+      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
       "incomplete\n",
     );
 
     await Deno.writeTextFile(`${folder}/requirements.txt`, "");
     await ensureProjectEnvironment(documentPath);
     assertEquals(
-      await Deno.readTextFile(`${venvDirectory}/.nodebook-setup`),
+      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
       "complete\n",
     );
 
@@ -806,7 +806,7 @@ Deno.test({
     await createPythonVenv(venvDirectory);
     await removePipFromVenv(venvPython);
     await Deno.writeTextFile(
-      `${venvDirectory}/.nodebook-setup`,
+      `${venvDirectory}/.rowcall-setup`,
       "creating\n",
     );
 
@@ -814,7 +814,7 @@ Deno.test({
     assertEquals(await ensureProjectEnvironment(documentPath), venvPython);
     assertEquals(await pythonModuleWorks(venvPython, "pip"), true);
     assertEquals(
-      await Deno.readTextFile(`${venvDirectory}/.nodebook-setup`),
+      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
       "complete\n",
     );
   },
@@ -833,7 +833,7 @@ Deno.test({
     await Deno.writeTextFile(documentPath, "print('graph')\n");
     await createPythonVenv(venvDirectory);
     await Deno.writeTextFile(
-      `${venvDirectory}/.nodebook-setup`,
+      `${venvDirectory}/.rowcall-setup`,
       "incomplete\n",
     );
     await createTestWheel(folder, wheelName);
@@ -940,7 +940,7 @@ async function createTestWheel(
   );
   await Deno.writeTextFile(
     `${metadataDirectory}/WHEEL`,
-    "Wheel-Version: 1.0\nGenerator: nodebook-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    "Wheel-Version: 1.0\nGenerator: rowcall-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
   );
   await Deno.writeTextFile(`${metadataDirectory}/RECORD`, "");
   const output = await new Deno.Command("python3", {

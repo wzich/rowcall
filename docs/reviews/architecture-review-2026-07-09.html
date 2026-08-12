@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
       name="description"
-      content="Current architecture review of Nodebook, dated July 9, 2026."
+      content="Current architecture review of Rowcall, dated July 9, 2026."
     >
-    <title>Nodebook Architecture Review — July 9, 2026</title>
+    <title>Rowcall Architecture Review — July 9, 2026</title>
     <style>
     :root {
       color-scheme: light;
@@ -985,9 +985,9 @@
 
     <header class="topbar">
       <div class="topbar-inner">
-        <a class="brand" href="#content" aria-label="Nodebook review">
+        <a class="brand" href="#content" aria-label="Rowcall review">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span>Nodebook review</span>
+          <span>Rowcall review</span>
         </a>
         <nav class="topnav" aria-label="Review sections">
           <a href="#assessment">Assessment</a>
@@ -1009,7 +1009,7 @@
         <p class="eyebrow">Architecture review · current main</p>
         <h1 id="report-title">Preserve the core. Harden the seams.</h1>
         <p class="hero-lede">
-          Nodebook has a coherent local-first architecture and an unusually good
+          Rowcall has a coherent local-first architecture and an unusually good
           foundation for human and agent use. The shortest path to broader
           distribution is not a rewrite: it is correctness under iteration,
           crash-safe persistence, trustworthy releases, and one discoverable,
@@ -1246,7 +1246,7 @@
               <li>Plans and node completion events stream to the browser over SSE.</li>
             </ol>
             <span
-              class="source">App.tsx:1143–1212 · executor.ts:316–450 · nodebook/runtime/executor.py:248–579</span>
+              class="source">App.tsx:1143–1212 · executor.ts:316–450 · rowcall/runtime/executor.py:248–579</span>
           </article>
         </div>
 
@@ -1258,7 +1258,7 @@
               Edges are explicit top-level dependency declarations.
             </p>
             <span
-              class="source">nodebook/__init__.py:21–55 · nodebook/document/parser.py:314–444</span>
+              class="source">rowcall/__init__.py:21–55 · rowcall/document/parser.py:314–444</span>
           </article>
           <article class="card">
             <h3>Isolation invariant</h3>
@@ -1268,7 +1268,7 @@
               or run boundaries.
             </p>
             <span
-              class="source">nodebook/runtime/executor.py:233–245, 516–579</span>
+              class="source">rowcall/runtime/executor.py:233–245, 516–579</span>
           </article>
           <article class="card">
             <h3>Deployment invariant</h3>
@@ -1304,7 +1304,7 @@
               Documents remain normal modules and work with existing editors,
               version control, and static tooling.
             </p>
-            <span class="source">nodebook/__init__.py:1–65</span>
+            <span class="source">rowcall/__init__.py:1–65</span>
           </article>
           <article class="card">
             <span class="card-kicker">Safe inspection</span>
@@ -1314,7 +1314,7 @@
               Arbitrary code is executed only at the explicit runtime boundary.
             </p>
             <span
-              class="source">nodebook/document/parser.py:25–71 · nodebook/runtime/executor.py:438–539</span>
+              class="source">rowcall/document/parser.py:25–71 · rowcall/runtime/executor.py:438–539</span>
           </article>
           <article class="card">
             <span class="card-kicker">Explicit</span>
@@ -1323,7 +1323,7 @@
               Duplicate IDs, missing endpoints, cycles, conflicting upstream
               names, and unsatisfied parameters are caught before execution.
             </p>
-            <span class="source">nodebook/document/validation.py:10–186</span>
+            <span class="source">rowcall/document/validation.py:10–186</span>
           </article>
           <article class="card">
             <span class="card-kicker">Convergent</span>
@@ -1334,7 +1334,7 @@
               headless CLI.
             </p>
             <span
-              class="source">nodebook/document · nodebook/runtime · python_document.ts</span>
+              class="source">rowcall/document · rowcall/runtime · python_document.ts</span>
           </article>
           <article class="card">
             <span class="card-kicker">Collaboration seed</span>
@@ -1397,7 +1397,7 @@
                   zero-node graphs. Verified examples include ordinary
                   <code>x = 1</code>, an async function decorated with
                   <code>@node</code>, and a function decorated with
-                  <code>@nodebook.node</code>. A false green is especially
+                  <code>@rowcall.node</code>. A false green is especially
                   dangerous to an agent.
                 </p>
                 <div class="recommendation">
@@ -1485,10 +1485,10 @@
                 <h3>Concurrent launches can race while rewriting shared installed assets</h3>
                 <p>
                   Every packaged launch materializes UI and Python assets into
-                  one shared <code>~/.nodebook/bundled</code> directory. Copying a
+                  one shared <code>~/.rowcall/bundled</code> directory. Copying a
                   directory first recursively deletes the destination, and
                   managed virtual-environment creation and package installation
-                  have no interprocess lock. Two Nodebook instances can interfere
+                  have no interprocess lock. Two Rowcall instances can interfere
                   with each other.
                 </p>
                 <div class="recommendation">
@@ -1547,7 +1547,7 @@
                   There is no tracked license, security policy, contribution
                   guide, code of conduct, changelog, governance document, or
                   third-party notice. Python package metadata is minimal. The
-                  pip-installed <code>nodebook</code> command exposes only
+                  pip-installed <code>rowcall</code> command exposes only
                   validate/run while the binary of the same name exposes the
                   full launcher, creating an avoidable public contract
                   ambiguity.
@@ -1560,7 +1560,7 @@
                   statement about which CLI is the product contract.
                 </div>
                 <span
-                  class="source">pyproject.toml:1–15 · nodebook/cli.py:15–20 · beta_launcher.ts:157–217</span>
+                  class="source">pyproject.toml:1–15 · rowcall/cli.py:15–20 · beta_launcher.ts:157–217</span>
               </div>
             </div>
           </article>
@@ -1876,7 +1876,7 @@
               those capabilities—not invent a second automation system.
             </p>
             <span
-              class="source">python_worker_client.ts:8–59 · nodebook/runtime/worker.py:75–164</span>
+              class="source">python_worker_client.ts:8–59 · rowcall/runtime/worker.py:75–164</span>
           </article>
           <article class="card">
             <span class="card-kicker">Discovery</span>
@@ -1891,12 +1891,12 @@
         </div>
 
         <pre
-          aria-label="Recommended agent-facing command surface"><code>nodebook capabilities --json
-nodebook inspect my-project --json
-nodebook plan my-project --to clean_data --json
-nodebook apply my-project --base-revision REV --operations ops.json --dry-run --diff
-nodebook run my-project --node clean_data --events ndjson
-nodebook run my-project --to clean_data --json --trace</code></pre>
+          aria-label="Recommended agent-facing command surface"><code>rowcall capabilities --json
+rowcall inspect my-project --json
+rowcall plan my-project --to clean_data --json
+rowcall apply my-project --base-revision REV --operations ops.json --dry-run --diff
+rowcall run my-project --node clean_data --events ndjson
+rowcall run my-project --to clean_data --json --trace</code></pre>
 
         <div class="callout amber" style="margin-top: 18px">
           <p>
@@ -1932,7 +1932,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
             <h3>A compiled launcher with an external Python runtime</h3>
             <ul class="clean-list">
               <li>macOS arm64 and x64 artifacts, currently about 67 MB and 79 MB locally</li>
-              <li>Embedded React UI and Nodebook Python package</li>
+              <li>Embedded React UI and Rowcall Python package</li>
               <li>User-selected Python by default</li>
               <li>Optional managed venv that installs starter packages</li>
               <li>Local loopback web server with random bearer token</li>
@@ -1989,7 +1989,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
             collaboration carry commercial value. AGPL is a legitimate
             reciprocity choice with a different adoption profile. Make this an
             explicit business/legal decision; do not drift into an accidental
-            license. Protect the Nodebook name and marks separately from code
+            license. Protect the Rowcall name and marks separately from code
             licensing.
           </p>
         </div>
@@ -2216,7 +2216,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
           <p>
             <strong>Lowest-risk commercial sequence:</strong> host projects,
             revisions, identity, and collaboration first while execution remains
-            on a signed local Nodebook runner. This leverages the existing
+            on a signed local Rowcall runner. This leverages the existing
             user-environment architecture and can keep sensitive data local.
             Add managed isolated runners when environment specifications,
             artifacts, secrets, quotas, and run provenance are mature. Make
@@ -2382,17 +2382,17 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
                   <tbody>
                     <tr>
                       <td><strong>Python authoring API</strong></td>
-                      <td><code>nodebook/__init__.py</code></td>
+                      <td><code>rowcall/__init__.py</code></td>
                       <td>Decorator metadata, dependency declarations, display hook.</td>
                     </tr>
                     <tr>
                       <td><strong>Document compiler</strong></td>
-                      <td><code>nodebook/document/parser.py</code>, <code>validation.py</code>, <code>planning.py</code>, <code>rewrite.py</code></td>
+                      <td><code>rowcall/document/parser.py</code>, <code>validation.py</code>, <code>planning.py</code>, <code>rewrite.py</code></td>
                       <td>AST discovery, invariants, topological plans, operation-shaped source transformation.</td>
                     </tr>
                     <tr>
                       <td><strong>Runtime</strong></td>
-                      <td><code>nodebook/runtime/executor.py</code>, <code>session.py</code>, <code>worker.py</code>, <code>previews.py</code></td>
+                      <td><code>rowcall/runtime/executor.py</code>, <code>session.py</code>, <code>worker.py</code>, <code>previews.py</code></td>
                       <td>Globals, node scopes, cache, previews, NDJSON protocol and execution events.</td>
                     </tr>
                     <tr>
@@ -2407,7 +2407,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
                     </tr>
                     <tr>
                       <td><strong>CLI and launcher</strong></td>
-                      <td><code>nodebook/cli.py</code>, <code>beta_launcher.ts</code>, <code>runtime_config.ts</code></td>
+                      <td><code>rowcall/cli.py</code>, <code>beta_launcher.ts</code>, <code>runtime_config.ts</code></td>
                       <td>Headless validate/run, project creation, Python selection, local server startup, managed environment.</td>
                     </tr>
                     <tr>
@@ -2425,7 +2425,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
             <summary>Notable current contract facts</summary>
             <div class="details-body">
               <ul>
-                <li>Nodebook source format is implicitly v1; the app model and worker protocol carry version 1, but the Python file has no explicit format marker.</li>
+                <li>Rowcall source format is implicitly v1; the app model and worker protocol carry version 1, but the Python file has no explicit format marker.</li>
                 <li>All outputs from a direct upstream node become inputs to the downstream node; edges are node-to-node, not port-to-port.</li>
                 <li>Full and upstream runs refresh the cache; exact single-node execution requires valid cached upstream objects.</li>
                 <li>App writes are operation-shaped and revision-checked. Direct file writes remain authoritative and are detected by four-second polling.</li>
@@ -2454,7 +2454,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
 
       <footer class="footer">
         <p>
-          <strong>Bottom line:</strong> Nodebook does not need a new core
+          <strong>Bottom line:</strong> Rowcall does not need a new core
           architecture before broader use. It needs its existing core turned
           into a reliable product and a public contract. The highest-leverage
           next move is a hardening milestone that simultaneously fixes
@@ -2462,7 +2462,7 @@ nodebook run my-project --to clean_data --json --trace</code></pre>
           discoverability.
         </p>
         <p>
-          Nodebook architecture review · July 9, 2026 · repository commit
+          Rowcall architecture review · July 9, 2026 · repository commit
           <code>7a28d8da36c0</code>
         </p>
       </footer>

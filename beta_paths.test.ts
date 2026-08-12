@@ -4,17 +4,17 @@ import { getBetaPaths, getVenvPythonPath } from "./beta_paths.ts";
 Deno.test("getBetaPaths returns the beta data layout under the home directory", () => {
   assertEquals(getBetaPaths("/Users/test"), {
     home: "/Users/test",
-    dataDir: "/Users/test/.nodebook",
-    venvDir: "/Users/test/.nodebook/venvs/default",
-    logsDir: "/Users/test/.nodebook/logs",
-    logFile: "/Users/test/.nodebook/logs/nodebook.log",
-    configFile: "/Users/test/.nodebook/config.json",
-    updateCheckFile: "/Users/test/.nodebook/update-check.json",
-    bundledDir: "/Users/test/.nodebook/bundled",
-    bundledPythonPackageDir: "/Users/test/.nodebook/bundled/python-package",
+    dataDir: "/Users/test/.rowcall",
+    venvDir: "/Users/test/.rowcall/venvs/default",
+    logsDir: "/Users/test/.rowcall/logs",
+    logFile: "/Users/test/.rowcall/logs/rowcall.log",
+    configFile: "/Users/test/.rowcall/config.json",
+    updateCheckFile: "/Users/test/.rowcall/update-check.json",
+    bundledDir: "/Users/test/.rowcall/bundled",
+    bundledPythonPackageDir: "/Users/test/.rowcall/bundled/python-package",
     bundledRequirementsPath:
-      "/Users/test/.nodebook/bundled/requirements-alpha.txt",
-    uiDistPath: "/Users/test/.nodebook/bundled/app/ui/dist",
+      "/Users/test/.rowcall/bundled/requirements-alpha.txt",
+    uiDistPath: "/Users/test/.rowcall/bundled/app/ui/dist",
   });
 });
 

@@ -463,7 +463,7 @@ def _query_polars_table(
     else:
         return None
 
-    source_row_name = "__nodebook_source_row__"
+    source_row_name = "__rowcall_source_row__"
     while source_row_name in frame.columns:
         source_row_name += "_"
     ordered = frame.with_row_index(source_row_name)

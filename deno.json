@@ -13,7 +13,7 @@
     "serve": "deno run --allow-read --allow-write --allow-net --allow-run tools/serve.ts",
     "beta": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env beta_launcher.ts",
     "beta:check": "deno check beta_launcher.ts main.ts",
-    "beta:compile": "deno task build && deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include nodebook --include app/ui/dist --output dist/nodebook beta_launcher.ts",
+    "beta:compile": "deno task build && deno compile --allow-read --allow-write --allow-net --allow-run --allow-env --include VERSION --include pyproject.toml --include requirements-alpha.txt --include rowcall --include app/ui/dist --output dist/rowcall beta_launcher.ts",
     "release:prepare": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts prepare",
     "release:publish": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts publish",
     "cli": "deno run --allow-read --allow-run tools/cli.ts",

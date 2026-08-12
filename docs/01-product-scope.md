@@ -1,9 +1,9 @@
-# NodeBook — Product Scope
+# Rowcall — Product Scope
 
-## What is NodeBook?
+## What is Rowcall?
 
-NodeBook is a computational notebook where code lives in nodes on a visual
-canvas instead of a linear sequence of cells. Each node declares explicit named
+Rowcall is a computational notebook where code lives in nodes on a visual canvas
+instead of a linear sequence of cells. Each node declares explicit named
 outputs, while its inputs are derived from upstream graph connections, so data
 flow is visible in the graph rather than hidden in shared state. This eliminates
 the class of bugs Jupyter users know well — re-run order mattering, variables
@@ -27,9 +27,9 @@ model.
 The deeper problem is **exploratory divergence**: you have a working analysis up
 to some point, and you want to try two different approaches from there. In
 Jupyter, your options are to duplicate the entire notebook, comment out code, or
-overwrite and hope. None of these are good. NodeBook solves this with branching
-— you fork the graph from any node, and both approaches live side by side
-without interference.
+overwrite and hope. None of these are good. Rowcall solves this with branching —
+you fork the graph from any node, and both approaches live side by side without
+interference.
 
 ---
 
@@ -93,7 +93,7 @@ two approaches side by side without duplicating their work.
 
 ---
 
-## What NodeBook Is Not
+## What Rowcall Is Not
 
 - Not a replacement for production pipelines (Airflow, Prefect, etc.)
 - Not a collaborative document editor (no rich text, no prose between cells)

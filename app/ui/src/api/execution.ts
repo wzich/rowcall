@@ -4,7 +4,7 @@ import type {
   TableQueryRequest,
   TableQueryResponse,
 } from "../../../../types.ts";
-import { nodebookFetch } from "./auth.ts";
+import { rowcallFetch } from "./auth.ts";
 
 export type RunExecutionRequest = {
   nodeId: string;
@@ -44,7 +44,7 @@ export async function queryResultTable(
   request: TableQueryRequest,
   signal?: AbortSignal,
 ): Promise<TableQueryResponse & { ok: true }> {
-  const response = await nodebookFetch("/results/table", {
+  const response = await rowcallFetch("/results/table", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -79,7 +79,7 @@ async function runExecution(
     signal,
   }: RunExecutionRequest,
 ): Promise<ExecutionResponse> {
-  const response = await nodebookFetch(path, {
+  const response = await rowcallFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -112,7 +112,7 @@ async function runExecution(
 async function runGraphExecution(
   { source, expectedRevision, trace = false, onEvent, signal }: RunGraphRequest,
 ): Promise<ExecutionResponse> {
-  const response = await nodebookFetch("/run-graph", {
+  const response = await rowcallFetch("/run-graph", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

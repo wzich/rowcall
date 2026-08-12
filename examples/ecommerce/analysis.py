@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-from nodebook import display, node
+from rowcall import display, node
 
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -187,7 +187,7 @@ def retention_risk(customer_facts):
     return {"retention_risk": retention_risk}
 
 
-# NodeBook graph
+# Rowcall graph
 prepare_orders.depends_on(load_orders)
 prepare_customers.depends_on(load_customers)
 prepare_campaigns.depends_on(load_campaigns)

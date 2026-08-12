@@ -1,4 +1,4 @@
-from nodebook import node
+from rowcall import node
 # this is where you may add something like:
 # import pandas as pd
 # or
@@ -23,5 +23,5 @@ def new_node_2(name):
     # import pandas as pd
     return {"welcome": welcome}
 
-# NodeBook graph
+# Rowcall graph
 new_node_2.depends_on(start)

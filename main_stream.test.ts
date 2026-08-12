@@ -32,7 +32,7 @@ Deno.test("streamExecutionEvents emits padding and heartbeat comments around del
       reader,
       decoder,
       text,
-      (value) => value.includes(": nodebook stream padding"),
+      (value) => value.includes(": rowcall stream padding"),
     );
     assert(!text.includes("data:"));
 
@@ -40,7 +40,7 @@ Deno.test("streamExecutionEvents emits padding and heartbeat comments around del
       reader,
       decoder,
       text,
-      (value) => value.includes(": nodebook keep-alive"),
+      (value) => value.includes(": rowcall keep-alive"),
       1_200,
     );
     assert(!text.includes("data:"));

@@ -1,4 +1,4 @@
-"""Source rewrite helpers for Python-owned Nodebook documents."""
+"""Source rewrite helpers for Python-owned Rowcall documents."""
 
 from __future__ import annotations
 
@@ -765,7 +765,7 @@ def _render_graph_lines_for_names(
         if from_node not in upstreams_by_to[to_node]:
             upstreams_by_to[to_node].append(from_node)
 
-    lines = ["# NodeBook graph"]
+    lines = ["# Rowcall graph"]
     for to_node in sorted(upstreams_by_to, key=lambda node_id: node_order.get(node_id, 10**9)):
         upstreams = sorted(upstreams_by_to[to_node], key=lambda node_id: node_order.get(node_id, 10**9))
         upstream_names = ", ".join(function_by_id[node_id] for node_id in upstreams)
@@ -813,7 +813,7 @@ def _strip_graph_lines(source: str, lines: list[str]) -> list[str]:
 
 
 def _top_level_graph_line_numbers(source: str, lines: list[str]) -> set[int]:
-    line_numbers = {index for index, line in enumerate(lines, start=1) if line.strip() == "# NodeBook graph"}
+    line_numbers = {index for index, line in enumerate(lines, start=1) if line.strip() == "# Rowcall graph"}
     try:
         module = ast.parse(source)
     except SyntaxError:
@@ -1100,7 +1100,7 @@ def _protected_line_numbers(source: str, nodes: tuple[DocumentNode, ...]) -> set
     except SyntaxError:
         return protected
     for statement in module.body:
-        if isinstance(statement, ast.ImportFrom) and statement.module == "nodebook":
+        if isinstance(statement, ast.ImportFrom) and statement.module == "rowcall":
             protected.update(range(statement.lineno, (statement.end_lineno or statement.lineno) + 1))
     return protected
 
@@ -1111,7 +1111,7 @@ def _has_node_import(source: str) -> bool:
     except SyntaxError:
         return False
     for statement in module.body:
-        if not isinstance(statement, ast.ImportFrom) or statement.module != "nodebook":
+        if not isinstance(statement, ast.ImportFrom) or statement.module != "rowcall":
             continue
         if any(alias.name == "node" and alias.asname is None for alias in statement.names):
             return True
@@ -1120,7 +1120,7 @@ def _has_node_import(source: str) -> bool:
 
 def _ensure_node_import(lines: list[str]) -> None:
     insertion_index = _node_import_insertion_index(lines)
-    insert_lines = ["from nodebook import node"]
+    insert_lines = ["from rowcall import node"]
     if insertion_index < len(lines) and lines[insertion_index].strip() != "":
         insert_lines.append("")
     lines[insertion_index:insertion_index] = insert_lines

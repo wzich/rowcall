@@ -29,23 +29,22 @@ const JsonPreviewThemeContext = createContext<ThemeMode>("light");
 const jsonLanguage = json();
 
 const jsonTreeStyles = {
-  container: "nodebook-json-tree",
-  basicChildStyle: "nodebook-json-tree-item",
-  childFieldsContainer: "nodebook-json-tree-children",
-  label: "nodebook-json-tree-label",
-  clickableLabel: "nodebook-json-tree-label nodebook-json-tree-clickable-label",
-  nullValue: "nodebook-json-tree-null",
-  undefinedValue: "nodebook-json-tree-null",
-  numberValue: "nodebook-json-tree-number",
-  stringValue: "nodebook-json-tree-string",
-  booleanValue: "nodebook-json-tree-boolean",
-  otherValue: "nodebook-json-tree-other",
-  punctuation: "nodebook-json-tree-punctuation",
-  expandIcon:
-    "nodebook-json-tree-expander nodebook-json-tree-expander-collapsed",
+  container: "rowcall-json-tree",
+  basicChildStyle: "rowcall-json-tree-item",
+  childFieldsContainer: "rowcall-json-tree-children",
+  label: "rowcall-json-tree-label",
+  clickableLabel: "rowcall-json-tree-label rowcall-json-tree-clickable-label",
+  nullValue: "rowcall-json-tree-null",
+  undefinedValue: "rowcall-json-tree-null",
+  numberValue: "rowcall-json-tree-number",
+  stringValue: "rowcall-json-tree-string",
+  booleanValue: "rowcall-json-tree-boolean",
+  otherValue: "rowcall-json-tree-other",
+  punctuation: "rowcall-json-tree-punctuation",
+  expandIcon: "rowcall-json-tree-expander rowcall-json-tree-expander-collapsed",
   collapseIcon:
-    "nodebook-json-tree-expander nodebook-json-tree-expander-expanded",
-  collapsedContent: "nodebook-json-tree-collapsed-content",
+    "rowcall-json-tree-expander rowcall-json-tree-expander-expanded",
+  collapsedContent: "rowcall-json-tree-collapsed-content",
   quotesForFieldNames: true,
   stringifyStringValues: true,
   ariaLables: {

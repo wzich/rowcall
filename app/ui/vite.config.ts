@@ -2,10 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const apiOrigin = Deno.env.get("NODEBOOK_DEV_API_ORIGIN") ??
+const apiOrigin = Deno.env.get("ROWCALL_DEV_API_ORIGIN") ??
   "http://127.0.0.1:8000";
-const authToken = Deno.env.get("NODEBOOK_DEV_AUTH_TOKEN");
-const uiPort = Number(Deno.env.get("NODEBOOK_DEV_UI_PORT") ?? "5173");
+const authToken = Deno.env.get("ROWCALL_DEV_AUTH_TOKEN");
+const uiPort = Number(Deno.env.get("ROWCALL_DEV_UI_PORT") ?? "5173");
 const apiRoutes = [
   "/document",
   "/run-node",
@@ -28,7 +28,7 @@ export default defineConfig({
         route,
         {
           target: apiOrigin,
-          ...(authToken ? { headers: { "X-Nodebook-Token": authToken } } : {}),
+          ...(authToken ? { headers: { "X-Rowcall-Token": authToken } } : {}),
         },
       ]),
     ),

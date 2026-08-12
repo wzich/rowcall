@@ -9,7 +9,7 @@ import {
 Deno.test("runGraph sends optional source in the request body", async () => {
   const requests = await captureExecutionRequests(() =>
     runGraph({
-      source: "from nodebook import node\n",
+      source: "from rowcall import node\n",
       expectedRevision: "displayed-revision",
       trace: true,
     })
@@ -19,7 +19,7 @@ Deno.test("runGraph sends optional source in the request body", async () => {
   assertEquals(requests[0].path, "/run-graph");
   assertEquals("graph" in requests[0].body, false);
   assertEquals("inputs" in requests[0].body, false);
-  assertEquals(requests[0].body.source, "from nodebook import node\n");
+  assertEquals(requests[0].body.source, "from rowcall import node\n");
   assertEquals(requests[0].body.expectedRevision, "displayed-revision");
   assertEquals(requests[0].body.trace, true);
 });
@@ -28,7 +28,7 @@ Deno.test("runToNode sends optional source in the request body", async () => {
   const requests = await captureExecutionRequests(() =>
     runToNode({
       nodeId: "n",
-      source: "from nodebook import node\n",
+      source: "from rowcall import node\n",
       expectedRevision: "displayed-revision",
     })
   );
@@ -38,7 +38,7 @@ Deno.test("runToNode sends optional source in the request body", async () => {
   assertEquals("graph" in requests[0].body, false);
   assertEquals("inputs" in requests[0].body, false);
   assertEquals(requests[0].body.nodeId, "n");
-  assertEquals(requests[0].body.source, "from nodebook import node\n");
+  assertEquals(requests[0].body.source, "from rowcall import node\n");
   assertEquals(requests[0].body.expectedRevision, "displayed-revision");
 });
 
@@ -114,7 +114,7 @@ Deno.test("queryResultTable explains non-JSON endpoint responses", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (() =>
     Promise.resolve(
-      new Response("<!doctype html><title>Nodebook</title>", {
+      new Response("<!doctype html><title>Rowcall</title>", {
         headers: { "Content-Type": "text/html" },
         status: 200,
       }),

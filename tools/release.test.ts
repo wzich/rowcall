@@ -20,12 +20,12 @@ async function withReleaseFixture(
 ) {
   const directory = await Deno.makeTempDir();
   try {
-    const arm64Path = `${directory}/nodebook-darwin-arm64`;
-    await Deno.writeTextFile(arm64Path, "binary:nodebook-darwin-arm64");
+    const arm64Path = `${directory}/rowcall-darwin-arm64`;
+    await Deno.writeTextFile(arm64Path, "binary:rowcall-darwin-arm64");
     if (!options.omitX64) {
       await Deno.writeTextFile(
-        `${directory}/nodebook-darwin-x64`,
-        "binary:nodebook-darwin-x64",
+        `${directory}/rowcall-darwin-x64`,
+        "binary:rowcall-darwin-x64",
       );
     }
     await writeSmokeAttestation(
@@ -54,7 +54,7 @@ async function writeSmokeAttestation(
       JSON.stringify(
         {
           schemaVersion: 1,
-          asset: "nodebook-darwin-arm64",
+          asset: "rowcall-darwin-arm64",
           sha256,
           version: "0.1.0",
           sourceCommit,
@@ -127,7 +127,7 @@ Deno.test("release gate accepts a native smoke plus both builds", async () => {
     });
     assertEquals(identity.version, "0.1.0");
     assertEquals(identity.sourceCommit, commitA);
-    assertEquals(identity.nativeSmokedAsset, "nodebook-darwin-arm64");
+    assertEquals(identity.nativeSmokedAsset, "rowcall-darwin-arm64");
     assertEquals(Object.keys(identity.hashes).sort(), [
       "darwin-arm64",
       "darwin-x64",
@@ -145,7 +145,7 @@ Deno.test("release gate rejects a missing cross-build", async () => {
           expectedNativeArchitecture: "arm64",
         }),
       Error,
-      "nodebook-darwin-x64",
+      "rowcall-darwin-x64",
     );
   });
 });
@@ -205,11 +205,11 @@ Deno.test("release manifest accepts the prepared binary hashes", () => {
       version: "0.1.0",
       downloads: {
         "darwin-arm64": {
-          url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64",
+          url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64",
           sha256: "a".repeat(64),
         },
         "darwin-x64": {
-          url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-x64",
+          url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-x64",
           sha256: "b".repeat(64),
         },
       },
@@ -219,7 +219,7 @@ Deno.test("release manifest accepts the prepared binary hashes", () => {
       identity: {
         version: "0.1.0",
         sourceCommit: commitA,
-        nativeSmokedAsset: "nodebook-darwin-arm64",
+        nativeSmokedAsset: "rowcall-darwin-arm64",
         hashes: {
           "darwin-arm64": "a".repeat(64),
           "darwin-x64": "b".repeat(64),
@@ -237,12 +237,11 @@ Deno.test("release manifest rejects a stale binary hash", () => {
           version: "0.1.0",
           downloads: {
             "darwin-arm64": {
-              url:
-                "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64",
+              url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64",
               sha256: "c".repeat(64),
             },
             "darwin-x64": {
-              url: "https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-x64",
+              url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-x64",
               sha256: "b".repeat(64),
             },
           },
@@ -252,7 +251,7 @@ Deno.test("release manifest rejects a stale binary hash", () => {
           identity: {
             version: "0.1.0",
             sourceCommit: commitA,
-            nativeSmokedAsset: "nodebook-darwin-arm64",
+            nativeSmokedAsset: "rowcall-darwin-arm64",
             hashes: {
               "darwin-arm64": "a".repeat(64),
               "darwin-x64": "b".repeat(64),

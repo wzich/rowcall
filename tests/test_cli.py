@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from nodebook.cli import main
+from rowcall.cli import main
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,14 +23,14 @@ class CliTests(unittest.TestCase):
         exit_code = main(["--help"], stdout=stdout, stderr=stderr)
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("nodebook run <folder-or-document.py>", stdout.getvalue())
+        self.assertIn("rowcall run <folder-or-document.py>", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
     def test_open_delegates_to_full_launcher(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
 
-        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+        with patch("rowcall.cli.run_full_launcher", return_value=0) as launcher:
             exit_code = main(
                 ["open", "analysis.py", "--python", "/env/bin/python"],
                 stdout=stdout,
@@ -48,7 +48,7 @@ class CliTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
 
-        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+        with patch("rowcall.cli.run_full_launcher", return_value=0) as launcher:
             exit_code = main(["analysis.py"], stdout=stdout, stderr=stderr)
 
         self.assertEqual(exit_code, 0)
@@ -60,7 +60,7 @@ class CliTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
 
-        with patch("nodebook.cli.run_full_launcher", return_value=0) as launcher:
+        with patch("rowcall.cli.run_full_launcher", return_value=0) as launcher:
             exit_code = main(
                 ["new", "my-work", "--open", "--python", "/env/bin/python"],
                 stdout=stdout,
@@ -96,7 +96,7 @@ class CliTests(unittest.TestCase):
             path = Path(directory) / "graph.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="n_start", outputs=["value"])
 def start():
@@ -121,7 +121,7 @@ def start():
             path = Path(directory) / "bad.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="a", outputs=["value"])
 def first():
@@ -156,7 +156,7 @@ def second():
             path = Path(directory) / "bad_return.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="total", outputs=["total"])
 def total_numbers(numbers):
@@ -180,14 +180,14 @@ def total_numbers(numbers):
         self.assertEqual(issue["nodeId"], "total")
         self.assertIn("same-named variable 'total'", issue["message"])
         self.assertIn("not the expression 'sum(numbers)'", issue["message"])
-        self.assertIn("nodebook help format", issue["message"])
+        self.assertIn("rowcall help format", issue["message"])
 
     def test_run_console_prints_precise_return_validation_issue(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad_return.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="total", outputs=["total"])
 def total_numbers():
@@ -203,14 +203,14 @@ def total_numbers():
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("invalid_node_return", stderr.getvalue())
         self.assertIn("not the expression '1'", stderr.getvalue())
-        self.assertIn("nodebook help format", stderr.getvalue())
+        self.assertIn("rowcall help format", stderr.getvalue())
 
     def test_run_success_json_with_python_module_entrypoint(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
                 "-m",
-                "nodebook",
+                "rowcall",
                 "run",
                 str(REPO_ROOT / "examples/hello_world.py"),
                 "--json",
@@ -240,7 +240,7 @@ def total_numbers():
             path = Path(directory) / "graph.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="n_start", outputs=["value"])
 def start():
@@ -314,7 +314,7 @@ def start():
             path = Path(directory) / "large.py"
             path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="large", outputs=["values"])
 def large_value():
@@ -364,8 +364,8 @@ def large_value():
             path = Path(directory) / "missing.py"
             path.write_text(
                 """
-import definitely_missing_nodebook_cli_json_package
-from nodebook import node
+import definitely_missing_rowcall_cli_json_package
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():
@@ -386,7 +386,7 @@ def first():
         self.assertEqual(error["phase"], "document_globals")
         self.assertEqual(
             error["missingModule"],
-            "definitely_missing_nodebook_cli_json_package",
+            "definitely_missing_rowcall_cli_json_package",
         )
         self.assertEqual(error["pythonExecutable"], sys.executable)
 
@@ -395,8 +395,8 @@ def first():
             path = Path(directory) / "missing.py"
             path.write_text(
                 """
-import definitely_missing_nodebook_cli_console_package
-from nodebook import node
+import definitely_missing_rowcall_cli_console_package
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():
@@ -415,11 +415,11 @@ def first():
         self.assertIn("FAILED run document", console_error)
         self.assertIn(
             "Missing Python package while loading document globals: "
-            "definitely_missing_nodebook_cli_console_package",
+            "definitely_missing_rowcall_cli_console_package",
             console_error,
         )
         self.assertIn(f"Python used: {sys.executable}", console_error)
-        self.assertIn("Run Nodebook with a Python environment", console_error)
+        self.assertIn("Run Rowcall with a Python environment", console_error)
         self.assertNotIn("Traceback", console_error)
 
     def test_run_missing_module_console_trace_includes_traceback(self) -> None:
@@ -427,8 +427,8 @@ def first():
             path = Path(directory) / "missing.py"
             path.write_text(
                 """
-import definitely_missing_nodebook_cli_trace_package
-from nodebook import node
+import definitely_missing_rowcall_cli_trace_package
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():

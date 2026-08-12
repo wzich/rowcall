@@ -1,20 +1,20 @@
-# Nodebook
+# Rowcall
 
-Nodebook is a canvas-based computational notebook prototype. The current repo
-has a Python runtime for parsing, validating, planning, and executing
-graph-shaped Python notebooks, plus a Deno/Hono API and Vite/React canvas UI for
-editing and managing those documents.
+Rowcall is a canvas-based computational notebook prototype. The current repo has
+a Python runtime for parsing, validating, planning, and executing graph-shaped
+Python notebooks, plus a Deno/Hono API and Vite/React canvas UI for editing and
+managing those documents.
 
 ## Beta Tester Start
 
-Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
-must already be installed. Opening or running a document prefers its
-project-local `.venv`, then an active virtualenv or Conda environment. If
-neither exists, Nodebook creates `.venv`, installs the project requirements
-once, and temporarily adds Nodebook's own runtime package to the process.
+Beta testers will install a single `rowcall` launcher. Python 3.10 or newer must
+already be installed. Opening or running a document prefers its project-local
+`.venv`, then an active virtualenv or Conda environment. If neither exists,
+Rowcall creates `.venv`, installs the project requirements once, and temporarily
+adds Rowcall's own runtime package to the process.
 
 This is an invited beta, not a hardened public release. The macOS launcher is
-currently unsigned and not notarized, and Nodebook executes Python with the
+currently unsigned and not notarized, and Rowcall executes Python with the
 permissions of the user who started it. Open only documents whose code you
 trust. The installer verifies published SHA-256 checksums to detect corruption;
 checksums are not a substitute for publisher code signing.
@@ -26,21 +26,21 @@ Invited-beta limitations are intentionally explicit:
 - Unsaved browser edits are held only in memory and are lost if the browser or
   app crashes.
 - If a save response is interrupted or otherwise uncertain, reload the document
-  before editing again. Nodebook does not guess whether to replay the save.
-- Run only one Nodebook launcher/process at a time. Concurrent launcher updates
+  before editing again. Rowcall does not guess whether to replay the save.
+- Run only one Rowcall launcher/process at a time. Concurrent launcher updates
   and managed-environment setup are not supported in this beta.
 - Publishing is manual.
 
-Close every running Nodebook process before reinstalling or updating the
+Close every running Rowcall process before reinstalling or updating the
 launcher.
 
 ```sh
-curl -fsSL https://nodebook.rodeo/install.sh | sh
+curl -fsSL https://rowcall.io/install.sh | sh
 ```
 
-To upgrade, run the same installer command again. It replaces only the
-`nodebook` launcher in `~/.local/bin`; the launcher refreshes its managed Python
-runtime the next time it runs if the bundled Nodebook version changed.
+To upgrade, run the same installer command again. It replaces only the `rowcall`
+launcher in `~/.local/bin`; the launcher refreshes its managed Python runtime
+the next time it runs if the bundled Rowcall version changed.
 
 To run the complete release check without uploading anything:
 
@@ -58,13 +58,13 @@ If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 Show command help:
 
 ```sh
-nodebook --help
+rowcall --help
 ```
 
-Create and open a new Nodebook folder:
+Create and open a new Rowcall folder:
 
 ```sh
-nodebook new my-work --open
+rowcall new my-work --open
 ```
 
 This creates:
@@ -81,28 +81,28 @@ my-work/
 `requirements.txt` lists the starter data packages. The `new` command does not
 install them; the first `open` or `run` that creates a project environment does.
 
-Opening uses `my-work/.venv` when it exists. Without one, Nodebook uses a
+Opening uses `my-work/.venv` when it exists. Without one, Rowcall uses a
 compatible active environment if available, or creates `my-work/.venv` and
 installs `requirements.txt` once. To create and open with a specific interpreter
 instead, run:
 
 ```sh
-nodebook new my-work --open --python /path/to/python
+rowcall new my-work --open --python /path/to/python
 ```
 
-Open an existing Nodebook folder or Python document:
+Open an existing Rowcall folder or Python document:
 
 ```sh
-nodebook open my-work
-nodebook open path/to/graph.py
+rowcall open my-work
+rowcall open path/to/graph.py
 ```
 
-For convenience, `nodebook my-work` is an alias for `nodebook open my-work` when
+For convenience, `rowcall my-work` is an alias for `rowcall open my-work` when
 the path already exists. Folder paths resolve to `graph.py` inside the folder.
 To create a standalone Python document instead of a folder, pass a `.py` path:
 
 ```sh
-nodebook new graph.py
+rowcall new graph.py
 ```
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
@@ -112,7 +112,7 @@ only.
 
 Opening and running use this interpreter order: explicit `--python`, an existing
 `.venv` beside the document, an active virtualenv, an active Conda environment,
-then a newly created project `.venv`. Nodebook installs `requirements.txt` only
+then a newly created project `.venv`. Rowcall installs `requirements.txt` only
 when it creates the project environment; it never auto-installs into an existing
 or active environment.
 
@@ -122,43 +122,43 @@ machine-specific paths and the generated `.gitignore` excludes them.
 Pass a specific interpreter to override automatic selection:
 
 ```sh
-nodebook open --python "$CONDA_PREFIX/bin/python" my-work
+rowcall open --python "$CONDA_PREFIX/bin/python" my-work
 ```
 
-If you do not want to configure packages yourself, use Nodebook's managed
-starter environment:
+If you do not want to configure packages yourself, use Rowcall's managed starter
+environment:
 
 ```sh
-nodebook open --managed-env my-work
-nodebook run --managed-env my-work --json
-nodebook run --managed-env my-work --json=summary --trace=summary
-nodebook run --managed-env my-work --outputs-only
+rowcall open --managed-env my-work
+rowcall run --managed-env my-work --json
+rowcall run --managed-env my-work --json=summary --trace=summary
+rowcall run --managed-env my-work --outputs-only
 ```
 
 The beta launcher stores its managed files under:
 
 ```text
-~/.nodebook
-~/.nodebook/venvs/default
-~/.nodebook/logs/nodebook.log
+~/.rowcall
+~/.rowcall/venvs/default
+~/.rowcall/logs/rowcall.log
 ```
 
-On first managed-env use, or after `nodebook reset-env`, the launcher uses
+On first managed-env use, or after `rowcall reset-env`, the launcher uses
 `python3` then `python` to find Python 3.10 or newer, creates the managed venv,
-installs the bundled `nodebook` Python package, and installs
+installs the bundled `rowcall` Python package, and installs
 `requirements-alpha.txt` dependencies: pandas, polars, and matplotlib.
 
 Inspect the default user Python runtime:
 
 ```sh
-nodebook doctor
-nodebook doctor --json
+rowcall doctor
+rowcall doctor --json
 ```
 
 Inspect the managed starter environment:
 
 ```sh
-nodebook doctor --managed-env
+rowcall doctor --managed-env
 ```
 
 Doctor is read-only: it reports missing or unchecked capabilities without
@@ -167,17 +167,17 @@ creating launcher assets, environments, or log files.
 Recreate only the managed venv:
 
 ```sh
-nodebook reset-env
+rowcall reset-env
 ```
 
 ### Headless CLI
 
-Validate and run a Nodebook Python document without opening the canvas:
+Validate and run a Rowcall Python document without opening the canvas:
 
 ```sh
-nodebook validate my-work
-nodebook run my-work
-nodebook run my-work --to node_id_or_function_name
+rowcall validate my-work
+rowcall run my-work
+rowcall run my-work --to node_id_or_function_name
 ```
 
 Running without `--to` executes the full graph. Targets must be exact node IDs
@@ -187,20 +187,20 @@ Pass `--json` for structured output and `--trace` to include per-step input
 previews:
 
 ```sh
-nodebook run my-work --json --trace
+rowcall run my-work --json --trace
 ```
 
 The launcher delegates headless commands to the selected Python runtime. `run`
 uses the same environment policy as `open`. `validate` prefers an explicit
 interpreter, existing project `.venv`, or active environment, then falls back to
 system Python; it never creates `.venv` or installs packages. During
-development, `uv run nodebook`, `python3 -m nodebook`, and `deno task cli` are
+development, `uv run rowcall`, `python3 -m rowcall`, and `deno task cli` are
 still useful local wrappers. Opening commands invoked through the Python CLI
 delegate to the full launcher in the source checkout or installed on `PATH`:
 
 ```sh
-uv run nodebook open my-work
-python3 -m nodebook run my-work --json --trace
+uv run rowcall open my-work
+python3 -m rowcall run my-work --json --trace
 deno task cli run my-work --json --trace
 ```
 
@@ -219,9 +219,9 @@ environment:
 deno task setup
 ```
 
-This creates a repo-local `.venv`, installs the local `nodebook` Python package,
+This creates a repo-local `.venv`, installs the local `rowcall` Python package,
 and installs `requirements-alpha.txt`. This is separate from the beta launcher's
-`~/.nodebook/venvs/default`.
+`~/.rowcall/venvs/default`.
 
 Start the full development environment:
 
@@ -234,8 +234,8 @@ app at `http://127.0.0.1:5173/`. Vite hot-reloads UI changes and proxies API
 requests with a development-session authorization token, so API restarts do not
 require opening a new tokenized URL.
 
-By default Nodebook edits `examples/ecommerce/analysis.py`. To edit another
-local document during development, pass a `.py` path through the task:
+By default Rowcall edits `examples/ecommerce/analysis.py`. To edit another local
+document during development, pass a `.py` path through the task:
 
 ```sh
 deno task dev path/to/analysis.py
@@ -260,10 +260,10 @@ If port 5173 is already occupied, choose another Vite port explicitly:
 deno task dev --ui-port 5174 path/to/analysis.py
 ```
 
-Nodebook Python documents import a tiny local `nodebook` package:
+Rowcall Python documents import a tiny local `rowcall` package:
 
 ```python
-from nodebook import node
+from rowcall import node
 
 
 @node(id="n_load", outputs=["message"])
@@ -320,35 +320,35 @@ Compile the macOS beta launcher:
 deno task beta:compile
 ```
 
-The task builds the UI first. The compiled binary is written to `dist/nodebook`
+The task builds the UI first. The compiled binary is written to `dist/rowcall`
 and embeds the built UI, the Python package, and `requirements-alpha.txt`.
 
 For release hosting, publish platform-specific binaries such as:
 
 ```text
-nodebook-darwin-arm64
-nodebook-darwin-x64
+rowcall-darwin-arm64
+rowcall-darwin-x64
 ```
 
 The installer template in `packaging/install.sh` defaults to the release asset
-host at `https://releases.nodebook.rodeo`. It can also be configured with either
-a direct binary URL or a release base URL:
+host at `https://releases.rowcall.io`. It can also be configured with either a
+direct binary URL or a release base URL:
 
 ```sh
-NODEBOOK_DOWNLOAD_URL=https://releases.nodebook.rodeo/v0.1.0/nodebook-darwin-arm64 sh packaging/install.sh
-NODEBOOK_RELEASE_BASE=https://releases.nodebook.rodeo NODEBOOK_VERSION=v0.1.0 sh packaging/install.sh
+ROWCALL_DOWNLOAD_URL=https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64 sh packaging/install.sh
+ROWCALL_RELEASE_BASE=https://releases.rowcall.io ROWCALL_VERSION=v0.1.0 sh packaging/install.sh
 ```
 
-## Release To nodebook.rodeo
+## Release To rowcall.io
 
-The release host is a Cloudflare Pages project named `nodebook-rodeo`. The
-committed `site/` directory contains the editable landing page source. The
-deployable site is generated into `dist/site/` and is not committed.
+The release host is a Cloudflare Pages project named `rowcall-io`. The committed
+`site/` directory contains the editable landing page source. The deployable site
+is generated into `dist/site/` and is not committed.
 
 Compiled release binaries are too large for Cloudflare Pages static assets, so
 the large downloads are generated into `dist/r2/` and uploaded to a Cloudflare
-R2 bucket. The default bucket name is `nodebook-rodeo-releases`, and the
-expected public custom domain is `https://releases.nodebook.rodeo`.
+R2 bucket. The default bucket name is `rowcall-io-releases`, and the expected
+public custom domain is `https://releases.rowcall.io`.
 
 Publishing is intentionally local and manual during the invited beta. Start from
 a clean checkout and stage the release:
@@ -386,14 +386,14 @@ dist/site/
   latest.json
 
 dist/r2/
-  latest/nodebook-darwin-arm64
-  latest/nodebook-darwin-arm64.sha256
-  latest/nodebook-darwin-x64
-  latest/nodebook-darwin-x64.sha256
-  v0.1.0/nodebook-darwin-arm64
-  v0.1.0/nodebook-darwin-arm64.sha256
-  v0.1.0/nodebook-darwin-x64
-  v0.1.0/nodebook-darwin-x64.sha256
+  latest/rowcall-darwin-arm64
+  latest/rowcall-darwin-arm64.sha256
+  latest/rowcall-darwin-x64
+  latest/rowcall-darwin-x64.sha256
+  v0.1.0/rowcall-darwin-arm64
+  v0.1.0/rowcall-darwin-arm64.sha256
+  v0.1.0/rowcall-darwin-x64
+  v0.1.0/rowcall-darwin-x64.sha256
 ```
 
 Keep the Cloudflare Pages Git integration disabled during the invited beta.
@@ -403,7 +403,7 @@ cannot change what testers receive.
 Override the R2 bucket name or public download base if needed:
 
 ```sh
-NODEBOOK_RELEASE_DOWNLOAD_BASE=https://downloads.example.com \
+ROWCALL_RELEASE_DOWNLOAD_BASE=https://downloads.example.com \
   deno task release:prepare
-NODEBOOK_R2_BUCKET=my-bucket deno task release:publish
+ROWCALL_R2_BUCKET=my-bucket deno task release:publish
 ```

@@ -1,22 +1,22 @@
 #!/bin/sh
 set -eu
 
-install_dir="${NODEBOOK_INSTALL_DIR:-$HOME/.local/bin}"
-install_path="$install_dir/nodebook"
-download_url="${NODEBOOK_DOWNLOAD_URL:-}"
-release_base="${NODEBOOK_RELEASE_BASE:-https://releases.nodebook.rodeo}"
-release_version="${NODEBOOK_VERSION:-latest}"
-skip_checksum="${NODEBOOK_SKIP_CHECKSUM:-}"
+install_dir="${ROWCALL_INSTALL_DIR:-$HOME/.local/bin}"
+install_path="$install_dir/rowcall"
+download_url="${ROWCALL_DOWNLOAD_URL:-}"
+release_base="${ROWCALL_RELEASE_BASE:-https://releases.rowcall.io}"
+release_version="${ROWCALL_VERSION:-latest}"
+skip_checksum="${ROWCALL_SKIP_CHECKSUM:-}"
 
-echo "Nodebook is an invited beta. The macOS binary is unsigned and not notarized."
-echo "Nodebook runs Python with your user permissions; open only documents you trust."
-echo "Close any running Nodebook process before installing or updating."
+echo "Rowcall is an invited beta. The macOS binary is unsigned and not notarized."
+echo "Rowcall runs Python with your user permissions; open only documents you trust."
+echo "Close any running Rowcall process before installing or updating."
 echo ""
 
 case "$(uname -s)" in
   Darwin) os="darwin" ;;
   *)
-    echo "Nodebook beta installer currently supports macOS only." >&2
+    echo "Rowcall beta installer currently supports macOS only." >&2
     exit 1
     ;;
 esac
@@ -30,14 +30,14 @@ case "$(uname -m)" in
     ;;
 esac
 
-asset="nodebook-$os-$arch"
+asset="rowcall-$os-$arch"
 
 if [ -z "$download_url" ]; then
   download_url="${release_base%/}/$release_version/$asset"
 fi
 checksum_url="${download_url}.sha256"
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nodebook.XXXXXX")"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/rowcall.XXXXXX")"
 tmp_file="$tmp_dir/$asset"
 tmp_checksum="$tmp_dir/$asset.sha256"
 cleanup() {
@@ -54,19 +54,19 @@ if [ "$skip_checksum" != "1" ]; then
   echo "Verifying checksum..."
   (cd "$tmp_dir" && shasum -a 256 -c "$asset.sha256")
 else
-  echo "Skipping checksum verification because NODEBOOK_SKIP_CHECKSUM=1"
+  echo "Skipping checksum verification because ROWCALL_SKIP_CHECKSUM=1"
 fi
 
 chmod +x "$tmp_file"
 
-echo "Verifying downloaded Nodebook..."
+echo "Verifying downloaded Rowcall..."
 "$tmp_file" --version >/dev/null
 
 mkdir -p "$install_dir"
 mv "$tmp_file" "$install_path"
 trap - EXIT
 
-echo "Installed Nodebook to $install_path"
+echo "Installed Rowcall to $install_path"
 case ":$PATH:" in
   *":$install_dir:"*) ;;
   *)

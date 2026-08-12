@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-import nodebook.runtime.previews as previews
+import rowcall.runtime.previews as previews
 
 
 HUGE_TEXT = "🔥" * 10_000

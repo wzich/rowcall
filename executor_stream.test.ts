@@ -44,7 +44,7 @@ function sourceRuntimeTest(
 
 function helloSource(): string {
   return [
-    "from nodebook import node",
+    "from rowcall import node",
     "",
     '@node(id="a", outputs=["x"])',
     "def a():",
@@ -63,7 +63,7 @@ function helloSource(): string {
 
 function targetSource(value: number): string {
   return [
-    "from nodebook import node",
+    "from rowcall import node",
     "",
     '@node(id="root", outputs=["input_value"])',
     "def root():",
@@ -117,13 +117,13 @@ sourceRuntimeTest(
   "source-backed runs reject explicit inputs",
   async () => {
     const graphResponse = await runSourceGraph(
-      "from nodebook import node\n",
+      "from rowcall import node\n",
       "/tmp/source_inputs.py",
       { value: 1 },
       true,
     );
     const nodeResponse = await runSourceToNode(
-      "from nodebook import node\n",
+      "from rowcall import node\n",
       "/tmp/source_inputs.py",
       "target",
       { value: 1 },
@@ -199,7 +199,7 @@ sourceRuntimeTest(
     await Deno.writeTextFile(
       documentPath,
       [
-        "from nodebook import node",
+        "from rowcall import node",
         "",
         '@node(id="only", outputs=["value"])',
         "def only():",
@@ -209,7 +209,7 @@ sourceRuntimeTest(
       ].join("\n"),
     );
     const dirtySource = [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="only", outputs=["value"])',
       "def only():",
@@ -238,7 +238,7 @@ sourceRuntimeTest(
   "streamSourceRunToNode stops after the first failed node",
   async () => {
     const source = [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="a", outputs=["x"])',
       "def a():",

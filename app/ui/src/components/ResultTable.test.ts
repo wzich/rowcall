@@ -4,7 +4,7 @@ import { sortingStateToQuery } from "./resultTableState.ts";
 Deno.test("result table translates one visible sort into a server query", () => {
   assertEquals(sortingStateToQuery([]), null);
   assertEquals(
-    sortingStateToQuery([{ id: "__nodebook_index__", desc: false }]),
+    sortingStateToQuery([{ id: "__rowcall_index__", desc: false }]),
     { kind: "index", descending: false },
   );
   assertEquals(

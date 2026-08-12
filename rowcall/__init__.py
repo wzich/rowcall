@@ -1,6 +1,6 @@
-"""Minimal Python API for Nodebook-authored documents.
+"""Minimal Python API for Rowcall-authored documents.
 
-This package intentionally keeps the Python-side contract small. The Nodebook
+This package intentionally keeps the Python-side contract small. The Rowcall
 canvas and server parse the source file, but generated documents should also be
 ordinary importable Python modules.
 """
@@ -14,31 +14,31 @@ from typing import Any, TypeVar
 FunctionT = TypeVar("FunctionT", bound=Callable[..., Any])
 
 
-class NodebookNodeError(TypeError):
+class RowcallNodeError(TypeError):
     """Raised when node metadata is declared with an unsupported shape."""
 
 
 def node(*, id: str, outputs: Iterable[str]) -> Callable[[FunctionT], FunctionT]:
-    """Mark a function as a Nodebook node.
+    """Mark a function as a Rowcall node.
 
     The decorator attaches simple metadata and returns the original function.
     It does not wrap execution or change call semantics.
     """
 
     if not isinstance(id, str):
-        raise NodebookNodeError("node id must be a string")
+        raise RowcallNodeError("node id must be a string")
 
     if isinstance(outputs, (str, bytes)):
-        raise NodebookNodeError("node outputs must be an iterable of strings")
+        raise RowcallNodeError("node outputs must be an iterable of strings")
 
     output_names = list(outputs)
     if not all(isinstance(name, str) for name in output_names):
-        raise NodebookNodeError("node outputs must be an iterable of strings")
+        raise RowcallNodeError("node outputs must be an iterable of strings")
 
     def decorate(function: FunctionT) -> FunctionT:
-        setattr(function, "__nodebook_id__", id)
-        setattr(function, "__nodebook_outputs__", output_names)
-        setattr(function, "__nodebook_dependencies__", [])
+        setattr(function, "__rowcall_id__", id)
+        setattr(function, "__rowcall_outputs__", output_names)
+        setattr(function, "__rowcall_dependencies__", [])
         setattr(function, "depends_on", _depends_on_for(function))
         return function
 
@@ -47,22 +47,22 @@ def node(*, id: str, outputs: Iterable[str]) -> Callable[[FunctionT], FunctionT]
 
 def _depends_on_for(function: FunctionT) -> Callable[..., FunctionT]:
     def depends_on(*upstream_nodes: Callable[..., Any]) -> FunctionT:
-        dependencies = list(getattr(function, "__nodebook_dependencies__", []))
+        dependencies = list(getattr(function, "__rowcall_dependencies__", []))
         dependencies.extend(upstream_nodes)
-        setattr(function, "__nodebook_dependencies__", dependencies)
+        setattr(function, "__rowcall_dependencies__", dependencies)
         return function
 
     return depends_on
 
 
 def display(value: Any) -> None:
-    """Display a value when running inside Nodebook.
+    """Display a value when running inside Rowcall.
 
     The active runtime replaces this function while executing a node. Outside
-    Nodebook it is intentionally a no-op so authored modules remain importable.
+    Rowcall it is intentionally a no-op so authored modules remain importable.
     """
 
     return None
 
 
-__all__ = ["NodebookNodeError", "display", "node"]
+__all__ = ["RowcallNodeError", "display", "node"]

@@ -1,4 +1,4 @@
-"""AST parser for strict Python Nodebook documents."""
+"""AST parser for strict Python Rowcall documents."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from .models import (
 from .validation import validate_document
 
 
-SUPPORTED_NODEBOOK_FROM_IMPORTS = {"display", "node"}
-_NODEBOOK_NODE = "nodebook_node"
-_ALIASED_NODEBOOK_NODE = "aliased_nodebook_node"
-_NODEBOOK_MODULE = "nodebook_module"
+SUPPORTED_ROWCALL_FROM_IMPORTS = {"display", "node"}
+_ROWCALL_NODE = "rowcall_node"
+_ALIASED_ROWCALL_NODE = "aliased_rowcall_node"
+_ROWCALL_MODULE = "rowcall_module"
 _UNKNOWN_BINDING = "unknown"
 _SUPPORTED_DECORATOR = "supported"
 _UNSUPPORTED_BARE_DECORATOR = "unsupported_bare"
@@ -70,7 +70,7 @@ def _parse_source(
     lines = source.splitlines()
     issues: list[ValidationIssue] = []
     decorator_kinds = _classify_node_decorators(module)
-    _validate_nodebook_imports(module, issues)
+    _validate_rowcall_imports(module, issues)
     _diagnose_unsupported_node_syntax(module, decorator_kinds, issues)
     decoded_nodes = _decode_nodes(
         module,
@@ -89,7 +89,7 @@ def _parse_source(
             ValidationIssue(
                 kind="missing_node",
                 message=(
-                    "A Nodebook document must define at least one node using "
+                    "A Rowcall document must define at least one node using "
                     '@node(id="...", outputs=[...]) on a synchronous function'
                 ),
             )
@@ -204,17 +204,17 @@ def _diagnose_unsupported_node_syntax(
         elif _UNSUPPORTED_QUALIFIED_DECORATOR in kinds:
             message = (
                 f"Qualified node decorator on '{statement.name}' is not supported; "
-                "use 'from nodebook import node' and @node(...)"
+                "use 'from rowcall import node' and @node(...)"
             )
         elif _UNSUPPORTED_ALIASED_DECORATOR in kinds:
             message = (
                 f"Aliased node decorator on '{statement.name}' is not supported; "
-                "use 'from nodebook import node' and @node(...)"
+                "use 'from rowcall import node' and @node(...)"
             )
         elif _UNSUPPORTED_BARE_DECORATOR in kinds:
             message = (
                 f"Decorator @node on '{statement.name}' is not bound by "
-                "a top-level 'from nodebook import node' statement"
+                "a top-level 'from rowcall import node' statement"
             )
         else:
             continue
@@ -249,17 +249,17 @@ def _classify_node_decorator(value: ast.AST, bindings: dict[str, str]) -> str | 
         if candidate.id == "node":
             return (
                 _SUPPORTED_DECORATOR
-                if provenance == _NODEBOOK_NODE
+                if provenance == _ROWCALL_NODE
                 else _UNSUPPORTED_BARE_DECORATOR
             )
-        if provenance == _ALIASED_NODEBOOK_NODE:
+        if provenance == _ALIASED_ROWCALL_NODE:
             return _UNSUPPORTED_ALIASED_DECORATOR
         return None
     if (
         isinstance(candidate, ast.Attribute)
         and candidate.attr == "node"
         and isinstance(candidate.value, ast.Name)
-        and bindings.get(candidate.value.id) == _NODEBOOK_MODULE
+        and bindings.get(candidate.value.id) == _ROWCALL_MODULE
     ):
         return _UNSUPPORTED_QUALIFIED_DECORATOR
     return None
@@ -278,18 +278,18 @@ def _apply_top_level_bindings(statement: ast.stmt, bindings: dict[str, str]) -> 
     if isinstance(statement, ast.Import):
         for alias in statement.names:
             bound_name = alias.asname or alias.name.partition(".")[0]
-            if alias.name == "nodebook" or (
-                alias.asname is None and alias.name.startswith("nodebook.")
+            if alias.name == "rowcall" or (
+                alias.asname is None and alias.name.startswith("rowcall.")
             ):
-                bindings[bound_name] = _NODEBOOK_MODULE
+                bindings[bound_name] = _ROWCALL_MODULE
     elif isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
             if alias.name == "*":
                 continue
             bound_name = alias.asname or alias.name
-            if statement.module == "nodebook" and alias.name == "node":
+            if statement.module == "rowcall" and alias.name == "node":
                 bindings[bound_name] = (
-                    _ALIASED_NODEBOOK_NODE if alias.asname else _NODEBOOK_NODE
+                    _ALIASED_ROWCALL_NODE if alias.asname else _ROWCALL_NODE
                 )
 
 
@@ -543,11 +543,11 @@ def _validate_function_shape(function_def: ast.FunctionDef, node_id: str, issues
         )
 
     for argument in [*function_def.args.args, *function_def.args.kwonlyargs]:
-        if argument.arg.startswith("__nodebook_"):
+        if argument.arg.startswith("__rowcall_"):
             issues.append(
                 ValidationIssue(
                     kind="unsupported_python",
-                    message="Node parameter names may not start with __nodebook_",
+                    message="Node parameter names may not start with __rowcall_",
                     node_id=node_id,
                     path=_path_for(argument.lineno, argument.col_offset + 1),
                 )
@@ -563,7 +563,7 @@ def _validate_node_return(
     validate_output_bindings: bool,
 ) -> None:
     returns = _node_level_returns(function_def)
-    format_hint = " See `nodebook help format` for the required structure."
+    format_hint = " See `rowcall help format` for the required structure."
 
     if len(returns) != 1:
         issues.append(
@@ -780,16 +780,16 @@ def _validate_no_direct_node_calls(
         )
 
 
-def _validate_nodebook_imports(module: ast.Module, issues: list[ValidationIssue]) -> None:
+def _validate_rowcall_imports(module: ast.Module, issues: list[ValidationIssue]) -> None:
     for statement in module.body:
-        if not _is_nodebook_from_import(statement):
+        if not _is_rowcall_from_import(statement):
             continue
         for alias in statement.names:
-            if alias.name not in SUPPORTED_NODEBOOK_FROM_IMPORTS:
+            if alias.name not in SUPPORTED_ROWCALL_FROM_IMPORTS:
                 issues.append(
                     ValidationIssue(
                         kind="unsupported_python",
-                        message="from nodebook imports may only include display and node",
+                        message="from rowcall imports may only include display and node",
                         path=_statement_path(statement),
                     )
                 )
@@ -798,7 +798,7 @@ def _validate_nodebook_imports(module: ast.Module, issues: list[ValidationIssue]
             issues.append(
                 ValidationIssue(
                     kind="unsupported_python",
-                    message="from nodebook imports may not use aliases",
+                    message="from rowcall imports may not use aliases",
                     path=_statement_path(statement),
                 )
             )
@@ -945,21 +945,21 @@ def _excluded_source_lines(module: ast.Module, node_defs: list[ast.FunctionDef],
             excluded.add(line_number)
 
     for statement in module.body:
-        if _is_nodebook_from_import(statement) or (
+        if _is_rowcall_from_import(statement) or (
             isinstance(statement, ast.Expr) and _looks_like_depends_on_call(statement.value)
         ):
             for line_number in range(statement.lineno, (statement.end_lineno or statement.lineno) + 1):
                 excluded.add(line_number)
 
     for line_number, line in enumerate(lines, start=1):
-        if line.strip() == "# NodeBook graph":
+        if line.strip() == "# Rowcall graph":
             excluded.add(line_number)
 
     return excluded
 
 
-def _is_nodebook_from_import(statement: ast.stmt) -> bool:
-    if isinstance(statement, ast.ImportFrom) and statement.module == "nodebook":
+def _is_rowcall_from_import(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.ImportFrom) and statement.module == "rowcall":
         return True
     return False
 
@@ -1077,26 +1077,26 @@ def _build_runtime_code(
     parts.append(
         "\n".join(
             [
-                f"__nodebook_parameters = {list(parameters)!r}",
-                f"__nodebook_outputs = {list(outputs)!r}",
-                "__nodebook_call_inputs = {",
+                f"__rowcall_parameters = {list(parameters)!r}",
+                f"__rowcall_outputs = {list(outputs)!r}",
+                "__rowcall_call_inputs = {",
                 "    name: globals()[name]",
-                "    for name in __nodebook_parameters",
+                "    for name in __rowcall_parameters",
                 "}",
-                f"__nodebook_result = {function_name}(**__nodebook_call_inputs)",
-                "if not isinstance(__nodebook_result, dict):",
+                f"__rowcall_result = {function_name}(**__rowcall_call_inputs)",
+                "if not isinstance(__rowcall_result, dict):",
                 "    raise TypeError('Node function must return a dict of declared outputs')",
-                "__nodebook_missing_outputs = [",
-                "    name for name in __nodebook_outputs",
-                "    if name not in __nodebook_result",
+                "__rowcall_missing_outputs = [",
+                "    name for name in __rowcall_outputs",
+                "    if name not in __rowcall_result",
                 "]",
-                "if __nodebook_missing_outputs:",
+                "if __rowcall_missing_outputs:",
                 "    raise NameError(",
                 "        'Node function did not return declared outputs: '",
-                "        + ', '.join(__nodebook_missing_outputs)",
+                "        + ', '.join(__rowcall_missing_outputs)",
                 "    )",
-                "for __nodebook_output_name in __nodebook_outputs:",
-                "    globals()[__nodebook_output_name] = __nodebook_result[__nodebook_output_name]",
+                "for __rowcall_output_name in __rowcall_outputs:",
+                "    globals()[__rowcall_output_name] = __rowcall_result[__rowcall_output_name]",
             ]
         )
     )

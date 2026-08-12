@@ -2,7 +2,7 @@ import {
   getPythonCommandEnvironment,
   resolvePythonCommand,
 } from "./runtime_config.ts";
-import type { DocumentOperation, NodebookDocumentV1 } from "./document.ts";
+import type { DocumentOperation, RowcallDocumentV1 } from "./document.ts";
 import type {
   ExecutionResponse,
   TableQueryRequest,
@@ -83,7 +83,7 @@ export type PythonWorkerDocumentEvent = PythonWorkerEvent & {
     | "apply_operations_completed"
     | "render_source_completed"
     | "validate_candidate_source_completed";
-  document?: NodebookDocumentV1;
+  document?: RowcallDocumentV1;
   source?: string;
   sidecarMetadata?: unknown;
   issues?: ValidationIssue[];
@@ -141,14 +141,14 @@ const WORKER_EXIT_WAIT_MS = 2_000;
 const POSIX_WORKER_BOOTSTRAP = [
   "import os, runpy",
   "os.setsid()",
-  "runpy.run_module('nodebook.runtime.worker', run_name='__main__')",
+  "runpy.run_module('rowcall.runtime.worker', run_name='__main__')",
 ].join(";");
 
 export function pythonWorkerCommandArgs(
   os: typeof Deno.build.os = Deno.build.os,
 ): string[] {
   return os === "windows"
-    ? ["-m", "nodebook.runtime.worker"]
+    ? ["-m", "rowcall.runtime.worker"]
     : ["-c", POSIX_WORKER_BOOTSTRAP];
 }
 

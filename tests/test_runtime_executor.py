@@ -8,19 +8,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from nodebook.runtime import RuntimeSession, run_document, run_source
+from rowcall.runtime import RuntimeSession, run_document, run_source
 
 
 class RuntimeExecutorTests(unittest.TestCase):
     def test_bytecode_cleanup_failure_stops_before_stale_import_can_run(self) -> None:
-        helper_name = "nodebook_unremovable_bytecode_helper"
+        helper_name = "rowcall_unremovable_bytecode_helper"
         try:
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 helper_path = root / f"{helper_name}.py"
                 helper_path.write_text("VALUE = 'first'\n")
                 source = f'''
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -32,7 +32,7 @@ def load():
                 first = run_source(source, root / "doc.py")
                 helper_path.write_text("VALUE = 'updated value'\n")
                 with patch(
-                    "nodebook.runtime.executor.Path.unlink",
+                    "rowcall.runtime.executor.Path.unlink",
                     side_effect=PermissionError("permission denied"),
                 ):
                     blocked = run_source(source, root / "doc.py")
@@ -54,7 +54,7 @@ def load():
     def test_fresh_run_keeps_sourceless_local_bytecode_importable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            helper_name = "nodebook_sourceless_helper"
+            helper_name = "rowcall_sourceless_helper"
             helper_source = root / f"{helper_name}.py"
             helper_bytecode = root / f"{helper_name}.pyc"
             helper_source.write_text("VALUE = 'from bytecode'\n")
@@ -65,7 +65,7 @@ def load():
             )
             helper_source.unlink()
             source = f'''
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -82,8 +82,8 @@ def load():
             self.assertEqual(second["finalOutputsByNode"]["load"]["value"]["jsonValue"], "from bytecode")
 
     def test_dynamic_module_metadata_does_not_break_repeated_runs(self) -> None:
-        proxy_name = "nodebook_dynamic_module_proxy"
-        relative_proxy_name = "nodebook_relative_module_proxy"
+        proxy_name = "rowcall_dynamic_module_proxy"
+        relative_proxy_name = "rowcall_relative_module_proxy"
         source = f'''
 import sys
 import types
@@ -106,7 +106,7 @@ relative_proxy.__file__ = "_ops.py"
 relative_proxy.__cached__ = object()
 sys.modules[{relative_proxy_name!r}] = relative_proxy
 
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -155,7 +155,7 @@ def load():
                     (package / "__init__.py").write_text("")
                     (package / "decoder.py").write_text(f"VALUE = {value!r}\n")
                 source = '''
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -182,7 +182,7 @@ def load():
             sys.modules.update(original_json_modules)
 
     def test_namespace_package_from_previous_document_root_is_evicted(self) -> None:
-        helper_name = "nodebook_namespace_helper"
+        helper_name = "rowcall_namespace_helper"
         try:
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -194,7 +194,7 @@ def load():
                 package.mkdir()
                 (package / "values.py").write_text("VALUE = 'first root'\n")
                 source = f'''
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -223,13 +223,13 @@ def load():
             external.mkdir()
             first_root.mkdir()
             second_root.mkdir()
-            helper_name = "nodebook_fresh_helper"
+            helper_name = "rowcall_fresh_helper"
             external_helper = external / f"{helper_name}.py"
             external_helper.write_text("VALUE = 'first'\n")
             (first_root / f"{helper_name}.py").symlink_to(external_helper)
             (second_root / f"{helper_name}.py").write_text("VALUE = 'second'\n")
             source = f'''
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["value"])
 def load():
@@ -250,7 +250,7 @@ def load():
 
     def test_captured_output_and_display_events_are_bounded(self) -> None:
         source = '''
-from nodebook import display, node
+from rowcall import display, node
 
 @node(id="loud", outputs=["x"])
 def loud():
@@ -275,7 +275,7 @@ def loud():
 
     def test_preview_hooks_cannot_create_unbounded_telemetry(self) -> None:
         source = '''
-from nodebook import node
+from rowcall import node
 
 class Noisy:
     def __repr__(self):
@@ -296,7 +296,7 @@ def make():
 
     def test_exception_messages_are_bounded_without_losing_classification(self) -> None:
         source = '''
-from nodebook import node
+from rowcall import node
 
 @node(id="bad", outputs=["value"])
 def bad():
@@ -318,7 +318,7 @@ def bad():
 
     def test_runs_hello_world_chain(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="hello", outputs=["message"])
 def hello():
@@ -345,7 +345,7 @@ world.depends_on(hello)
 
     def test_target_run_by_node_id_and_function_name(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="a", outputs=["x"])
 def first():
@@ -383,7 +383,7 @@ third.depends_on(second)
             (root / "helper.py").write_text("VALUE = 'imported-data'\n")
             document_path.write_text(
                 """
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["payload"])
 def load():
@@ -419,7 +419,7 @@ def load():
             document_path.write_text(
                 """
 from pathlib import Path
-from nodebook import node
+from rowcall import node
 
 COUNTER = Path("counter.txt")
 previous = int(COUNTER.read_text()) if COUNTER.exists() else 0
@@ -447,8 +447,8 @@ second.depends_on(first)
 
     def test_missing_module_in_document_globals_is_classified(self) -> None:
         source = """
-import definitely_missing_nodebook_globals_package
-from nodebook import node
+import definitely_missing_rowcall_globals_package
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():
@@ -464,17 +464,17 @@ def first():
         self.assertEqual(result["error"]["phase"], "document_globals")
         self.assertEqual(
             result["error"]["missingModule"],
-            "definitely_missing_nodebook_globals_package",
+            "definitely_missing_rowcall_globals_package",
         )
         self.assertEqual(result["error"]["pythonExecutable"], sys.executable)
 
     def test_missing_module_in_node_execution_is_classified(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():
-    import definitely_missing_nodebook_node_package
+    import definitely_missing_rowcall_node_package
     x = 1
     return {"x": x}
 """.lstrip()
@@ -488,14 +488,14 @@ def first():
         self.assertEqual(result["error"]["nodeId"], "first")
         self.assertEqual(
             result["error"]["missingModule"],
-            "definitely_missing_nodebook_node_package",
+            "definitely_missing_rowcall_node_package",
         )
         node_error = result["resultsByNode"]["first"]["errorDetails"]
         self.assertEqual(node_error["kind"], "missing_module")
 
     def test_captures_stdout_and_display(self) -> None:
         source = """
-from nodebook import display, node
+from rowcall import display, node
 
 @node(id="talk", outputs=["value"])
 def talk():
@@ -517,7 +517,7 @@ def talk():
 
     def test_surrogate_output_repr_and_diagnostics_are_escaped_safely(self) -> None:
         stdout_source = '''
-from nodebook import node
+from rowcall import node
 
 @node(id="value", outputs=["x"])
 def value():
@@ -526,7 +526,7 @@ def value():
     return {"x": x}
 '''.lstrip()
         repr_source = '''
-from nodebook import node
+from rowcall import node
 
 class Value:
     def __repr__(self):
@@ -538,7 +538,7 @@ def value():
     return {"x": x}
 '''.lstrip()
         error_source = '''
-from nodebook import node
+from rowcall import node
 
 class Broken(Exception):
     def __str__(self):
@@ -574,10 +574,10 @@ def value():
         json.dumps(repr_result).encode("utf-8")
         json.dumps(error_result).encode("utf-8")
 
-    def test_captures_display_through_nodebook_module_alias(self) -> None:
+    def test_captures_display_through_rowcall_module_alias(self) -> None:
         source = """
-import nodebook as nb
-from nodebook import node
+import rowcall as nb
+from rowcall import node
 
 @node(id="talk", outputs=["value"])
 def talk():
@@ -595,7 +595,7 @@ def talk():
 
     def test_rejects_return_that_omits_declared_output(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="bad", outputs=["value"])
 def bad():

@@ -1,4 +1,4 @@
-"""Long-lived runtime session facade for Nodebook worker operations."""
+"""Long-lived runtime session facade for Rowcall worker operations."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nodebook.document import ParseResult, apply_document_operations, load_document, parse_source
+from rowcall.document import ParseResult, apply_document_operations, load_document, parse_source
 
 from .executor import NodeEventCallback, build_plan, execute_source
 from .previews import query_table_preview, run_with_captured_stdio

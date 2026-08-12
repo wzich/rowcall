@@ -1,4 +1,4 @@
-"""Public Python CLI for Nodebook documents."""
+"""Public Python CLI for Rowcall documents."""
 
 from __future__ import annotations
 
@@ -11,20 +11,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from nodebook.document import ParseResult, load_document
-from nodebook.runtime import run_document
+from rowcall.document import ParseResult, load_document
+from rowcall.runtime import run_document
 
 
 USAGE = """Usage:
-  nodebook <folder-or-document.py>
-  nodebook open <folder-or-document.py> [--python <path>]
-  nodebook new <folder-or-document.py> [--open] [--python <path>]
-  nodebook validate <folder-or-document.py> [--json]
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary]
-  nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only
+  rowcall <folder-or-document.py>
+  rowcall open <folder-or-document.py> [--python <path>]
+  rowcall new <folder-or-document.py> [--open] [--python <path>]
+  rowcall validate <folder-or-document.py> [--json]
+  rowcall run <folder-or-document.py> [--to <node-id-or-function-name>] [--json|--json=summary] [--trace|--trace=summary]
+  rowcall run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only
 
 Folders resolve to graph.py inside the folder.
-Opening commands delegate to the full Nodebook launcher.
+Opening commands delegate to the full Rowcall launcher.
 """
 
 LAUNCHER_COMMANDS = {
@@ -118,9 +118,9 @@ def run_full_launcher(
     invocation = find_full_launcher_invocation()
     if invocation is None:
         stderr.write(
-            "The full Nodebook launcher is required to open the UI.\n\n"
-            "Install it from https://nodebook.rodeo, or run this command "
-            "from a Nodebook source checkout with Deno installed.\n"
+            "The full Rowcall launcher is required to open the UI.\n\n"
+            "Install it from https://rowcall.io, or run this command "
+            "from a Rowcall source checkout with Deno installed.\n"
         )
         return 1
 
@@ -135,7 +135,7 @@ def run_full_launcher(
 
 
 def find_full_launcher_invocation() -> list[str] | None:
-    override = os.environ.get("NODEBOOK_LAUNCHER")
+    override = os.environ.get("ROWCALL_LAUNCHER")
     if override:
         return [override]
 
@@ -158,7 +158,7 @@ def find_full_launcher_invocation() -> list[str] | None:
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if not directory:
             continue
-        candidate = Path(directory) / "nodebook"
+        candidate = Path(directory) / "rowcall"
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             continue
         try:
@@ -177,7 +177,7 @@ def is_python_cli_wrapper(path: Path) -> bool:
         prefix = path.read_bytes()[:4096]
     except OSError:
         return False
-    return b"nodebook.cli" in prefix
+    return b"rowcall.cli" in prefix
 
 
 def parse_cli_options(args: list[str]) -> CliOptions:
@@ -692,7 +692,7 @@ def write_run_error(
             stream.write(f"Document: {document_path}\n")
         if node_id:
             stream.write(f"Node: {node_id}\n")
-        stream.write("\nRun Nodebook with a Python environment that has this package installed.\n")
+        stream.write("\nRun Rowcall with a Python environment that has this package installed.\n")
     else:
         stream.write(f"{kind}: {message}\n")
         python_executable = error.get("pythonExecutable")
@@ -736,16 +736,16 @@ def resolve_document_input_path(path: str) -> Path:
         document_path = candidate / "graph.py"
         if not document_path.is_file():
             raise FileNotFoundError(
-                f"Nodebook folder does not contain graph.py: {candidate}"
+                f"Rowcall folder does not contain graph.py: {candidate}"
             )
         return document_path
 
     if candidate.exists() and not candidate.is_file():
-        raise ValueError(f"Nodebook path is not a file or directory: {candidate}")
+        raise ValueError(f"Rowcall path is not a file or directory: {candidate}")
 
     if candidate.suffix != ".py":
         raise ValueError(
-            "Nodebook document path must be a .py file or a folder containing graph.py."
+            "Rowcall document path must be a .py file or a folder containing graph.py."
         )
 
     return candidate

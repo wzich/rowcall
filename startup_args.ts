@@ -2,7 +2,7 @@ export type StartupOptions = {
   documentPath: string;
   create: boolean;
   pythonCommand?: string;
-  nodebookPythonPackagePath?: string;
+  rowcallPythonPackagePath?: string;
   runtimeMode?: "user" | "managed";
   uiDistPath?: string;
   authToken?: string;
@@ -18,7 +18,7 @@ export function parseStartupOptions(args: string[]): StartupOptions {
   let documentPath: string | undefined;
   let create = false;
   let pythonCommand: string | undefined;
-  let nodebookPythonPackagePath: string | undefined;
+  let rowcallPythonPackagePath: string | undefined;
   let runtimeMode: "user" | "managed" | undefined;
   let uiDistPath: string | undefined;
   let authToken: string | undefined;
@@ -49,11 +49,11 @@ export function parseStartupOptions(args: string[]): StartupOptions {
       continue;
     }
 
-    if (arg === "--nodebook-python-package") {
-      nodebookPythonPackagePath = readFlagValue(
+    if (arg === "--rowcall-python-package") {
+      rowcallPythonPackagePath = readFlagValue(
         args,
         index,
-        "--nodebook-python-package",
+        "--rowcall-python-package",
       );
       index += 1;
       continue;
@@ -106,14 +106,14 @@ export function parseStartupOptions(args: string[]): StartupOptions {
 
   const resolvedDocumentPath = documentPath ?? defaultDocumentPath;
   if (!resolvedDocumentPath.endsWith(".py")) {
-    throw new Error("Nodebook document path must end with .py");
+    throw new Error("Rowcall document path must end with .py");
   }
 
   return {
     documentPath: resolvedDocumentPath,
     create,
     ...(pythonCommand ? { pythonCommand } : {}),
-    ...(nodebookPythonPackagePath ? { nodebookPythonPackagePath } : {}),
+    ...(rowcallPythonPackagePath ? { rowcallPythonPackagePath } : {}),
     ...(runtimeMode ? { runtimeMode } : {}),
     ...(uiDistPath ? { uiDistPath } : {}),
     ...(authToken ? { authToken } : {}),

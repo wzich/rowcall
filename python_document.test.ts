@@ -29,7 +29,7 @@ Deno.test("post-commit inspection failures report an unknown save outcome", () =
     issues: [{
       kind: "document_write_error",
       message:
-        "The document files were committed, but Nodebook could not inspect the saved state. Reload from disk before editing. inspection worker stopped",
+        "The document files were committed, but Rowcall could not inspect the saved state. Reload from disk before editing. inspection worker stopped",
     }],
   });
 });
@@ -107,7 +107,7 @@ Deno.test("edited Python document nodes execute with document globals", async ()
     [
       "GLOBAL_OFFSET = 2",
       "",
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_load", outputs=["x"])',
       "def load_x():",
@@ -160,7 +160,7 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_load", outputs=["trips"])',
       "def load_trips():",
@@ -172,7 +172,7 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
       "    prepared = trips + 1",
       '    return {"prepared": prepared}',
       "",
-      "# NodeBook graph",
+      "# Rowcall graph",
       "prepare_trips.depends_on(load_trips)",
       "",
     ].join("\n"),
@@ -198,7 +198,7 @@ Deno.test("loadPythonDocument applies optional sidecar node metadata", async () 
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -241,7 +241,7 @@ Deno.test("loadPythonDocument applies map-shaped sidecar node metadata", async (
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -284,7 +284,7 @@ Deno.test("loadPythonDocument rejects custom return nodes", async () => {
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_custom", outputs=["x"])',
       "def make_x():",
@@ -306,7 +306,7 @@ Deno.test("loadPythonDocument rejects custom return nodes", async () => {
       true,
     );
     assertEquals(
-      decoded.issues[0].message.includes("nodebook help format"),
+      decoded.issues[0].message.includes("rowcall help format"),
       true,
     );
   }
@@ -319,7 +319,7 @@ Deno.test("loadPythonDocument rejects direct node-to-node calls", async () => {
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_a", outputs=["x"])',
       "def make_x():",
@@ -347,7 +347,7 @@ Deno.test("applyPythonDocumentOperations rejects stale document revisions", asyn
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/stale_operations.py`;
   const originalSource = [
-    "from nodebook import node",
+    "from rowcall import node",
     "",
     '@node(id="n_test", outputs=["x"])',
     "def make_x():",
@@ -379,7 +379,7 @@ Deno.test("applyPythonDocumentOperations rejects stale sidecar revisions", async
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -454,8 +454,8 @@ Deno.test("save revalidates both files immediately before publishing", async () 
     await assertNotFound(transactionPath(await Deno.realPath(documentPath)));
     assertEquals(
       (await Array.fromAsync(Deno.readDir(directory))).some((entry) =>
-        entry.name.startsWith(".nodebook-source-") ||
-        entry.name.startsWith(".nodebook-sidecar-")
+        entry.name.startsWith(".rowcall-source-") ||
+        entry.name.startsWith(".rowcall-sidecar-")
       ),
       false,
     );
@@ -576,7 +576,7 @@ Deno.test("applyPythonDocumentOperations updates a standard node body", async ()
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -603,7 +603,7 @@ Deno.test("applyPythonDocumentOperations updates a standard node body", async ()
   assertEquals(
     await Deno.readTextFile(documentPath),
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -623,7 +623,7 @@ Deno.test("applyPythonDocumentOperations removes deleted node incident edges", a
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_a", outputs=["x"])',
       "def make_x():",
@@ -635,7 +635,7 @@ Deno.test("applyPythonDocumentOperations removes deleted node incident edges", a
       "    y = x + 1",
       '    return {"y": y}',
       "",
-      "# NodeBook graph",
+      "# Rowcall graph",
       "make_y.depends_on(make_x)",
       "",
     ].join("\n"),
@@ -666,7 +666,7 @@ Deno.test("applyPythonDocumentOperations appends added Python node blocks", asyn
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -707,7 +707,7 @@ Deno.test("applyPythonDocumentOperations appends added Python node blocks", asyn
   assertEquals(
     await Deno.readTextFile(documentPath),
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -730,7 +730,7 @@ Deno.test("applyPythonDocumentOperations writes sidecar metadata", async () => {
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -795,7 +795,7 @@ Deno.test("applyPythonDocumentOperations preserves source file mode", async () =
   await Deno.writeTextFile(
     documentPath,
     [
-      "from nodebook import node",
+      "from rowcall import node",
       "",
       '@node(id="n_test", outputs=["x"])',
       "def make_x():",
@@ -1002,8 +1002,8 @@ Deno.test("loadPythonDocument completes a committed sidecar transaction", async 
   const sidecarPath = sidecarPathForPythonDocument(documentPath);
   await Deno.writeTextFile(sidecarPath, oldSidecar);
 
-  const sourceTempPath = `${canonicalDirectory}/.nodebook-source-recovery`;
-  const sidecarTempPath = `${canonicalDirectory}/.nodebook-sidecar-recovery`;
+  const sourceTempPath = `${canonicalDirectory}/.rowcall-source-recovery`;
+  const sidecarTempPath = `${canonicalDirectory}/.rowcall-sidecar-recovery`;
   await Deno.writeTextFile(sidecarTempPath, nextSidecar);
   await Deno.writeTextFile(
     transactionPath(documentPath),
@@ -1058,8 +1058,8 @@ Deno.test("loadPythonDocument discards a transaction before its commit point", a
     documentPath.lastIndexOf("/"),
   );
   const sidecarPath = sidecarPathForPythonDocument(documentPath);
-  const sourceTempPath = `${canonicalDirectory}/.nodebook-source-recovery`;
-  const sidecarTempPath = `${canonicalDirectory}/.nodebook-sidecar-recovery`;
+  const sourceTempPath = `${canonicalDirectory}/.rowcall-source-recovery`;
+  const sidecarTempPath = `${canonicalDirectory}/.rowcall-sidecar-recovery`;
   await Deno.writeTextFile(sidecarPath, oldSidecar);
   await Deno.writeTextFile(sourceTempPath, nextSource);
   await Deno.writeTextFile(sidecarTempPath, nextSidecar);
@@ -1097,7 +1097,7 @@ Deno.test("loadPythonDocument discards a transaction before its commit point", a
 
 function operationTestSource(value: number): string {
   return [
-    "from nodebook import node",
+    "from rowcall import node",
     "",
     '@node(id="n_test", outputs=["x"])',
     "def make_x():",
@@ -1121,7 +1121,7 @@ function transactionPath(documentPath: string): string {
   const separator = documentPath.lastIndexOf("/");
   const directory = documentPath.slice(0, separator);
   const name = documentPath.slice(separator + 1);
-  return `${directory}/.${name}.nodebook-transaction.json`;
+  return `${directory}/.${name}.rowcall-transaction.json`;
 }
 
 async function assertNotFound(path: string): Promise<void> {

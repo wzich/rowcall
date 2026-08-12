@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from nodebook.document import (
+from rowcall.document import (
     build_full_graph_plan,
     build_run_plan,
     get_sink_node_ids,
@@ -20,7 +20,7 @@ class DocumentParserTests(unittest.TestCase):
         return parse_source(path.read_text(), path)
 
     def test_rejects_python_file_without_nodes_with_actionable_issue(self) -> None:
-        result = parse_source("VALUE = 1\n", Path("/tmp/not_a_nodebook.py"))
+        result = parse_source("VALUE = 1\n", Path("/tmp/not_a_rowcall.py"))
 
         self.assertFalse(result.ok)
         self.assertEqual(result.issues[0].kind, "missing_node")
@@ -28,37 +28,37 @@ class DocumentParserTests(unittest.TestCase):
 
     def test_diagnoses_async_and_qualified_node_near_misses(self) -> None:
         async_result = parse_source(
-            'from nodebook import node\n\n@node(id="a", outputs=["x"])\nasync def a():\n    return {"x": 1}\n',
+            'from rowcall import node\n\n@node(id="a", outputs=["x"])\nasync def a():\n    return {"x": 1}\n',
             Path("/tmp/async_node.py"),
         )
         qualified_result = parse_source(
-            'import nodebook\n\n@nodebook.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
+            'import rowcall\n\n@rowcall.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
             Path("/tmp/qualified_node.py"),
         )
 
         self.assertEqual(async_result.issues[0].kind, "unsupported_node_syntax")
         self.assertIn("Async node", async_result.issues[0].message)
         self.assertEqual(qualified_result.issues[0].kind, "unsupported_node_syntax")
-        self.assertIn("from nodebook import node", qualified_result.issues[0].message)
+        self.assertIn("from rowcall import node", qualified_result.issues[0].message)
 
     def test_diagnoses_aliased_qualified_node_decorator(self) -> None:
         result = parse_source(
-            'import nodebook as nb\n\n@nb.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
+            'import rowcall as nb\n\n@nb.node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
             Path("/tmp/aliased_qualified_node.py"),
         )
 
         self.assertFalse(result.ok)
         self.assertEqual([issue.kind for issue in result.issues], ["unsupported_node_syntax"])
         self.assertIn("Qualified node decorator", result.issues[0].message)
-        self.assertIn("from nodebook import node", result.issues[0].message)
+        self.assertIn("from rowcall import node", result.issues[0].message)
 
-    def test_rejects_node_decorator_without_nodebook_binding_provenance(self) -> None:
+    def test_rejects_node_decorator_without_rowcall_binding_provenance(self) -> None:
         unrelated_import = parse_source(
             'from unrelated import node\n\n@node(id="a", outputs=["x"])\ndef a():\n    return {"x": 1}\n',
             Path("/tmp/unrelated_node.py"),
         )
         shadowed_import = parse_source(
-            "from nodebook import node\n"
+            "from rowcall import node\n"
             "node = lambda **kwargs: lambda fn: fn\n\n"
             '@node(id="a", outputs=["x"])\n'
             "def a():\n"
@@ -72,11 +72,11 @@ class DocumentParserTests(unittest.TestCase):
                 [issue.kind for issue in result.issues],
                 ["unsupported_node_syntax"],
             )
-            self.assertIn("top-level 'from nodebook import node'", result.issues[0].message)
+            self.assertIn("top-level 'from rowcall import node'", result.issues[0].message)
 
-    def test_accepts_nodebook_binding_until_it_is_shadowed(self) -> None:
+    def test_accepts_rowcall_binding_until_it_is_shadowed(self) -> None:
         source = '''
-from nodebook import node
+from rowcall import node
 
 @node(id="first", outputs=["x"])
 def first():
@@ -110,7 +110,7 @@ def second():
             with self.subTest(statement=statement):
                 result = parse_source(
                     f'''\
-from nodebook import node
+from rowcall import node
 
 {statement}
 
@@ -130,7 +130,7 @@ def a():
     def test_vars_of_an_object_does_not_invalidate_node_binding(self) -> None:
         result = parse_source(
             '''\
-from nodebook import node
+from rowcall import node
 
 class Config:
     value = 1
@@ -148,10 +148,10 @@ def a():
         self.assertTrue(result.ok, result.issues)
         self.assertEqual([node.id for node in result.document.nodes], ["a"])
 
-    def test_comprehension_named_expression_shadows_nodebook_binding(self) -> None:
+    def test_comprehension_named_expression_shadows_rowcall_binding(self) -> None:
         shadowed = parse_source(
             '''
-from nodebook import node
+from rowcall import node
 
 [item for item in [1] if (node := lambda **kwargs: lambda fn: fn)]
 
@@ -164,7 +164,7 @@ def a():
         )
         comprehension_target = parse_source(
             '''
-from nodebook import node
+from rowcall import node
 
 [node for node in []]
 
@@ -183,7 +183,7 @@ def a():
         )
         self.assertTrue(comprehension_target.ok)
 
-    def test_pattern_and_exception_captures_shadow_nodebook_binding(self) -> None:
+    def test_pattern_and_exception_captures_shadow_rowcall_binding(self) -> None:
         capture_statements = (
             "match object():\n    case node:\n        pass",
             "match []:\n    case [*node]:\n        pass",
@@ -193,7 +193,7 @@ def a():
         for index, statement in enumerate(capture_statements):
             with self.subTest(statement=statement):
                 source = f'''
-from nodebook import node
+from rowcall import node
 
 {statement}
 
@@ -211,7 +211,7 @@ def a():
 
     def test_nested_wildcard_import_invalidates_node_binding_provenance(self) -> None:
         source = '''
-from nodebook import node
+from rowcall import node
 
 if False:
     from unrelated import *
@@ -231,9 +231,9 @@ def a():
 
     def test_rejects_invalid_metadata_and_reserved_outputs(self) -> None:
         source = '''
-from nodebook import node
+from rowcall import node
 
-@node(id="", outputs=["x", "x", "", "__nodebook_result"])
+@node(id="", outputs=["x", "x", "", "__rowcall_result"])
 def first():
     return {"x": 1}
 
@@ -256,7 +256,7 @@ second.depends_on(first)
 
     def test_parse_valid_document_and_plan(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 GLOBAL = 2
 
@@ -323,10 +323,10 @@ format_text.depends_on(double)
         )
         self.assertEqual(build_full_graph_plan(result.document).to_dict(), target_plan.to_dict())
 
-    def test_preserves_nodebook_module_imports_in_globals(self) -> None:
+    def test_preserves_rowcall_module_imports_in_globals(self) -> None:
         source = """
-import nodebook as nb
-from nodebook import node
+import rowcall as nb
+from rowcall import node
 
 @node(id="show", outputs=["x"])
 def show():
@@ -335,17 +335,17 @@ def show():
     return {"x": x}
 """.lstrip()
 
-        result = parse_source(source, Path("/tmp/import_nodebook.py"))
+        result = parse_source(source, Path("/tmp/import_rowcall.py"))
 
         self.assertTrue(result.ok)
         self.assertIsNotNone(result.document)
         assert result.document is not None
-        self.assertIn("import nodebook as nb", result.document.globals_code)
-        self.assertNotIn("from nodebook import node", result.document.globals_code)
+        self.assertIn("import rowcall as nb", result.document.globals_code)
+        self.assertNotIn("from rowcall import node", result.document.globals_code)
 
-    def test_rejects_aliased_from_nodebook_imports(self) -> None:
+    def test_rejects_aliased_from_rowcall_imports(self) -> None:
         source = """
-from nodebook import display as show, node
+from rowcall import display as show, node
 
 @node(id="show", outputs=["x"])
 def show_value():
@@ -353,15 +353,15 @@ def show_value():
     return {"x": 1}
 """.lstrip()
 
-        result = parse_source(source, Path("/tmp/aliased_nodebook_import.py"))
+        result = parse_source(source, Path("/tmp/aliased_rowcall_import.py"))
 
         self.assertFalse(result.ok)
         self.assertEqual(result.issues[0].kind, "unsupported_python")
-        self.assertEqual(result.issues[0].message, "from nodebook imports may not use aliases")
+        self.assertEqual(result.issues[0].message, "from rowcall imports may not use aliases")
 
     def test_rejects_expression_in_return_dictionary_with_precise_fix(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="show", outputs=["x"])
 def show_value():
@@ -379,11 +379,11 @@ def show_value():
         self.assertIn("same-named variable 'x'", issue.message)
         self.assertIn("not the expression '1'", issue.message)
         self.assertIn("Assign the expression to 'x' before the return", issue.message)
-        self.assertIn("nodebook help format", issue.message)
+        self.assertIn("rowcall help format", issue.message)
 
     def test_rejects_return_keys_that_do_not_match_declared_outputs(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="show", outputs=["x", "y"])
 def show_value():
@@ -403,7 +403,7 @@ def show_value():
 
     def test_reports_every_inline_return_expression_in_one_validation(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="load", outputs=["path", "shape"])
 def load():
@@ -424,7 +424,7 @@ def load():
 
     def test_allows_an_input_parameter_to_be_returned_as_an_output(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="source", outputs=["value"])
 def source():
@@ -444,7 +444,7 @@ passthrough.depends_on(source)
 
     def test_rejects_module_global_returned_as_a_node_output(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 result = 41
 
@@ -465,7 +465,7 @@ def use_global():
 
     def test_rejects_global_declaration_as_a_node_output_binding(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 result = 41
 
@@ -483,7 +483,7 @@ def update_global():
 
     def test_nested_scope_binding_does_not_define_a_node_output(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="nested", outputs=["result"])
 def nested():
@@ -501,7 +501,7 @@ def nested():
 
     def test_rejects_multiple_or_conditional_node_returns(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="choose", outputs=["x"])
 def choose(flag):
@@ -520,7 +520,7 @@ def choose(flag):
 
     def test_nested_helper_return_does_not_make_node_return_custom(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="show", outputs=["x"])
 def show_value():
@@ -537,28 +537,28 @@ def show_value():
         self.assertTrue(result.document.nodes[0].editable)
         self.assertFalse(result.document.nodes[0].custom_return)
 
-    def test_rejects_unsupported_from_nodebook_import_names(self) -> None:
+    def test_rejects_unsupported_from_rowcall_import_names(self) -> None:
         source = """
-from nodebook import NodebookNodeError, node
+from rowcall import RowcallNodeError, node
 
 @node(id="show", outputs=["x"])
 def show_value():
-    error_type = NodebookNodeError
+    error_type = RowcallNodeError
     return {"x": error_type.__name__}
 """.lstrip()
 
-        result = parse_source(source, Path("/tmp/unsupported_nodebook_import.py"))
+        result = parse_source(source, Path("/tmp/unsupported_rowcall_import.py"))
 
         self.assertFalse(result.ok)
         self.assertEqual(result.issues[0].kind, "unsupported_python")
         self.assertEqual(
             result.issues[0].message,
-            "from nodebook imports may only include display and node",
+            "from rowcall imports may only include display and node",
         )
 
     def test_reports_shape_and_graph_validation_issues(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="a", outputs=["value"])
 def first():
@@ -583,7 +583,7 @@ first.depends_on(second)
 
     def test_rejects_node_parameters_without_upstream_outputs(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="root", outputs=["value"])
 def root(missing):
@@ -619,7 +619,7 @@ child.depends_on(root)
 
     def test_rejects_extra_node_function_decorators(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 def wrap(fn):
     return fn
@@ -748,7 +748,7 @@ def decorated():
 
     def test_conflicting_direct_upstream_outputs_are_invalid(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="left", outputs=["value"])
 def left():
@@ -775,7 +775,7 @@ merge.depends_on(left, right)
 
     def test_sequential_duplicate_output_names_are_valid(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="first", outputs=["value"])
 def first():
@@ -815,7 +815,7 @@ third.depends_on(second)
 
     def test_invalid_node_decorators_and_non_literal_outputs_are_reported(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 OUTPUTS = ["x"]
 
@@ -837,7 +837,7 @@ def dynamic_outputs():
 
     def test_missing_upstream_and_downstream_references_are_reported(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="present", outputs=["value"])
 def present():
@@ -861,7 +861,7 @@ missing_downstream.depends_on(present)
 
     def test_direct_node_calls_are_reported(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="a", outputs=["x"])
 def a():
@@ -882,7 +882,7 @@ def b():
 
     def test_unsupported_parameters_and_depends_on_arguments_are_reported(self) -> None:
         source = """
-from nodebook import node
+from rowcall import node
 
 @node(id="source", outputs=["x"])
 def source():
@@ -890,8 +890,8 @@ def source():
     return {"x": x}
 
 @node(id="bad_params", outputs=["y"])
-def bad_params(__nodebook_reserved, *args, **kwargs):
-    y = __nodebook_reserved
+def bad_params(__rowcall_reserved, *args, **kwargs):
+    y = __rowcall_reserved
     return {"y": y}
 
 bad_params.depends_on(source, 1, extra=source)
@@ -909,7 +909,7 @@ bad_params.depends_on()
         self.assertIn(
             (
                 "unsupported_python",
-                "Node parameter names may not start with __nodebook_",
+                "Node parameter names may not start with __rowcall_",
             ),
             messages_by_kind,
         )

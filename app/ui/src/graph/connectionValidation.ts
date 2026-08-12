@@ -1,4 +1,4 @@
-import type { NodebookDocumentV1 } from "./documentTypes.ts";
+import type { RowcallDocumentV1 } from "./documentTypes.ts";
 
 export type DirectOutputConflict = {
   outputName: string;
@@ -6,7 +6,7 @@ export type DirectOutputConflict = {
 };
 
 export function getDirectOutputConflictsForConnection(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
   fromNode: string,
   toNode: string,
 ): DirectOutputConflict[] {

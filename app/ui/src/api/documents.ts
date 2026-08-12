@@ -1,5 +1,5 @@
-import type { NodebookDocumentV1 } from "../graph/documentTypes.ts";
-import { nodebookFetch } from "./auth.ts";
+import type { RowcallDocumentV1 } from "../graph/documentTypes.ts";
+import { rowcallFetch } from "./auth.ts";
 
 const activeDocumentPath = "/document";
 
@@ -25,7 +25,7 @@ export type DocumentApiError = {
 
 export type LoadDocumentSuccess = {
   ok: true;
-  document: NodebookDocumentV1;
+  document: RowcallDocumentV1;
   path: string;
 };
 
@@ -111,7 +111,7 @@ export class DocumentApiRequestError extends Error {
 }
 
 export async function loadDocument(): Promise<LoadDocumentSuccess> {
-  const response = await nodebookFetch(activeDocumentPath);
+  const response = await rowcallFetch(activeDocumentPath);
   const result = await response.json() as LoadDocumentResult;
 
   if (!result.ok) {
@@ -129,7 +129,7 @@ export async function loadDocument(): Promise<LoadDocumentSuccess> {
 }
 
 export async function loadDocumentStatus(): Promise<LoadDocumentStatusSuccess> {
-  const response = await nodebookFetch(`${activeDocumentPath}/status`);
+  const response = await rowcallFetch(`${activeDocumentPath}/status`);
   const result = await response.json() as LoadDocumentStatusResult;
 
   if (!result.ok) {
@@ -154,7 +154,7 @@ export async function applyDocumentOperations(
     baseRevision,
     operations,
   };
-  const response = await nodebookFetch(`${activeDocumentPath}/operations`, {
+  const response = await rowcallFetch(`${activeDocumentPath}/operations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),

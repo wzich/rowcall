@@ -10,8 +10,8 @@ tmp/
 **/__pycache__/
 **/.DS_Store
 *.egg-info/
-**/.*.nodebook.lock
-**/.*.nodebook-transaction.json
-**/.nodebook-source-*
-**/.nodebook-sidecar-*
-**/.nodebook-marker-*
+**/.*.rowcall.lock
+**/.*.rowcall-transaction.json
+**/.rowcall-source-*
+**/.rowcall-sidecar-*
+**/.rowcall-marker-*

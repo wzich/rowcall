@@ -4,22 +4,22 @@
 
 ### Canvas
 
-The Nodebook Canvas is the 2D interface where a user builds a program by
+The Rowcall Canvas is the 2D interface where a user builds a program by
 arranging Nodes and connecting them with Edges.
 
 ### Document
 
-A Nodebook document is a Python source file. The Python source is the canonical
+A Rowcall document is a Python source file. The Python source is the canonical
 executable artifact: it contains `@node(...)` declarations, node functions, and
 top-level `depends_on(...)` graph edges. The launcher recommends folder-backed
-projects created with `nodebook new my-work`, which produces `my-work/graph.py`;
+projects created with `rowcall new my-work`, which produces `my-work/graph.py`;
 folder paths in the public CLI resolve to `graph.py` inside that folder. Passing
 a `.py` path uses that exact file.
 
-Optional `.nodebook.json` sidecars store editor metadata such as canvas
-positions and are ignored by the runtime. Sidecars are named after the Python
-document, so `graph.py` uses `graph.nodebook.json`, while an alternate
-`explore.py` in the same folder uses `explore.nodebook.json`.
+Optional `.rowcall.json` sidecars store editor metadata such as canvas positions
+and are ignored by the runtime. Sidecars are named after the Python document, so
+`graph.py` uses `graph.rowcall.json`, while an alternate `explore.py` in the
+same folder uses `explore.rowcall.json`.
 
 ### Graph
 
@@ -38,19 +38,19 @@ they are declared outputs and flow through Edges. A Node can access:
 - variables made available from directly connected upstream Nodes
 - top-level document globals, imports, and helpers evaluated once for the run
 
-In source-backed Nodebook documents, every node function parameter must match a
+In source-backed Rowcall documents, every node function parameter must match a
 Declared Output from a direct upstream Node. Root nodes cannot declare
 parameters. Node functions may use only the `@node(...)` decorator; additional
 Python decorators are rejected because the strict runtime owns node invocation.
-`from nodebook import ...` declarations may only import `display` and `node`,
-and may not use aliases. For other package symbols, use a module import such as
-`import nodebook as nb`.
+`from rowcall import ...` declarations may only import `display` and `node`, and
+may not use aliases. For other package symbols, use a module import such as
+`import rowcall as nb`.
 
 Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
 mutating imported modules or `builtins` may be visible to later Nodes. The
 runtime contract treats that as outside the normal data-flow model: portable
-Nodebook programs should communicate through Declared Outputs and Edges.
+Rowcall programs should communicate through Declared Outputs and Edges.
 
 ### Declared Outputs
 
@@ -131,7 +131,7 @@ and deletions, edge changes, globals edits, and sidecar metadata changes. The
 request has no idempotency key and must not be replayed after an uncertain
 response; reload the document first. The server rejects stale base revisions,
 calls the Python runtime worker's `apply_operations` operation to rewrite
-source, writes the returned Python source and `.nodebook.json` metadata, and
+source, writes the returned Python source and `.rowcall.json` metadata, and
 reloads the canonical document response. Graph and output operations normalize
 standard editor-authored downstream function signatures to match direct upstream
 outputs. Documents with unsupported return structures fail validation before an

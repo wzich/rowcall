@@ -1,13 +1,13 @@
 const tokenQueryParam = "token";
-const tokenStorageKey = "nodebook.authToken";
-const tokenHeaderName = "X-Nodebook-Token";
+const tokenStorageKey = "rowcall.authToken";
+const tokenHeaderName = "X-Rowcall-Token";
 
-export function nodebookAuthHeaders(): Record<string, string> {
-  const token = readNodebookAuthToken();
+export function rowcallAuthHeaders(): Record<string, string> {
+  const token = readRowcallAuthToken();
   return token ? { [tokenHeaderName]: token } : {};
 }
 
-export async function nodebookFetch(
+export async function rowcallFetch(
   input: string | URL | Request,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -15,12 +15,12 @@ export async function nodebookFetch(
     ...init,
     headers: {
       ...headersToRecord(init.headers),
-      ...nodebookAuthHeaders(),
+      ...rowcallAuthHeaders(),
     },
   });
 }
 
-function readNodebookAuthToken(): string | null {
+function readRowcallAuthToken(): string | null {
   const browser = globalThis as typeof globalThis & {
     location?: Location;
     localStorage?: Storage;

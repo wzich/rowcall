@@ -1,24 +1,24 @@
 # Headless CLI
 
-Nodebook documents can be validated and run without opening the canvas editor.
-The `nodebook` launcher is the beta automation surface for humans, agents, and
+Rowcall documents can be validated and run without opening the canvas editor.
+The `rowcall` launcher is the beta automation surface for humans, agents, and
 scripts. `run` prefers an existing project `.venv`, then an active virtualenv or
 Conda environment; if none exists, it creates the project environment and
 installs `requirements.txt` once. `validate` uses the same existing-environment
 order but never creates an environment or installs packages. Pass
-`--managed-env` to use Nodebook's starter environment under
-`~/.nodebook/venvs/default`.
+`--managed-env` to use Rowcall's starter environment under
+`~/.rowcall/venvs/default`.
 
 The Python module CLI remains the underlying runtime contract for headless
-commands. In a source checkout, `uv run nodebook` and `python3 -m nodebook`
+commands. In a source checkout, `uv run rowcall` and `python3 -m rowcall`
 delegate opening and project-creation commands to the full Deno launcher.
 
 ## Commands
 
-Create a new Nodebook project:
+Create a new Rowcall project:
 
 ```sh
-nodebook new path/to/project
+rowcall new path/to/project
 ```
 
 This creates `path/to/project/graph.py`, `.gitignore`, `AGENTS.md`, and
@@ -28,7 +28,7 @@ does not install them. To create and immediately open the canvas editor, pass
 `--open`:
 
 ```sh
-nodebook new path/to/project --open
+rowcall new path/to/project --open
 ```
 
 Opening uses `path/to/project/.venv` when it exists, otherwise an active
@@ -37,31 +37,31 @@ installs `requirements.txt` once. To use a specific interpreter directly
 instead:
 
 ```sh
-nodebook new path/to/project --open --python /path/to/python
+rowcall new path/to/project --open --python /path/to/python
 ```
 
 Create a sample project with data:
 
 ```sh
-nodebook example path/to/sample-project
+rowcall example path/to/sample-project
 ```
 
 Validate a document:
 
 ```sh
-nodebook validate path/to/project
+rowcall validate path/to/project
 ```
 
 Run the full graph:
 
 ```sh
-nodebook run path/to/project
+rowcall run path/to/project
 ```
 
 Run upstream to a target node:
 
 ```sh
-nodebook run path/to/project --to node_id_or_function_name
+rowcall run path/to/project --to node_id_or_function_name
 ```
 
 Targets must exactly match either a stable node ID or a Python function name. If
@@ -72,19 +72,19 @@ Folder paths resolve to `graph.py` inside the folder. Passing a `.py` path uses
 that exact file:
 
 ```sh
-nodebook run path/to/project/graph.py
+rowcall run path/to/project/graph.py
 ```
 
 Opening follows the same path rule:
 
 ```sh
-nodebook open path/to/project
-nodebook open path/to/project/explore.py
+rowcall open path/to/project
+rowcall open path/to/project/explore.py
 ```
 
-For convenience, `nodebook path/to/project` is an alias for
-`nodebook open path/to/project` when the path already exists. Missing paths are
-not created implicitly; use `nodebook new <path>` instead.
+For convenience, `rowcall path/to/project` is an alias for
+`rowcall open path/to/project` when the path already exists. Missing paths are
+not created implicitly; use `rowcall new <path>` instead.
 
 ## Options
 
@@ -100,24 +100,24 @@ not created implicitly; use `nodebook new <path>` instead.
 Example:
 
 ```sh
-nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+rowcall run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
 ```
 
 For agent and CI workflows, prefer a compact projection:
 
 ```sh
-nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json=summary --trace=summary
-nodebook run examples/ecommerce/analysis.py --to build_customer_facts --outputs-only
+rowcall run examples/ecommerce/analysis.py --to build_customer_facts --json=summary --trace=summary
+rowcall run examples/ecommerce/analysis.py --to build_customer_facts --outputs-only
 ```
 
 For developer workflows, the Python module CLI is equivalent when the package is
 installed into the active environment:
 
 ```sh
-python3 -m nodebook run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
+python3 -m rowcall run examples/ecommerce/analysis.py --to build_customer_facts --json --trace
 ```
 
-When using Deno tasks, `deno task cli` delegates to `python3 -m nodebook` or the
+When using Deno tasks, `deno task cli` delegates to `python3 -m rowcall` or the
 repo-local `.venv` selected by `runtime_config.ts`.
 
 ## JSON Output
@@ -187,42 +187,41 @@ The beta launcher uses this order for `open` and `run`:
 4. A compatible active `CONDA_PREFIX`.
 5. A new project `.venv` created with compatible `python3` or `python`.
 
-Only a project environment created by Nodebook receives the current
+Only a project environment created by Rowcall receives the current
 `requirements.txt`, once. Existing project and active environments are never
-auto-installed into. If first-time installation fails or is interrupted,
-Nodebook preserves the environment and retries setup on the next `open` or
-`run`. Share `requirements.txt`, not `.venv`; virtual environments contain
-machine-specific paths and the generated `.gitignore` excludes them.
+auto-installed into. If first-time installation fails or is interrupted, Rowcall
+preserves the environment and retries setup on the next `open` or `run`. Share
+`requirements.txt`, not `.venv`; virtual environments contain machine-specific
+paths and the generated `.gitignore` excludes them.
 
 `validate` stops before the creation step and falls back to compatible system
 Python instead. It never creates `.venv` or installs packages. Pass a specific
 interpreter to override automatic selection:
 
 ```sh
-nodebook run --python "$CONDA_PREFIX/bin/python" my-work --json
+rowcall run --python "$CONDA_PREFIX/bin/python" my-work --json
 ```
 
-Nodebook temporarily adds its bundled runtime package to that Python process so
-documents can import `nodebook` without installing Nodebook into your
-environment.
+Rowcall temporarily adds its bundled runtime package to that Python process so
+documents can import `rowcall` without installing Rowcall into your environment.
 
 If you do not want to configure packages yourself, use the managed starter env:
 
 ```sh
-nodebook run --managed-env my-work --json
+rowcall run --managed-env my-work --json
 ```
 
 The managed venv lives at:
 
 ```text
-~/.nodebook/venvs/default
+~/.rowcall/venvs/default
 ```
 
-On first managed-env use, or after `nodebook reset-env`, it selects `python3`
+On first managed-env use, or after `rowcall reset-env`, it selects `python3`
 then `python` and requires Python 3.10 or newer.
 
-Use `nodebook doctor` to inspect the selected user Python runtime. Use
-`nodebook doctor --managed-env` to inspect the managed venv, installed package
+Use `rowcall doctor` to inspect the selected user Python runtime. Use
+`rowcall doctor --managed-env` to inspect the managed venv, installed package
 status, pandas/polars/matplotlib availability, and log path. Doctor is read-only
 and does not materialize launcher assets, create environments, or append to the
 log. Pass `--json` for a structured report; checks that cannot run are reported
@@ -240,7 +239,7 @@ Missing Python package while loading document globals: polars
 Python used: /path/to/python
 Document: /path/to/document.py
 
-Run Nodebook with a Python environment that has this package installed.
+Run Rowcall with a Python environment that has this package installed.
 ```
 
 When `--json` is set, the same information is available in structured error

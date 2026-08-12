@@ -1,4 +1,4 @@
-"""Document models for Python-owned Nodebook parsing and planning."""
+"""Document models for Python-owned Rowcall parsing and planning."""
 
 from __future__ import annotations
 

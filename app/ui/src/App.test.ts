@@ -4,7 +4,7 @@ import {
   coalesceDocumentOperations,
   hasCustomManagedDownstream,
 } from "./documentOperations.ts";
-import type { NodebookDocumentV1 } from "./graph/documentTypes.ts";
+import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 
 Deno.test("coalesceDocumentOperations cancels a new node deleted before save", () => {
   const operations: DocumentOperation[] = [
@@ -152,7 +152,7 @@ Deno.test("coalesceDocumentOperations cancels inverse edge operations", () => {
 });
 
 Deno.test("hasCustomManagedDownstream detects non-editable downstream nodes", () => {
-  const document: NodebookDocumentV1 = {
+  const document: RowcallDocumentV1 = {
     version: 1,
     nodes: [
       { id: "n_source", code: "x = 1", outputs: ["x"] },

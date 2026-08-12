@@ -1,4 +1,4 @@
-"""Python runtime execution API for Nodebook documents."""
+"""Python runtime execution API for Rowcall documents."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 import type { TableSort } from "../../../../types.ts";
 
-export const RESULT_TABLE_INDEX_COLUMN_ID = "__nodebook_index__";
+export const RESULT_TABLE_INDEX_COLUMN_ID = "__rowcall_index__";
 
 export function sortingStateToQuery(
   sorting: ReadonlyArray<{ id: string; desc: boolean }>,

@@ -1,4 +1,4 @@
-"""Stateless Python runtime executor for Nodebook documents."""
+"""Stateless Python runtime executor for Rowcall documents."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nodebook.document import (
+from rowcall.document import (
     DocumentNode,
     ExecutableDocument,
     RunPlan,
@@ -176,7 +176,7 @@ def invalidate_document_local_imports(document_dir: Path) -> None:
     previous_document_modules = dict(_DOCUMENT_LOCAL_MODULE_PATHS)
     shadowed_top_level_names = _importable_top_level_names(root)
     for name, module in tuple(sys.modules.items()):
-        if name == "nodebook" or name.startswith("nodebook."):
+        if name == "rowcall" or name.startswith("rowcall."):
             continue
         top_level_name = name.partition(".")[0]
         top_level_module = sys.modules.get(top_level_name)
@@ -212,7 +212,7 @@ def invalidate_document_local_imports(document_dir: Path) -> None:
 def _importable_top_level_names(root: Path) -> set[str]:
     """Return loaded top-level names that the document directory can shadow."""
     names = {name.partition(".")[0] for name in sys.modules}
-    names.discard("nodebook")
+    names.discard("rowcall")
     importable: set[str] = set()
     for name in names:
         try:
@@ -258,7 +258,7 @@ def _remove_safely_derived_bytecode(module: Any, loaded_path: Path | None) -> No
             cached_path.unlink(missing_ok=True)
         except OSError as exc:
             raise ImportFreshnessError(
-                "Execution did not start because Nodebook could not remove "
+                "Execution did not start because Rowcall could not remove "
                 f"derived local bytecode {cached_path}: {exc}"
             ) from exc
         if cached_path.exists():
@@ -320,7 +320,7 @@ def remember_document_local_imports(document_dir: Path) -> None:
     """Remember local module names so a later run in another root evicts them."""
     root = document_dir.resolve()
     for name, module in tuple(sys.modules.items()):
-        if name == "nodebook" or name.startswith("nodebook."):
+        if name == "rowcall" or name.startswith("rowcall."):
             continue
         try:
             module_paths = _module_paths(module)
@@ -566,7 +566,7 @@ def execute_node(
     scope["display"] = make_display_collector(displays, output_events, result_warnings)
 
     try:
-        with active_nodebook_display(scope["display"]):
+        with active_rowcall_display(scope["display"]):
             with contextlib.redirect_stdout(stdout_buffer):
                 with contextlib.redirect_stderr(stderr_buffer):
                     code = compile(node.runtime_code, filename, "exec")
@@ -773,22 +773,22 @@ def make_display_collector(
 
 
 @contextlib.contextmanager
-def active_nodebook_display(display: Callable[[Any], None]) -> Iterator[None]:
+def active_rowcall_display(display: Callable[[Any], None]) -> Iterator[None]:
     try:
-        import nodebook
+        import rowcall
     except ImportError:
         yield
         return
 
-    previous_display = getattr(nodebook, "display", None)
-    nodebook.display = display
+    previous_display = getattr(rowcall, "display", None)
+    rowcall.display = display
     try:
         yield
     finally:
         if previous_display is None:
-            delattr(nodebook, "display")
+            delattr(rowcall, "display")
         else:
-            nodebook.display = previous_display
+            rowcall.display = previous_display
 
 
 def append_trace(

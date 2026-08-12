@@ -39,7 +39,7 @@ import type {
   NodeRunVisualStatus,
 } from "./graph/toReactFlow.ts";
 import {
-  type NodebookDocumentV1,
+  type RowcallDocumentV1,
   toRuntimeGraph,
 } from "./graph/documentTypes.ts";
 import {
@@ -69,7 +69,7 @@ import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
 const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const documentCanvasKey = "document:active";
-const themeStorageKey = "nodebook:theme";
+const themeStorageKey = "rowcall:theme";
 const documentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
@@ -145,7 +145,7 @@ export default function App() {
   >(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
   const [editableDocument, setEditableDocument] = useState<
-    NodebookDocumentV1 | null
+    RowcallDocumentV1 | null
   >(null);
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error" | "outcome_unknown"
@@ -164,7 +164,7 @@ export default function App() {
     ExternalDocumentNotice
   >({ kind: "idle" });
   const editGenerationRef = useRef(0);
-  const editableDocumentRef = useRef<NodebookDocumentV1 | null>(null);
+  const editableDocumentRef = useRef<RowcallDocumentV1 | null>(null);
   const baseRevisionRef = useRef("");
   const saveOutcomeUnknownRef = useRef(false);
   const firstUnsavedEditAtRef = useRef<number | null>(null);
@@ -184,12 +184,12 @@ export default function App() {
     nextIndex: 1,
   });
   const documentQuery = useQuery({
-    queryKey: ["nodebook-document", "active"],
+    queryKey: ["rowcall-document", "active"],
     queryFn: loadDocument,
     refetchOnWindowFocus: false,
   });
   const documentStatusQuery = useQuery({
-    queryKey: ["nodebook-document-status", "active"],
+    queryKey: ["rowcall-document-status", "active"],
     queryFn: loadDocumentStatus,
     enabled: documentQuery.isSuccess,
     refetchInterval: documentStatusPollIntervalMs,
@@ -378,7 +378,7 @@ export default function App() {
           setSaveError({
             title: "Save outcome unknown",
             detail:
-              "Nodebook lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
+              "Rowcall lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
           });
         } else {
           setSaveStatus("error");
@@ -697,7 +697,7 @@ export default function App() {
   }, [prepareForDocumentEdit, syncDocumentSourceValue]);
 
   const commitEditableDocument = useCallback(
-    (nextDocument: NodebookDocumentV1) => {
+    (nextDocument: RowcallDocumentV1) => {
       if (saveOutcomeUnknownRef.current) {
         return;
       }
@@ -1392,7 +1392,7 @@ export default function App() {
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold">Nodebook</h1>
+            <h1 className="text-lg font-semibold">Rowcall</h1>
             <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
               Alpha
             </span>
@@ -1563,7 +1563,7 @@ export default function App() {
               Document changed on disk. Waiting for it to become readable...
             </span>
             <span className="ml-2">
-              Nodebook will keep checking and update when the file is valid.
+              Rowcall will keep checking and update when the file is valid.
             </span>
             {externalDocumentNotice.detail && (
               <span className="ml-2 text-zinc-500 dark:text-zinc-400">
@@ -2042,11 +2042,11 @@ function PythonRuntimeBadge({
           <RuntimeDetail label="Venv" value={python.virtualEnv} />
         )}
         <RuntimeDetail
-          label="nodebook"
-          value={python.nodebookImport.ok
-            ? python.nodebookImport.path ?? "importable"
-            : python.nodebookImport.error ?? "not importable"}
-          tone={python.nodebookImport.ok ? "default" : "warning"}
+          label="rowcall"
+          value={python.rowcallImport.ok
+            ? python.rowcallImport.path ?? "importable"
+            : python.rowcallImport.error ?? "not importable"}
+          tone={python.rowcallImport.ok ? "default" : "warning"}
         />
       </div>
     </details>
@@ -2063,7 +2063,7 @@ function PreflightPanel({
   isPythonLoading: boolean;
 }) {
   if (
-    isPythonLoading || (!pythonError && (!python || python.nodebookImport.ok))
+    isPythonLoading || (!pythonError && (!python || python.rowcallImport.ok))
   ) {
     return null;
   }
@@ -2076,8 +2076,8 @@ function PreflightPanel({
           : python
           ? (
             <PreflightItem
-              label="nodebook"
-              value={python.nodebookImport.error ?? "not importable"}
+              label="rowcall"
+              value={python.rowcallImport.error ?? "not importable"}
               tone="warning"
             />
           )
@@ -2405,7 +2405,7 @@ function getNodeDisplayTitle(node: RuntimeNode): string {
 }
 
 function createConnectionWarning(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
   fromNode: string,
   toNode: string,
   conflicts: DirectOutputConflict[],

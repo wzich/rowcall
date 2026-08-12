@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import polars as pl
-from nodebook import display, node
+from rowcall import display, node
 
 
 DATA_PATH = Path(__file__).parent / "data" / "orders.csv"
@@ -53,7 +53,7 @@ def render_summary(summary):
     return {}
 
 
-# NodeBook graph
+# Rowcall graph
 prepare_orders.depends_on(load_orders)
 summarize_by_region.depends_on(prepare_orders)
 render_summary.depends_on(summarize_by_region)

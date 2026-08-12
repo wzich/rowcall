@@ -1,4 +1,4 @@
-"""NDJSON worker protocol for long-lived Nodebook runtime sessions."""
+"""NDJSON worker protocol for long-lived Rowcall runtime sessions."""
 
 from __future__ import annotations
 

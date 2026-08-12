@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Nodebook Architecture Review — July 2026</title>
+    <title>Rowcall Architecture Review — July 2026</title>
     <style>
       :root {
         color-scheme: light;
@@ -127,15 +127,15 @@
   </head>
   <body>
     <main>
-      <h1>Nodebook Architecture Review</h1>
+      <h1>Rowcall Architecture Review</h1>
       <p class="subtitle">July 2026 · Reviewed at commit <code>336c09d</code> on <code>main</code></p>
 
       <h2>TL;DR</h2>
       <div class="card">
         <p>
-          Nodebook's core architectural bet — <strong>Python files as the canonical document,
+          Rowcall's core architectural bet — <strong>Python files as the canonical document,
           with a Python package that owns parsing, validation, planning, and execution</strong> —
-          is sound and well executed in <code>nodebook/</code>. The product boundaries described
+          is sound and well executed in <code>rowcall/</code>. The product boundaries described
           in ADR&nbsp;0004 and the runtime contract are the right ones for both the open-source
           local product and a future managed cloud.
         </p>
@@ -145,15 +145,15 @@
             <strong>A security hole to fix immediately:</strong> the local server executes
             arbitrary Python from HTTP requests and answers cross-origin requests with
             <code>Access-Control-Allow-Origin: *</code>. Any web page a user visits while
-            Nodebook is running can execute code on their machine.
+            Rowcall is running can execute code on their machine.
           </li>
           <li>
             <strong>The old runtime was never deleted.</strong> There are three separate
-            implementations that parse Nodebook Python documents and two separate execution
+            implementations that parse Rowcall Python documents and two separate execution
             runtimes. Roughly 1,500 lines of legacy Python at the repo root duplicate the
-            <code>nodebook</code> package, and the Deno server rewrites Python source with
+            <code>rowcall</code> package, and the Deno server rewrites Python source with
             line-based string edits in TypeScript while an unused AST-aware rewriter sits in
-            <code>nodebook/document/rewrite.py</code>. Every behavior change currently has to be
+            <code>rowcall/document/rewrite.py</code>. Every behavior change currently has to be
             made two or three times, and the paths are already drifting (caching, streaming
             granularity).
           </li>
@@ -176,14 +176,14 @@
         <tr><th>Layer</th><th>Where</th><th>Role</th></tr>
         <tr>
           <td><strong>Python package</strong></td>
-          <td><code>nodebook/</code></td>
+          <td><code>rowcall/</code></td>
           <td>
             The product core. Authoring API (<code>@node</code>, <code>display</code>,
             <code>depends_on</code>), AST document parser + validation + run planning
-            (<code>nodebook/document/</code>), stateless executor with value previews and copy
-            handlers (<code>nodebook/runtime/</code>), an NDJSON worker protocol
+            (<code>rowcall/document/</code>), stateless executor with value previews and copy
+            handlers (<code>rowcall/runtime/</code>), an NDJSON worker protocol
             (<code>runtime/worker.py</code>), and the public headless CLI
-            (<code>nodebook validate|run</code>).
+            (<code>rowcall validate|run</code>).
           </td>
         </tr>
         <tr>
@@ -219,7 +219,7 @@
           <td><code>beta_launcher.ts</code>, <code>release.ts</code>, <code>packaging/</code>, <code>site/</code></td>
           <td>
             Single-binary launcher (<code>deno compile</code>) that manages a venv under
-            <code>~/.nodebook</code>, plus Cloudflare Pages/R2 release pipeline and install site.
+            <code>~/.rowcall</code>, plus Cloudflare Pages/R2 release pipeline and install site.
           </td>
         </tr>
       </table>
@@ -230,7 +230,7 @@
                           │
         ┌─────────────────┼──────────────────────┐
         ▼                 ▼                      ▼
-  python_document_    runner.py             nodebook.runtime.worker
+  python_document_    runner.py             rowcall.runtime.worker
   loader.py           (legacy session)      (new NDJSON worker)
   (one-shot spawn     run-node w/ cache,    source-backed run-graph /
   per load/save)      per-node streaming    run-to-node, validate, inspect</code></pre>
@@ -242,12 +242,12 @@
             <strong>The document format decision.</strong> <span class="badge good">Keep</span>
             Real <code>.py</code> files with <code>@node(id=..., outputs=[...])</code>, stable
             opaque IDs separate from human-readable function names, UI-only
-            <code>.nodebook.json</code> sidecars, and a strict-but-explained validation surface.
+            <code>.rowcall.json</code> sidecars, and a strict-but-explained validation surface.
             This is exactly right for the "humans and agents both edit it" goal, and
             <code>AGENTS.md</code> + the headless CLI make the agent workflow first-class.
           </li>
           <li>
-            <strong>The <code>nodebook</code> package layering.</strong> <code>document/</code>
+            <strong>The <code>rowcall</code> package layering.</strong> <code>document/</code>
             (parse → validate → plan) is cleanly separated from <code>runtime/</code>
             (execute → preview → protocol), models are typed dataclasses, and the CLI and worker
             are thin shells over the same functions. This is the right kernel to grow.
@@ -314,14 +314,14 @@
       <div class="card">
         <h3>3.2 Finish the runtime migration; delete the legacy paths <span class="badge next">Next</span></h3>
         <p><span class="field">What:</span>
-          Three implementations currently understand "what is a Nodebook document":
-          <code>nodebook/document/parser.py</code> (canonical),
+          Three implementations currently understand "what is a Rowcall document":
+          <code>rowcall/document/parser.py</code> (canonical),
           <code>python_document_loader.py</code> (spawned by the server for every load, save,
           and render), and the validation embedded in <code>runner.py</code>. Two runtimes
           execute nodes: <code>runner.py</code> (single-node runs, owns the only cache and the
-          only per-node streaming) and <code>nodebook/runtime/</code> (graph and run-to-node).
+          only per-node streaming) and <code>rowcall/runtime/</code> (graph and run-to-node).
           <code>runner.py</code>'s preview/copy/telemetry half is a near line-for-line duplicate
-          of <code>nodebook/runtime/previews.py</code>. The docs themselves acknowledge this is
+          of <code>rowcall/runtime/previews.py</code>. The docs themselves acknowledge this is
           mid-migration ("single-node execution remains on the legacy session runner until the
           worker grows cache-aware single-node execution").
         </p>
@@ -364,7 +364,7 @@
           string edits in <code>python_document.ts</code> (~1,200 lines: body replacement, node
           deletion, graph-block regeneration), guided by line ranges reported by the loader, then
           re-parses the result via a temp file to check it. Meanwhile
-          <code>nodebook/document/rewrite.py</code> implements AST-informed rewrites
+          <code>rowcall/document/rewrite.py</code> implements AST-informed rewrites
           (<code>update_node_body</code>, <code>update_node_outputs</code>,
           <code>add_edge</code>, <code>remove_edge</code>) with its own tests — and nothing in
           the server uses it.
@@ -524,7 +524,7 @@
             <code>/run-node</code> source-backed in 3.2 step 3.
           </li>
           <li>
-            <strong><code>nodebook.egg-info/</code> is committed</strong> (build metadata tracked
+            <strong><code>rowcall.egg-info/</code> is committed</strong> (build metadata tracked
             in git even though a later commit added ignore rules). <code>git rm -r --cached</code>
             it.
           </li>
@@ -571,7 +571,7 @@
             <strong>One design question to settle before multiplayer work starts:</strong> the
             unit of collaborative editing. The current save model is whole-document
             (render + revision check), which forces last-writer-wins at file granularity.
-            The natural unit for Nodebook is probably the node (body edits) plus the graph
+            The natural unit for Rowcall is probably the node (body edits) plus the graph
             structure (add/remove node/edge) — which is exactly the operation vocabulary
             <code>rewrite.py</code> already defines. Consolidating rewriting into those
             operations (3.3) quietly becomes your operational-transform vocabulary later; that's

@@ -31,7 +31,7 @@ export type PythonSourceRange = {
   indent?: string;
 };
 
-export type NodebookDocumentV1 = {
+export type RowcallDocumentV1 = {
   version: 1;
   nodes: DocumentNode[];
   edges: Edge[];
@@ -64,7 +64,7 @@ export type DocumentOperationNode = {
 };
 
 export type DecodeDocumentResult =
-  | { ok: true; document: NodebookDocumentV1; issues: [] }
+  | { ok: true; document: RowcallDocumentV1; issues: [] }
   | { ok: false; issues: ValidationIssue[] };
 
 export type DecodeDocumentOperationsRequestResult =
@@ -430,14 +430,14 @@ function requiredStringArray(
   return strings;
 }
 
-export function decodeNodebookDocument(obj: unknown): DecodeDocumentResult {
+export function decodeRowcallDocument(obj: unknown): DecodeDocumentResult {
   const issues: ValidationIssue[] = [];
   const record = asRecord(obj);
 
   if (!record) {
     issues.push({
       kind: "invalid_json",
-      message: "Nodebook document must be an object.",
+      message: "Rowcall document must be an object.",
     });
     return { ok: false, issues };
   }
@@ -446,7 +446,7 @@ export function decodeNodebookDocument(obj: unknown): DecodeDocumentResult {
   if (version !== 1) {
     issues.push({
       kind: "wrong_type",
-      message: "Nodebook document version must be 1.",
+      message: "Rowcall document version must be 1.",
       field: "version",
       path: "version",
     });
@@ -565,7 +565,7 @@ function getRequiredField(
 
   issues.push({
     kind: "missing_field",
-    message: `Nodebook document is missing key \`${field}\``,
+    message: `Rowcall document is missing key \`${field}\``,
     field,
     path: field,
   });

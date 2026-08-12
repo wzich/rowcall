@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nodebook"
+name = "rowcall"
 version = "0.1.0"
-description = "Minimal Python document API for Nodebook."
+description = "Minimal Python document API for Rowcall."
 requires-python = ">=3.10"
 
 [tool.setuptools]
-packages = ["nodebook", "nodebook.document", "nodebook.runtime"]
+packages = ["rowcall", "rowcall.document", "rowcall.runtime"]
 
 [project.scripts]
-nodebook = "nodebook.cli:main"
+rowcall = "rowcall.cli:main"

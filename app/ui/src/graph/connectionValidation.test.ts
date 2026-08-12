@@ -1,11 +1,11 @@
 import { assertEquals } from "@std/assert";
-import type { NodebookDocumentV1 } from "./documentTypes.ts";
+import type { RowcallDocumentV1 } from "./documentTypes.ts";
 import { getDirectOutputConflictsForConnection } from "./connectionValidation.ts";
 
 function createDocument(
-  nodes: NodebookDocumentV1["nodes"],
-  edges: NodebookDocumentV1["edges"] = [],
-): NodebookDocumentV1 {
+  nodes: RowcallDocumentV1["nodes"],
+  edges: RowcallDocumentV1["edges"] = [],
+): RowcallDocumentV1 {
   return { version: 1, nodes, edges };
 }
 

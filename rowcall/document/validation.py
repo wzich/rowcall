@@ -1,4 +1,4 @@
-"""Validation helpers for parsed Nodebook documents."""
+"""Validation helpers for parsed Rowcall documents."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
             if (
                 not output.isidentifier()
                 or keyword.iskeyword(output)
-                or output.startswith("__nodebook_")
+                or output.startswith("__rowcall_")
             ):
                 issues.append(
                     ValidationIssue(
@@ -113,7 +113,7 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
                         message=(
                             f"Output '{output}' on node '{node.id}' must be a valid "
                             "Python variable name and must not use the reserved "
-                            "'__nodebook_' prefix"
+                            "'__rowcall_' prefix"
                         ),
                         node_id=node.id,
                         path=f"nodes[{index}].outputs[{output_index}]",

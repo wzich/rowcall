@@ -11,7 +11,7 @@ import {
 Deno.test("Python worker bootstrap creates a POSIX process group", () => {
   assertEquals(pythonWorkerCommandArgs("windows"), [
     "-m",
-    "nodebook.runtime.worker",
+    "rowcall.runtime.worker",
   ]);
   const args = pythonWorkerCommandArgs("darwin");
   assertEquals(args[0], "-c");
@@ -124,9 +124,9 @@ Deno.test({
   ignore: Deno.build.os === "windows",
   fn: async () => {
     const directory = await Deno.makeTempDir();
-    const packageDirectory = `${directory}/nodebook/runtime`;
+    const packageDirectory = `${directory}/rowcall/runtime`;
     await Deno.mkdir(packageDirectory, { recursive: true });
-    await Deno.writeTextFile(`${directory}/nodebook/__init__.py`, "");
+    await Deno.writeTextFile(`${directory}/rowcall/__init__.py`, "");
     await Deno.writeTextFile(`${packageDirectory}/__init__.py`, "");
     await Deno.writeTextFile(
       `${packageDirectory}/worker.py`,
@@ -186,9 +186,9 @@ Deno.test({
   ignore: Deno.build.os === "windows",
   fn: async () => {
     const directory = await Deno.makeTempDir();
-    const packageDirectory = `${directory}/nodebook/runtime`;
+    const packageDirectory = `${directory}/rowcall/runtime`;
     await Deno.mkdir(packageDirectory, { recursive: true });
-    await Deno.writeTextFile(`${directory}/nodebook/__init__.py`, "");
+    await Deno.writeTextFile(`${directory}/rowcall/__init__.py`, "");
     await Deno.writeTextFile(`${packageDirectory}/__init__.py`, "");
     await Deno.writeTextFile(
       `${packageDirectory}/worker.py`,

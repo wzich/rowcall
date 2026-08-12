@@ -41,13 +41,11 @@ Deno.test("getPythonCommandEnvironment prepends configured Python paths", () => 
   try {
     Deno.env.set("PYTHONPATH", "/existing");
     configurePythonRuntime({
-      pythonPathEntries: ["/nodebook"],
+      pythonPathEntries: ["/rowcall"],
       runtimeMode: "user",
     });
     assertEquals(getPythonCommandEnvironment(), {
-      PYTHONPATH: `/nodebook${
-        Deno.build.os === "windows" ? ";" : ":"
-      }/existing`,
+      PYTHONPATH: `/rowcall${Deno.build.os === "windows" ? ";" : ":"}/existing`,
     });
   } finally {
     configurePythonRuntime({});

@@ -15,11 +15,11 @@ fi
 
 case "$(uname -m)" in
   arm64 | aarch64)
-    default_asset="nodebook-darwin-arm64"
+    default_asset="rowcall-darwin-arm64"
     expected_architecture=arm64
     ;;
   x86_64 | amd64)
-    default_asset="nodebook-darwin-x64"
+    default_asset="rowcall-darwin-x64"
     expected_architecture=x64
     ;;
   *)
@@ -45,7 +45,7 @@ version=$(tr -d '\r\n' < "$project_root/VERSION")
 source_commit_start=$(git -C "$project_root" rev-parse HEAD)
 source_status_start=$(git -C "$project_root" status --porcelain=v1 --untracked-files=normal)
 
-temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/nodebook-release-smoke.XXXXXX")
+temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/rowcall-release-smoke.XXXXXX")
 cleanup() {
   rm -rf "$temporary_root"
 }
@@ -63,7 +63,7 @@ document_dir="$temporary_root/document"
 runtime_dir="$temporary_root/outside-checkout"
 clean_venv="$temporary_root/clean-python"
 clean_python="$clean_venv/bin/python"
-launcher="$install_dir/nodebook"
+launcher="$install_dir/rowcall"
 mkdir -p "$fixture_dir" "$smoke_home" "$runtime_dir"
 cp "$artifact" "$fixture_dir/$asset"
 fixture="$fixture_dir/$asset"
@@ -75,16 +75,16 @@ fi
 verify_macho_architecture "$fixture" "$expected_architecture"
 printf '%s  %s\n' "$fixture_hash_before" "$asset" > "$fixture.sha256"
 
-# Keep the release smoke independent from any editable Nodebook package used
+# Keep the release smoke independent from any editable Rowcall package used
 # to build or test the checkout.
 python3 -m venv "$clean_venv"
 cd "$runtime_dir"
 PYTHONPATH= "$clean_python" -c \
-  'import importlib.util; assert importlib.util.find_spec("nodebook") is None'
+  'import importlib.util; assert importlib.util.find_spec("rowcall") is None'
 
 HOME="$smoke_home" \
-  NODEBOOK_INSTALL_DIR="$install_dir" \
-  NODEBOOK_DOWNLOAD_URL="file://$fixture_dir/$asset" \
+  ROWCALL_INSTALL_DIR="$install_dir" \
+  ROWCALL_DOWNLOAD_URL="file://$fixture_dir/$asset" \
   sh "$project_root/packaging/install.sh"
 
 installed_hash_before=$(sha256_file "$launcher")
@@ -111,14 +111,14 @@ if [ "$reported_version" != "$version" ]; then
   exit 1
 fi
 
-PYTHONPATH="$smoke_home/.nodebook/bundled/python-package" \
+PYTHONPATH="$smoke_home/.rowcall/bundled/python-package" \
   "$clean_python" -c \
-  'import pathlib,nodebook,sys; root=pathlib.Path(sys.argv[1]).resolve(); imported=pathlib.Path(nodebook.__file__).resolve(); assert imported.is_relative_to(root), (imported, root)' \
-  "$smoke_home/.nodebook/bundled/python-package"
+  'import pathlib,rowcall,sys; root=pathlib.Path(sys.argv[1]).resolve(); imported=pathlib.Path(rowcall.__file__).resolve(); assert imported.is_relative_to(root), (imported, root)' \
+  "$smoke_home/.rowcall/bundled/python-package"
 
 python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "validate"' \
   "$temporary_root/validate.json"
-python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "run"; assert p["response"]["executedNodeIds"] == ["n_load", "n_shout"]; assert p["response"]["finalOutputsByNode"]["n_shout"]["shouted"]["jsonValue"] == "HELLO FROM NODEBOOK"' \
+python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "run"; assert p["response"]["executedNodeIds"] == ["n_load", "n_shout"]; assert p["response"]["finalOutputsByNode"]["n_shout"]["shouted"]["jsonValue"] == "HELLO FROM ROWCALL"' \
   "$temporary_root/run.json"
 
 fixture_hash_after=$(sha256_file "$fixture")

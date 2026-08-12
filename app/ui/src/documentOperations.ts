@@ -1,5 +1,5 @@
 import type { DocumentOperation } from "./api/documents.ts";
-import type { NodebookDocumentV1 } from "./graph/documentTypes.ts";
+import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 
 export function coalesceDocumentOperations(
   operations: DocumentOperation[],
@@ -74,7 +74,7 @@ export function coalesceDocumentOperations(
 }
 
 export function hasCustomManagedDownstream(
-  document: NodebookDocumentV1,
+  document: RowcallDocumentV1,
   nodeId: string,
 ): boolean {
   const nodesById = new Map(document.nodes.map((node) => [node.id, node]));

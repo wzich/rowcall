@@ -13,14 +13,14 @@ export type BetaPaths = {
 };
 
 export function getBetaPaths(home = getHomeDirectory()): BetaPaths {
-  const dataDir = `${home}/.nodebook`;
+  const dataDir = `${home}/.rowcall`;
   const bundledDir = `${dataDir}/bundled`;
   return {
     home,
     dataDir,
     venvDir: `${dataDir}/venvs/default`,
     logsDir: `${dataDir}/logs`,
-    logFile: `${dataDir}/logs/nodebook.log`,
+    logFile: `${dataDir}/logs/rowcall.log`,
     configFile: `${dataDir}/config.json`,
     updateCheckFile: `${dataDir}/update-check.json`,
     bundledDir,
