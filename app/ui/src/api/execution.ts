@@ -1,6 +1,8 @@
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
+  TableQueryRequest,
+  TableQueryResponse,
 } from "../../../../types.ts";
 import { nodebookFetch } from "./auth.ts";
 
@@ -26,6 +28,44 @@ export class RunExecutionRequestError extends Error {
     super(message);
     this.name = "RunExecutionRequestError";
   }
+}
+
+export class TableQueryRequestError extends Error {
+  readonly kind: string;
+
+  constructor(kind: string, message: string) {
+    super(message);
+    this.name = "TableQueryRequestError";
+    this.kind = kind;
+  }
+}
+
+export async function queryResultTable(
+  request: TableQueryRequest,
+  signal?: AbortSignal,
+): Promise<TableQueryResponse & { ok: true }> {
+  const response = await nodebookFetch("/results/table", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+    signal,
+  });
+  let payload: TableQueryResponse;
+  try {
+    payload = JSON.parse(await response.text()) as TableQueryResponse;
+  } catch {
+    throw new TableQueryRequestError(
+      "invalid_response",
+      `The interactive table endpoint returned an invalid response (HTTP ${response.status}).`,
+    );
+  }
+  if (!response.ok || !payload.ok) {
+    const error = payload.ok
+      ? { kind: "table_query_failed", message: "The table query failed." }
+      : payload.error;
+    throw new TableQueryRequestError(error.kind, error.message);
+  }
+  return payload;
 }
 
 async function runExecution(

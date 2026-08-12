@@ -11,6 +11,7 @@ const apiRoutes = [
   "/run-node",
   "/run-to-node",
   "/run-graph",
+  "/results",
   "/runtime",
 ];
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from nodebook.runtime import RuntimeSession
 from nodebook.runtime.worker import run_worker
@@ -337,6 +340,222 @@ world.depends_on(hello)
             session.clear_session_cache(),
             {"ok": True, "clearedEntries": 0, "cachingDisabled": True},
         )
+
+    def test_latest_result_store_replaces_only_after_success(self) -> None:
+        session = RuntimeSession()
+
+        first = session.run_graph(HELLO_SOURCE, DOCUMENT_PATH, run_id="run-1")
+        self.assertTrue(first["ok"])
+        self.assertEqual(
+            first["resultStore"],
+            {"runId": "run-1", "documentRevision": first["documentRevision"]},
+        )
+        retained = session.query_table(
+            run_id="run-1",
+            document_revision=first["documentRevision"],
+            node_id="hello",
+            output_name="message",
+            offset=0,
+            sort=None,
+        )
+        self.assertEqual(retained["error"]["kind"], "unsupported_output")
+
+        failed = session.run_graph(
+            HELLO_SOURCE.replace('message = "hello"', 'raise RuntimeError("nope")'),
+            DOCUMENT_PATH,
+            run_id="run-2",
+        )
+        self.assertFalse(failed["ok"])
+        self.assertNotIn("resultStore", failed)
+        still_retained = session.query_table(
+            run_id="run-1",
+            document_revision=first["documentRevision"],
+            node_id="hello",
+            output_name="message",
+            offset=0,
+            sort=None,
+        )
+        self.assertEqual(still_retained["error"]["kind"], "unsupported_output")
+
+        second = session.run_to_node(
+            HELLO_SOURCE,
+            DOCUMENT_PATH,
+            "hello",
+            run_id="run-3",
+        )
+        self.assertTrue(second["ok"])
+        stale = session.query_table(
+            run_id="run-1",
+            document_revision=first["documentRevision"],
+            node_id="hello",
+            output_name="message",
+            offset=0,
+            sort=None,
+        )
+        self.assertEqual(stale["error"]["kind"], "stale_result")
+        missing_unexecuted = session.query_table(
+            run_id="run-3",
+            document_revision=second["documentRevision"],
+            node_id="world",
+            output_name="text",
+            offset=0,
+            sort=None,
+        )
+        self.assertEqual(missing_unexecuted["error"]["kind"], "missing_output")
+
+    def test_table_query_captures_output_before_it_reaches_worker_stdout(self) -> None:
+        session = RuntimeSession()
+        result = session.run_graph(HELLO_SOURCE, DOCUMENT_PATH, run_id="run-1")
+
+        def noisy_query(*args: object, **kwargs: object) -> tuple[dict, int]:
+            del args, kwargs
+            print("user-controlled protocol noise")
+            return {
+                "columns": [],
+                "rows": [],
+                "rowCount": 0,
+                "columnCount": 0,
+                "truncated": False,
+            }, 0
+
+        worker_stdout = io.StringIO()
+        with patch("nodebook.runtime.session.query_table_preview", noisy_query):
+            with redirect_stdout(worker_stdout):
+                query = session.query_table(
+                    run_id="run-1",
+                    document_revision=result["documentRevision"],
+                    node_id="hello",
+                    output_name="message",
+                    offset=0,
+                    sort=None,
+                )
+
+        self.assertTrue(query["ok"])
+        self.assertEqual(worker_stdout.getvalue(), "")
+
+    def test_worker_table_query_rejects_stale_provenance(self) -> None:
+        session = RuntimeSession()
+        run_events = self.run_lines(
+            [
+                request(
+                    "run_graph",
+                    {
+                        "source": HELLO_SOURCE,
+                        "documentPath": DOCUMENT_PATH,
+                        "runId": "published-run",
+                    },
+                )
+            ],
+            session=session,
+        )
+        revision = run_events[-1]["response"]["documentRevision"]
+
+        events = self.run_lines(
+            [
+                request(
+                    "query_table",
+                    {
+                        "runId": "other-run",
+                        "documentRevision": revision,
+                        "nodeId": "hello",
+                        "outputName": "message",
+                        "offset": 0,
+                    },
+                )
+            ],
+            session=session,
+        )
+
+        self.assertEqual(events[0]["type"], "table_query_completed")
+        self.assertFalse(events[0]["ok"])
+        self.assertEqual(events[0]["error"]["kind"], "stale_result")
+
+    @unittest.skipUnless(importlib.util.find_spec("pandas"), "pandas is not installed")
+    def test_pandas_table_query_pages_and_sorts_columns_and_index(self) -> None:
+        source = """
+import pandas as pd
+from nodebook import node
+
+@node(id="frame", outputs=["data"])
+def frame():
+    data = pd.DataFrame({"value": list(reversed(range(55)))}, index=list(reversed(range(100, 155))))
+    return {"data": data}
+""".lstrip()
+        session = RuntimeSession()
+        result = session.run_graph(source, DOCUMENT_PATH, run_id="pandas-run")
+        revision = result["documentRevision"]
+
+        second_page = session.query_table(
+            run_id="pandas-run",
+            document_revision=revision,
+            node_id="frame",
+            output_name="data",
+            offset=50,
+            sort=None,
+        )
+        self.assertTrue(second_page["ok"])
+        self.assertEqual(second_page["offset"], 50)
+        self.assertEqual(len(second_page["table"]["rows"]), 5)
+
+        by_value = session.query_table(
+            run_id="pandas-run",
+            document_revision=revision,
+            node_id="frame",
+            output_name="data",
+            offset=0,
+            sort={"kind": "column", "columnIndex": 0, "descending": False},
+        )
+        self.assertEqual([row[0] for row in by_value["table"]["rows"][:3]], [0, 1, 2])
+        self.assertEqual(by_value["table"]["index"][:3], [100, 101, 102])
+
+        by_index = session.query_table(
+            run_id="pandas-run",
+            document_revision=revision,
+            node_id="frame",
+            output_name="data",
+            offset=999,
+            sort={"kind": "index", "descending": False},
+        )
+        self.assertEqual(by_index["offset"], 50)
+        self.assertEqual(by_index["table"]["index"], [150, 151, 152, 153, 154])
+
+    @unittest.skipUnless(importlib.util.find_spec("polars"), "polars is not installed")
+    def test_polars_table_query_preserves_source_rows_while_sorting(self) -> None:
+        source = """
+import polars as pl
+from nodebook import node
+
+@node(id="frame", outputs=["data"])
+def frame():
+    data = pl.DataFrame({"value": list(reversed(range(55)))})
+    return {"data": data}
+""".lstrip()
+        session = RuntimeSession()
+        result = session.run_graph(source, DOCUMENT_PATH, run_id="polars-run")
+        revision = result["documentRevision"]
+
+        by_value = session.query_table(
+            run_id="polars-run",
+            document_revision=revision,
+            node_id="frame",
+            output_name="data",
+            offset=0,
+            sort={"kind": "column", "columnIndex": 0, "descending": False},
+        )
+        self.assertTrue(by_value["ok"])
+        self.assertEqual([row[0] for row in by_value["table"]["rows"][:3]], [0, 1, 2])
+        self.assertEqual(by_value["table"]["index"][:3], [54, 53, 52])
+
+        by_source_row = session.query_table(
+            run_id="polars-run",
+            document_revision=revision,
+            node_id="frame",
+            output_name="data",
+            offset=0,
+            sort={"kind": "index", "descending": True},
+        )
+        self.assertEqual(by_source_row["table"]["index"][:3], [54, 53, 52])
+        self.assertEqual([row[0] for row in by_source_row["table"]["rows"][:3]], [0, 1, 2])
 
     def test_worker_run_node_emits_fresh_upstream_events(self) -> None:
         session = RuntimeSession()

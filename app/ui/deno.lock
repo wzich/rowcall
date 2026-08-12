@@ -11,6 +11,7 @@
     "npm:@lezer/python@1.1.18": "1.1.18",
     "npm:@tailwindcss/vite@4.2.2": "4.2.2_vite@7.3.2",
     "npm:@tanstack/react-query@5.99.0": "5.99.0_react@19.2.5",
+    "npm:@tanstack/react-table@8.21.3": "8.21.3_react@19.2.5_react-dom@19.2.5__react@19.2.5",
     "npm:@types/react-dom@*": "19.2.3_@types+react@19.2.14",
     "npm:@types/react-dom@19.2.3": "19.2.3_@types+react@19.2.14",
     "npm:@types/react@*": "19.2.14",
@@ -696,6 +697,17 @@
         "react"
       ]
     },
+    "@tanstack/react-table@8.21.3_react@19.2.5_react-dom@19.2.5__react@19.2.5": {
+      "integrity": "sha512-5nNMTSETP4ykGegmVkhjcS8tTLW6Vl4axfEGQN3v0zdHYbK4UfoqfPChclTrJ4EoK9QynqAu9oUf8VEmrpZ5Ww==",
+      "dependencies": [
+        "@tanstack/table-core",
+        "react",
+        "react-dom"
+      ]
+    },
+    "@tanstack/table-core@8.21.3": {
+      "integrity": "sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg=="
+    },
     "@types/babel__core@7.20.5": {
       "integrity": "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==",
       "dependencies": [
@@ -1269,6 +1281,7 @@
       "npm:@lezer/python@1.1.18",
       "npm:@tailwindcss/vite@4.2.2",
       "npm:@tanstack/react-query@5.99.0",
+      "npm:@tanstack/react-table@8.21.3",
       "npm:@types/react-dom@*",
       "npm:@types/react-dom@19.2.3",
       "npm:@types/react@*",

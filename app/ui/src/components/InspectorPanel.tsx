@@ -3,6 +3,7 @@ import type {
   ExecutionResponse,
   NodeRunResult,
   OutputEvent,
+  ResultStoreIdentity,
   TableCellPreview,
   TablePreview,
   ValuePreview,
@@ -17,6 +18,7 @@ import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
+import { ResultTable } from "./ResultTable.tsx";
 import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
 import { isJsonContainer } from "./jsonPreviewState.ts";
 
@@ -106,7 +108,12 @@ export type ExecutionDisplayState =
     runType: ExecutionResponse["runType"];
     result: NodeRunResult;
   }
-  | { status: "completed"; response: ExecutionResponse }
+  | {
+    status: "completed";
+    response: ExecutionResponse;
+    freshness: ResultFreshness;
+    latestFailure?: ExecutionResponse;
+  }
   | { status: "request_error"; message: string };
 
 export type GraphExecutionDisplayState =
@@ -114,9 +121,16 @@ export type GraphExecutionDisplayState =
   | {
     status: "completed";
     response: ExecutionResponse;
-    freshness: "fresh" | "stale";
+    freshness: ResultFreshness;
+    latestFailure?: ExecutionResponse;
   }
   | { status: "request_error"; message: string };
+
+export type ResultFreshness =
+  | "fresh"
+  | "failed_run"
+  | "document_changed"
+  | "replaced";
 
 export type InspectorNavigationRequest =
   | {
@@ -509,9 +523,15 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
 function FlatPreview({
   preview,
   metadataSuffix,
+  interactiveTable,
 }: {
   preview: ValuePreview;
   metadataSuffix?: ReactNode;
+  interactiveTable?: {
+    identity: ResultStoreIdentity;
+    nodeId: string;
+    outputName: string;
+  };
 }) {
   const typeLabel = formatPythonType(preview.type);
 
@@ -536,7 +556,15 @@ function FlatPreview({
         )}
       </div>
       {preview.table
-        ? <TablePreviewBlock table={preview.table} />
+        ? interactiveTable
+          ? (
+            <ResultTable
+              key={`${interactiveTable.nodeId}\u0000${interactiveTable.outputName}`}
+              {...interactiveTable}
+              initialTable={preview.table}
+            />
+          )
+          : <TablePreviewBlock table={preview.table} />
         : <JsonPreview preview={preview} />}
       {preview.warning && (
         <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
@@ -550,9 +578,14 @@ function FlatPreview({
 function ResultOutputTabs({
   previews,
   title = "Outputs",
+  interactiveTable,
 }: {
   previews: Record<string, ValuePreview>;
   title?: string;
+  interactiveTable?: {
+    identity: ResultStoreIdentity;
+    nodeId: string;
+  };
 }) {
   const options = Object.entries(previews);
   const [selectedName, setSelectedName] = useState(options[0]?.[0] ?? "");
@@ -601,7 +634,15 @@ function ResultOutputTabs({
           </button>
         ))}
       </div>
-      <FlatPreview preview={{ ...selected[1], name: selected[0] }} />
+      <FlatPreview
+        preview={{ ...selected[1], name: selected[0] }}
+        interactiveTable={interactiveTable
+          ? {
+            ...interactiveTable,
+            outputName: selected[0],
+          }
+          : undefined}
+      />
     </section>
   );
 }
@@ -743,8 +784,14 @@ function RunResult({
 
   const response = executionState.response;
   const nodeResult = response.resultsByNode[selectedNode.id];
+  const latestFailure = executionState.freshness === "failed_run"
+    ? executionState.latestFailure
+    : undefined;
+  const failureResponse = latestFailure ?? (!response.ok ? response : null);
   const traceStep =
-    response.trace?.find((step) => step.nodeId === selectedNode.id) ?? null;
+    (failureResponse ?? response).trace?.find((step) =>
+      step.nodeId === selectedNode.id
+    ) ?? null;
 
   if (!nodeResult && !response.ok) {
     const failedNodeId = response.error?.nodeId;
@@ -790,6 +837,14 @@ function RunResult({
   }
 
   const outputs = nodeResult?.outputs ?? {};
+  const interactiveTable = response.resultStore &&
+      (executionState.freshness === "fresh" ||
+        executionState.freshness === "failed_run")
+    ? {
+      identity: response.resultStore,
+      nodeId: selectedNode.id,
+    }
+    : undefined;
 
   return (
     <section className="border-t border-zinc-200 pt-4">
@@ -799,25 +854,34 @@ function RunResult({
       <p
         className={[
           "mt-2 text-sm font-medium",
-          response.ok ? "text-zinc-700" : "text-red-800",
+          failureResponse ? "text-red-800" : "text-zinc-700",
         ].join(" ")}
       >
-        {response.ok ? "Run succeeded" : "Run failed"}
+        {failureResponse ? "Latest run failed" : "Run succeeded"}
       </p>
 
-      {!response.ok && (
-        <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-          <p className="text-sm font-medium text-red-800">
-            {response.error?.message ?? "Python execution failed."}
+      {executionState.freshness === "failed_run" && (
+        <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <p className="text-sm font-medium">Showing the previous result</p>
+          <p className="mt-1 text-xs">
+            The latest run failed, so this successful result was kept for
+            inspection.
           </p>
-          {nodeResult?.error && (
-            <p className="mt-1 text-sm text-red-700">{nodeResult.error}</p>
-          )}
         </div>
       )}
 
+      {failureResponse && (
+        <RunFailureDetails
+          response={failureResponse}
+          nodeId={selectedNode.id}
+        />
+      )}
+
       <div className="mt-4 space-y-4">
-        <ResultOutputTabs previews={outputs} />
+        <ResultOutputTabs
+          previews={outputs}
+          interactiveTable={interactiveTable}
+        />
 
         <InlineOutputBlock
           events={nodeResult?.outputEvents}
@@ -837,6 +901,49 @@ function RunResult({
         nodeLabelsById={selectedNode.nodeLabelsById}
       />
     </section>
+  );
+}
+
+function RunFailureDetails({
+  response,
+  nodeId,
+}: {
+  response: ExecutionResponse;
+  nodeId: string;
+}) {
+  const nodeResult = response.resultsByNode[nodeId];
+  const messages = [response.error?.message, nodeResult?.error]
+    .filter((message): message is string => Boolean(message))
+    .filter((message, index, all) => all.indexOf(message) === index);
+  const stderr = nodeResult?.stderr || response.error?.stderr || "";
+
+  return (
+    <div className="mt-2 space-y-3">
+      <div className="rounded border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/40">
+        <p className="text-sm font-medium text-red-800 dark:text-red-200">
+          Latest failure
+        </p>
+        {messages.length > 0
+          ? messages.map((message) => (
+            <p
+              key={message}
+              className="mt-1 text-sm text-red-700 dark:text-red-300"
+            >
+              {message}
+            </p>
+          ))
+          : (
+            <p className="mt-1 text-sm text-red-700 dark:text-red-300">
+              Python execution failed.
+            </p>
+          )}
+      </div>
+      <TextOutputBlock
+        title="Latest run stderr"
+        value={stderr}
+        variant="danger"
+      />
+    </div>
   );
 }
 
@@ -1023,21 +1130,43 @@ function GraphRunResult({
   }
 
   const response = executionState.response;
+  const latestFailure = executionState.freshness === "failed_run"
+    ? executionState.latestFailure
+    : undefined;
 
   return (
     <div className="space-y-4">
-      {executionState.freshness === "stale" && (
+      {executionState.freshness !== "fresh" && (
         <div className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-          <p className="text-sm font-medium">Results are stale</p>
+          <p className="text-sm font-medium">
+            {executionState.freshness === "failed_run"
+              ? "Showing the previous result"
+              : "Results are stale"}
+          </p>
           <p className="mt-1 text-xs">
-            The graph changed after this run. These results are preserved for
-            context until you run the graph again.
+            {executionState.freshness === "failed_run"
+              ? "The latest run failed, so this successful result was kept for inspection."
+              : executionState.freshness === "replaced"
+              ? "A newer successful run replaced the live result set. This preview is preserved for context."
+              : "The graph changed after this run. These results are preserved for context until you run the graph again."}
           </p>
         </div>
       )}
 
+      {latestFailure && (
+        <GraphFailureDetails
+          response={latestFailure}
+          nodeLabelsById={nodeLabelsById}
+          onNodeSelect={onNodeSelect}
+          onShowDocumentGlobals={onShowDocumentGlobals}
+        />
+      )}
+
       <div
-        className={executionState.freshness === "stale" ? "opacity-60" : ""}
+        className={executionState.freshness === "document_changed" ||
+            executionState.freshness === "replaced"
+          ? "opacity-60"
+          : ""}
       >
         {response.ok
           ? (
@@ -1051,44 +1180,65 @@ function GraphRunResult({
             />
           )
           : (
-            <div className="rounded border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
-              <p className="text-sm font-medium text-red-800 dark:text-red-200">
-                Graph run failed
-              </p>
-              <p className="mt-1 text-sm text-red-700 dark:text-red-300">
-                {response.error?.message ?? "Python execution failed."}
-              </p>
-              {response.error?.phase === "document_globals" && (
-                <button
-                  type="button"
-                  className="mt-3 rounded border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900"
-                  onClick={onShowDocumentGlobals}
-                >
-                  Open Document Globals
-                </button>
-              )}
-              {response.error?.nodeId && (
-                <div className="mt-3">
-                  <p className="text-xs font-semibold uppercase text-red-700 dark:text-red-300">
-                    Failed at
-                  </p>
-                  <div className="mt-1">
-                    <NodeIdButton
-                      nodeId={response.error.nodeId}
-                      label={nodeLabelsById[response.error.nodeId]}
-                      onNodeSelect={onNodeSelect}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+            <GraphFailureDetails
+              response={response}
+              nodeLabelsById={nodeLabelsById}
+              onNodeSelect={onNodeSelect}
+              onShowDocumentGlobals={onShowDocumentGlobals}
+            />
           )}
       </div>
 
       <GraphTraceResult
-        response={response}
+        response={latestFailure ?? response}
         nodeLabelsById={nodeLabelsById}
       />
+    </div>
+  );
+}
+
+function GraphFailureDetails({
+  response,
+  nodeLabelsById,
+  onNodeSelect,
+  onShowDocumentGlobals,
+}: {
+  response: ExecutionResponse;
+  nodeLabelsById: Record<string, string>;
+  onNodeSelect: (nodeId: string) => void;
+  onShowDocumentGlobals: () => void;
+}) {
+  return (
+    <div className="rounded border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
+      <p className="text-sm font-medium text-red-800 dark:text-red-200">
+        Latest graph run failed
+      </p>
+      <p className="mt-1 text-sm text-red-700 dark:text-red-300">
+        {response.error?.message ?? "Python execution failed."}
+      </p>
+      {response.error?.phase === "document_globals" && (
+        <button
+          type="button"
+          className="mt-3 rounded border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-950 dark:text-red-200 dark:hover:bg-red-900"
+          onClick={onShowDocumentGlobals}
+        >
+          Open Document Globals
+        </button>
+      )}
+      {response.error?.nodeId && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase text-red-700 dark:text-red-300">
+            Failed at
+          </p>
+          <div className="mt-1">
+            <NodeIdButton
+              nodeId={response.error.nodeId}
+              label={nodeLabelsById[response.error.nodeId]}
+              onNodeSelect={onNodeSelect}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1110,7 +1260,7 @@ function GraphOutputTabs({
   onSelectedKeyChange,
 }: {
   response: ExecutionResponse;
-  freshness: "fresh" | "stale";
+  freshness: ResultFreshness;
   nodeLabelsById: Record<string, string>;
   onNodeSelect: (nodeId: string) => void;
   selectedKey: string;
@@ -1205,6 +1355,14 @@ function GraphOutputTabs({
       <div className="py-3">
         <FlatPreview
           preview={{ ...selected.preview, name: selected.name }}
+          interactiveTable={response.resultStore &&
+              (freshness === "fresh" || freshness === "failed_run")
+            ? {
+              identity: response.resultStore,
+              nodeId: selected.nodeId,
+              outputName: selected.name,
+            }
+            : undefined}
           metadataSuffix={
             <span className="font-sans">
               from{" "}
@@ -2644,6 +2802,25 @@ function getNodeRunSummary(
   }
 
   if (executionState?.status === "completed") {
+    if (
+      executionState.freshness === "failed_run" &&
+      executionState.latestFailure
+    ) {
+      const latestResult =
+        executionState.latestFailure.resultsByNode[selectedNode.id];
+      if (
+        latestResult && !latestResult.ok ||
+        executionState.latestFailure.error?.nodeId === selectedNode.id
+      ) {
+        return {
+          variant: "danger",
+          title: "Step failed",
+          detail: latestResult?.error ??
+            executionState.latestFailure.error?.message ??
+            "Python execution failed.",
+        };
+      }
+    }
     const nodeResult = executionState.response.resultsByNode[selectedNode.id];
     if (nodeResult) {
       return nodeResult.ok

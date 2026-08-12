@@ -3,7 +3,11 @@ import {
   resolvePythonCommand,
 } from "./runtime_config.ts";
 import type { DocumentOperation, NodebookDocumentV1 } from "./document.ts";
-import type { ExecutionResponse, ValidationIssue } from "./types.ts";
+import type {
+  ExecutionResponse,
+  TableQueryRequest,
+  ValidationIssue,
+} from "./types.ts";
 
 export const pythonWorkerOperations = [
   "validate_source",
@@ -14,6 +18,7 @@ export const pythonWorkerOperations = [
   "run_graph",
   "run_to_node",
   "run_node",
+  "query_table",
   "load_document",
   "apply_operations",
   "clear_session_cache",
@@ -28,6 +33,7 @@ export type PythonWorkerSourcePayload = {
 };
 
 export type PythonWorkerSourceRunPayload = PythonWorkerSourcePayload & {
+  runId?: string;
   trace?: boolean;
   inputs?: Record<string, unknown>;
 };
@@ -52,6 +58,7 @@ export type PythonWorkerPayloadByOperation = {
   run_graph: PythonWorkerSourceRunPayload;
   run_to_node: PythonWorkerSourceRunPayload & { target: string };
   run_node: PythonWorkerSourceRunPayload & { target: string };
+  query_table: TableQueryRequest;
   load_document: PythonWorkerDocumentPayload;
   apply_operations: PythonWorkerDocumentOperationsPayload;
   clear_session_cache: Record<string, never>;
@@ -91,6 +98,7 @@ export const pythonWorkerTerminalEventTypes = [
   "plan_run_completed",
   "run_completed",
   "run_failed",
+  "table_query_completed",
   "load_document_completed",
   "apply_operations_completed",
   "session_cache_cleared",
@@ -109,6 +117,7 @@ export const pythonWorkerTerminalEventsByOperation = {
   run_graph: ["run_completed", "run_failed", "error"],
   run_to_node: ["run_completed", "run_failed", "error"],
   run_node: ["run_completed", "run_failed", "error"],
+  query_table: ["table_query_completed", "error"],
   load_document: ["load_document_completed", "error"],
   apply_operations: ["apply_operations_completed", "error"],
   clear_session_cache: ["session_cache_cleared", "error"],

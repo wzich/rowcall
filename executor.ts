@@ -4,6 +4,8 @@ import type {
   ExecutionStreamEvent,
   NodeRunResult,
   RunPlan,
+  TableQueryRequest,
+  TableQueryResponse,
 } from "./types.ts";
 import {
   getPythonEnvironmentInfo,
@@ -209,6 +211,21 @@ export async function clearSourceRuntimeSessionCache(): Promise<
   return { ok: true, clearedEntries: 0, cachingDisabled: true };
 }
 
+export async function querySourceRuntimeTable(
+  request: TableQueryRequest,
+): Promise<TableQueryResponse> {
+  const event = await sourceRuntimeWorker.requestFinalEvent(
+    "query_table",
+    request,
+  );
+  if (event.type !== "table_query_completed") {
+    throw new Error(
+      workerErrorMessage(event, "Python worker table query failed"),
+    );
+  }
+  return event as TableQueryResponse & PythonWorkerEvent;
+}
+
 export async function shutdownSourceRuntimeSession(): Promise<void> {
   await sourceRuntimeWorker.shutdown();
 }
@@ -234,6 +251,7 @@ export function printNodeRunResult(result: NodeRunResult): void {
 }
 
 async function executeWorkerRun(
+  runId: string,
   source: string,
   documentPath: string,
   runType: ExecutionRunType,
@@ -245,6 +263,7 @@ async function executeWorkerRun(
 
   for await (
     const event of streamWorkerRunEvents(
+      runId,
       source,
       documentPath,
       runType,
@@ -273,6 +292,7 @@ async function executeSourceRun(
   traceEnabled: boolean,
 ): Promise<ExecutionResponse> {
   return await executeWorkerRun(
+    crypto.randomUUID(),
     source,
     documentPath,
     runType,
@@ -361,6 +381,7 @@ async function* streamWorkerRun(
 ): AsyncGenerator<ExecutionStreamEvent> {
   for await (
     const event of streamWorkerRunEvents(
+      runId,
       source,
       documentPath,
       runType,
@@ -443,6 +464,7 @@ async function* streamWorkerRun(
 }
 
 async function* streamWorkerRunEvents(
+  runId: string,
   source: string,
   documentPath: string,
   runType: ExecutionRunType,
@@ -452,6 +474,7 @@ async function* streamWorkerRunEvents(
   signal?: AbortSignal,
 ): AsyncGenerator<PythonWorkerEvent> {
   const payload: Record<string, unknown> = {
+    runId,
     source,
     documentPath,
     trace: traceEnabled,

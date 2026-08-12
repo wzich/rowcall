@@ -7,6 +7,7 @@ import {
 import {
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
+  querySourceRuntimeTable,
   resolvePythonCommand,
   runSourceGraph,
   runSourceToNode,
@@ -102,6 +103,11 @@ sourceRuntimeTest(
     assertEquals(response.ok, true);
     assertEquals(response.executedNodeIds, ["a", "b"]);
     assertEquals(response.finalOutputsByNode.b.y.jsonValue, 2);
+    assertExists(response.resultStore);
+    assertEquals(
+      response.resultStore.documentRevision,
+      response.documentRevision,
+    );
     assertExists(response.trace);
     assertEquals(response.trace.map((step) => step.nodeId), ["a", "b"]);
   },
@@ -169,6 +175,18 @@ sourceRuntimeTest(
     if (finalEvent.type === "run_completed") {
       assertEquals(finalEvent.response.ok, true);
       assertEquals(finalEvent.response.finalOutputsByNode.b.y.jsonValue, 2);
+      assertEquals(finalEvent.response.resultStore?.runId, "source-run-1");
+      const tableQuery = await querySourceRuntimeTable({
+        ...finalEvent.response.resultStore!,
+        nodeId: "b",
+        outputName: "y",
+        offset: 0,
+        sort: null,
+      });
+      assertEquals(tableQuery.ok, false);
+      if (!tableQuery.ok) {
+        assertEquals(tableQuery.error.kind, "unsupported_output");
+      }
     }
   },
 );

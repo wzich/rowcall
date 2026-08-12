@@ -84,12 +84,47 @@ def handle_request(
         "run_graph",
         "run_to_node",
         "run_node",
+        "query_table",
         "clear_session_cache",
     }:
         return [_error_event(request_id, "unknown_operation", f"Unknown operation: {operation}")], False
 
     if operation == "clear_session_cache":
         return [_event("session_cache_cleared", request_id, session.clear_session_cache())], False
+
+    if operation == "query_table":
+        for field in ("runId", "documentRevision", "nodeId", "outputName"):
+            field_error = _require_text(payload, field)
+            if field_error:
+                return [_error_event(request_id, "invalid_request", field_error)], False
+        offset = payload.get("offset")
+        if type(offset) is not int or offset < 0:
+            return [
+                _error_event(
+                    request_id,
+                    "invalid_request",
+                    "Request field 'offset' must be a non-negative integer",
+                )
+            ], False
+        sort = payload.get("sort")
+        if sort is not None and not isinstance(sort, dict):
+            return [
+                _error_event(request_id, "invalid_request", "Request field 'sort' must be an object")
+            ], False
+        return [
+            _event(
+                "table_query_completed",
+                request_id,
+                session.query_table(
+                    run_id=payload["runId"],
+                    document_revision=payload["documentRevision"],
+                    node_id=payload["nodeId"],
+                    output_name=payload["outputName"],
+                    offset=offset,
+                    sort=sort,
+                ),
+            )
+        ], False
 
     path_error = _require_text(payload, "documentPath")
     if path_error:
@@ -179,6 +214,9 @@ def _run_events(
     inputs = payload.get("inputs", {})
     if not isinstance(inputs, dict):
         return [_error_event(request_id, "invalid_request", "Request field 'inputs' must be an object")]
+    run_id = payload.get("runId")
+    if run_id is not None and (not isinstance(run_id, str) or not run_id):
+        return [_error_event(request_id, "invalid_request", "Request field 'runId' must be a non-empty string")]
 
     plan_result = session.plan_run(source, document_path, target=target)
 
@@ -198,32 +236,33 @@ def _run_events(
             _event(event["type"], request_id, {key: value for key, value in event.items() if key != "type"})
         )
 
+    run_options = {
+        "trace": trace,
+        "inputs": inputs,
+        "on_node_event": append_node_event,
+        **({"run_id": run_id} if run_id is not None else {}),
+    }
+
     if run_type == "run_node":
         assert target is not None
         run_result = session.run_node(
             source,
             document_path,
             target,
-            trace=trace,
-            inputs=inputs,
-            on_node_event=append_node_event,
+            **run_options,
         )
     elif target is not None:
         run_result = session.run_to_node(
             source,
             document_path,
             target,
-            trace=trace,
-            inputs=inputs,
-            on_node_event=append_node_event,
+            **run_options,
         )
     else:
         run_result = session.run_graph(
             source,
             document_path,
-            trace=trace,
-            inputs=inputs,
-            on_node_event=append_node_event,
+            **run_options,
         )
 
     final_type = "run_completed" if run_result.get("ok") else "run_failed"

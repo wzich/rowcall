@@ -84,6 +84,34 @@ Deno.test("validateLocalRequest requires a token for document operations", () =>
   );
 });
 
+Deno.test("validateLocalRequest requires a token for result queries", () => {
+  assertEquals(
+    validateLocalRequest(
+      request("/results/table", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+      }),
+      security,
+    ),
+    {
+      ok: false,
+      status: 401,
+      message: "Missing or invalid Nodebook authorization token.",
+    },
+  );
+  assertEquals(
+    validateLocalRequest(
+      request("/results/table", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+      security,
+    ),
+    { ok: true },
+  );
+});
+
 Deno.test("PUT /document is no longer a document write route", async () => {
   const response = await app.fetch(
     request("/document", {
@@ -235,6 +263,48 @@ Deno.test("disk-backed run requests require an expected revision", async () => {
   const body = await response.json();
   assertEquals(body.ok, false);
   assertEquals(body.error.kind, "invalid_request");
+});
+
+Deno.test("table result queries reject malformed controls before Python", async () => {
+  const documentPath = await writeRouteTestDocument("table_invalid.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const response = await app.fetch(
+    jsonRequest("/results/table", {
+      runId: "run-1",
+      documentRevision: "revision-1",
+      nodeId: "n_test",
+      outputName: "x",
+      offset: -1,
+      sort: null,
+    }),
+  );
+
+  assertEquals(response.status, 422);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "invalid_request");
+});
+
+Deno.test("table result queries reject changed document provenance", async () => {
+  const documentPath = await writeRouteTestDocument("table_stale.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const response = await app.fetch(
+    jsonRequest("/results/table", {
+      runId: "run-1",
+      documentRevision: "stale-revision",
+      nodeId: "n_test",
+      outputName: "x",
+      offset: 0,
+      sort: null,
+    }),
+  );
+
+  assertEquals(response.status, 409);
+  const body = await response.json();
+  assertEquals(body.ok, false);
+  assertEquals(body.error.kind, "stale_result");
 });
 
 Deno.test("POST /document/operations applies operations", async () => {

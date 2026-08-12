@@ -271,9 +271,14 @@ def make_pandas_table_preview(value: Any) -> dict[str, Any] | None:
     else:
         return None
 
-    row_count, column_count = frame.shape
-    sliced = frame.iloc[:TABLE_PREVIEW_MAX_ROWS, :TABLE_PREVIEW_MAX_COLUMNS]
+    return _pandas_table_payload(
+        frame,
+        frame.iloc[:TABLE_PREVIEW_MAX_ROWS, :TABLE_PREVIEW_MAX_COLUMNS],
+    )
 
+
+def _pandas_table_payload(frame: Any, sliced: Any) -> dict[str, Any]:
+    row_count, column_count = frame.shape
     return {
         "columns": [
             {
@@ -341,6 +346,171 @@ def make_polars_table_preview(value: Any) -> dict[str, Any] | None:
         "columnCount": column_count,
         "truncated": row_count > TABLE_PREVIEW_MAX_ROWS or column_count > TABLE_PREVIEW_MAX_COLUMNS,
     }
+
+
+def query_table_preview(
+    value: Any,
+    *,
+    offset: int,
+    sort: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, int]:
+    """Return one bounded table page without mutating the retained object."""
+
+    if type(offset) is not int or offset < 0:
+        raise ValueError("Table offset must be a non-negative integer.")
+    normalized_sort = _validate_table_sort(sort)
+
+    pandas_result = _query_pandas_table(value, offset, normalized_sort)
+    if pandas_result is not None:
+        return pandas_result
+
+    polars_result = _query_polars_table(value, offset, normalized_sort)
+    if polars_result is not None:
+        return polars_result
+
+    return None, 0
+
+
+def _validate_table_sort(sort: dict[str, Any] | None) -> dict[str, Any] | None:
+    if sort is None:
+        return None
+    if not isinstance(sort, dict):
+        raise ValueError("Table sort must be an object.")
+    kind = sort.get("kind")
+    descending = sort.get("descending")
+    if kind not in {"index", "column"} or type(descending) is not bool:
+        raise ValueError("Table sort requires a valid target and direction.")
+    if kind == "column":
+        column_index = sort.get("columnIndex")
+        if type(column_index) is not int or column_index < 0:
+            raise ValueError("Column sorting requires a non-negative column index.")
+        return {
+            "kind": "column",
+            "columnIndex": column_index,
+            "descending": descending,
+        }
+    return {"kind": "index", "descending": descending}
+
+
+def _resolved_table_offset(offset: int, row_count: int) -> int:
+    if row_count <= 0:
+        return 0
+    last_page_offset = ((row_count - 1) // TABLE_PREVIEW_MAX_ROWS) * TABLE_PREVIEW_MAX_ROWS
+    return min(offset, last_page_offset)
+
+
+def _query_pandas_table(
+    value: Any,
+    offset: int,
+    sort: dict[str, Any] | None,
+) -> tuple[dict[str, Any], int] | None:
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    if isinstance(value, pd.Series):
+        frame = value.to_frame()
+    elif isinstance(value, pd.DataFrame):
+        frame = value
+    else:
+        return None
+
+    ordered = frame
+    if sort is not None:
+        descending = sort["descending"]
+        if sort["kind"] == "index":
+            ordered = frame.sort_index(ascending=not descending, kind="mergesort")
+        else:
+            column_index = sort["columnIndex"]
+            if column_index >= frame.shape[1]:
+                raise ValueError("The selected sort column is no longer available.")
+            positions = (
+                frame.iloc[:, column_index]
+                .reset_index(drop=True)
+                .sort_values(
+                    ascending=not descending,
+                    kind="mergesort",
+                    na_position="last",
+                )
+                .index.tolist()
+            )
+            ordered = frame.iloc[positions]
+
+    row_count = ordered.shape[0]
+    resolved_offset = _resolved_table_offset(offset, row_count)
+    sliced = ordered.iloc[
+        resolved_offset : resolved_offset + TABLE_PREVIEW_MAX_ROWS,
+        :TABLE_PREVIEW_MAX_COLUMNS,
+    ]
+    return _pandas_table_payload(ordered, sliced), resolved_offset
+
+
+def _query_polars_table(
+    value: Any,
+    offset: int,
+    sort: dict[str, Any] | None,
+) -> tuple[dict[str, Any], int] | None:
+    try:
+        import polars as pl
+    except ImportError:
+        return None
+
+    if isinstance(value, pl.Series):
+        frame = value.to_frame()
+    elif isinstance(value, pl.DataFrame):
+        frame = value
+    else:
+        return None
+
+    source_row_name = "__nodebook_source_row__"
+    while source_row_name in frame.columns:
+        source_row_name += "_"
+    ordered = frame.with_row_index(source_row_name)
+    if sort is not None:
+        if sort["kind"] == "index":
+            sort_column = source_row_name
+        else:
+            column_index = sort["columnIndex"]
+            if column_index >= frame.shape[1]:
+                raise ValueError("The selected sort column is no longer available.")
+            sort_column = frame.columns[column_index]
+        ordered = ordered.sort(
+            sort_column,
+            descending=sort["descending"],
+            nulls_last=True,
+            maintain_order=True,
+        )
+
+    row_count, column_count = frame.shape
+    resolved_offset = _resolved_table_offset(offset, row_count)
+    page = ordered.slice(resolved_offset, TABLE_PREVIEW_MAX_ROWS)
+    columns = frame.columns[:TABLE_PREVIEW_MAX_COLUMNS]
+    data_page = page.select(columns) if columns else page.select([])
+    dtype_by_column = dict(zip(frame.columns, frame.dtypes))
+    rows = [[table_cell_preview(item) for item in row] for row in data_page.iter_rows()]
+    table = {
+        "columns": [
+            {
+                "name": truncate_utf8_text(
+                    str(column),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+                "dtype": truncate_utf8_text(
+                    str(dtype_by_column[column]),
+                    TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT,
+                ),
+            }
+            for column in columns
+        ],
+        "index": [table_cell_preview(item) for item in page.get_column(source_row_name).to_list()],
+        "indexLabel": "row",
+        "rows": rows,
+        "rowCount": row_count,
+        "columnCount": column_count,
+        "truncated": row_count > len(rows) or column_count > len(columns),
+    }
+    return table, resolved_offset
 
 
 def make_table_preview(value: Any) -> dict[str, Any] | None:

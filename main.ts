@@ -1,5 +1,9 @@
 import { Hono } from "@hono/hono";
-import type { ExecutionStreamEvent, ValidationIssue } from "./types.ts";
+import type {
+  ExecutionStreamEvent,
+  TableQueryRequest,
+  ValidationIssue,
+} from "./types.ts";
 import {
   decodeDocumentOperationsRequest,
   type NodebookDocumentV1,
@@ -13,6 +17,7 @@ import {
 import {
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
+  querySourceRuntimeTable,
   runSourceGraph,
   runSourceSingleNode,
   runSourceToNode,
@@ -235,6 +240,7 @@ function requiresAuthToken(method: string, pathname: string): boolean {
     "/run-node",
     "/run-to-node",
     "/run-graph",
+    "/results",
     "/runtime/python",
     "/runtime-session/clear-cache",
   ].some((apiPath) =>
@@ -998,9 +1004,121 @@ app.post("/run-graph", async (c) => {
   return c.json(result);
 });
 
+app.post("/results/table", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(
+      errorResponse({
+        kind: "invalid_json",
+        message: "Unable to parse the table query.",
+      }),
+      400,
+    );
+  }
+
+  const request = decodeTableQueryRequest(body);
+  if (!request) {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "The table query is invalid.",
+      }),
+      422,
+    );
+  }
+
+  try {
+    const status = await loadPythonDocumentStatusAfterPendingOperations(
+      activeDocumentPath,
+    );
+    if (status.sourceRevision !== request.documentRevision) {
+      return c.json({
+        ok: false,
+        error: {
+          kind: "stale_result",
+          message:
+            "These interactive results were produced by an older document. Run again to refresh them.",
+        },
+      }, 409);
+    }
+
+    const result = await querySourceRuntimeTable(request);
+    if (result.ok) return c.json(result);
+    if (result.error.kind === "stale_result") return c.json(result, 409);
+    if (result.error.kind === "missing_output") return c.json(result, 404);
+    return c.json(result, 422);
+  } catch (error) {
+    return c.json({
+      ok: false,
+      error: {
+        kind: "table_query_failed",
+        message: error instanceof Error
+          ? error.message
+          : "The interactive table query failed.",
+      },
+    }, 500);
+  }
+});
+
 app.post("/runtime-session/clear-cache", async (c) => {
   return c.json(await clearSourceRuntimeSessionCache());
 });
+
+function decodeTableQueryRequest(value: unknown): TableQueryRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  for (
+    const field of [
+      "runId",
+      "documentRevision",
+      "nodeId",
+      "outputName",
+    ]
+  ) {
+    if (typeof body[field] !== "string" || body[field] === "") return null;
+  }
+  if (
+    typeof body.offset !== "number" || !Number.isInteger(body.offset) ||
+    body.offset < 0
+  ) {
+    return null;
+  }
+  let sort: TableQueryRequest["sort"] = null;
+  if (body.sort !== null && body.sort !== undefined) {
+    if (
+      !body.sort || typeof body.sort !== "object" || Array.isArray(body.sort)
+    ) {
+      return null;
+    }
+    const candidate = body.sort as Record<string, unknown>;
+    if (typeof candidate.descending !== "boolean") return null;
+    if (candidate.kind === "index") {
+      sort = { kind: "index", descending: candidate.descending };
+    } else if (
+      candidate.kind === "column" &&
+      typeof candidate.columnIndex === "number" &&
+      Number.isInteger(candidate.columnIndex) && candidate.columnIndex >= 0
+    ) {
+      sort = {
+        kind: "column",
+        columnIndex: candidate.columnIndex,
+        descending: candidate.descending,
+      };
+    } else {
+      return null;
+    }
+  }
+  return {
+    runId: body.runId as string,
+    documentRevision: body.documentRevision as string,
+    nodeId: body.nodeId as string,
+    outputName: body.outputName as string,
+    offset: body.offset,
+    sort,
+  };
+}
 
 app.get("/assets/*", (c) => {
   const path = c.req.path.slice(1);

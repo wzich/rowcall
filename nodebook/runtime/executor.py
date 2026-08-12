@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import importlib
 import importlib.machinery
@@ -70,8 +71,10 @@ def execute_source(
     run_type: str | None = None,
     root_inputs: dict[str, Any] | None = None,
     on_node_event: NodeEventCallback | None = None,
+    capture_raw_outputs: bool = False,
 ) -> dict[str, Any]:
     path = Path(document_path).expanduser().resolve()
+    source_revision = hashlib.sha256(source.encode("utf-8")).hexdigest()
     response_run_type = run_type or ("run_to_node" if target else "run_graph")
     install_default_copy_handlers()
 
@@ -93,6 +96,7 @@ def execute_source(
                     "message": bound_diagnostic_text(str(exc)),
                     "pythonExecutable": sys.executable,
                 },
+                document_revision=source_revision,
             )
         parse_result = parse_source(source, path)
         if not parse_result.ok or parse_result.document is None:
@@ -109,6 +113,7 @@ def execute_source(
                     "message": "Document validation failed",
                     "issues": [issue.to_dict() for issue in parse_result.issues],
                 },
+                document_revision=source_revision,
             )
 
         document = parse_result.document
@@ -124,6 +129,7 @@ def execute_source(
                 results_by_node={},
                 trace=[] if trace else None,
                 error={"kind": "planning_error", "message": bound_diagnostic_text(str(exc))},
+                document_revision=document.revision,
             )
 
         return execute_plan(
@@ -134,6 +140,7 @@ def execute_source(
             run_type=run_type,
             root_inputs=root_inputs,
             on_node_event=on_node_event,
+            capture_raw_outputs=capture_raw_outputs,
         )
 
 
@@ -348,6 +355,7 @@ def execute_plan(
     run_type: str | None = None,
     root_inputs: dict[str, Any] | None = None,
     on_node_event: NodeEventCallback | None = None,
+    capture_raw_outputs: bool = False,
 ) -> dict[str, Any]:
     response_run_type = run_type or ("run_to_node" if target_node_id else "run_graph")
     nodes_by_id = {node.id: node for node in document.nodes}
@@ -375,6 +383,7 @@ def execute_plan(
             results_by_node={},
             trace=trace,
             error=error,
+            document_revision=document.revision,
         )
     globals_scope = globals_result["scope"]
 
@@ -463,9 +472,10 @@ def execute_plan(
             results_by_node=results_by_node,
             trace=trace,
             error=error,
+            document_revision=document.revision,
         )
 
-    return build_response(
+    response = build_response(
         ok=True,
         run_type=response_run_type,
         target_node_id=target_node_id,
@@ -474,7 +484,11 @@ def execute_plan(
         results_by_node=results_by_node,
         trace=trace,
         error=None,
+        document_revision=document.revision,
     )
+    if capture_raw_outputs:
+        response["_rawOutputsByNode"] = outputs_by_node
+    return response
 
 
 def build_document_globals(document: ExecutableDocument) -> dict[str, Any]:
@@ -815,6 +829,7 @@ def build_response(
     results_by_node: dict[str, dict[str, Any]],
     trace: list[dict[str, Any]] | None,
     error: dict[str, Any] | None,
+    document_revision: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ok": ok,
@@ -830,4 +845,5 @@ def build_response(
         },
         "trace": trace,
         "error": error,
+        **({"documentRevision": document_revision} if document_revision else {}),
     }

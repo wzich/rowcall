@@ -2,23 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from nodebook.document import ParseResult, apply_document_operations, load_document, parse_source
 
 from .executor import NodeEventCallback, build_plan, execute_source
+from .previews import query_table_preview, run_with_captured_stdio
 
 
 PROTOCOL_VERSION = 1
 
 
+@dataclass(frozen=True)
+class LatestResultStore:
+    run_id: str
+    document_revision: str
+    outputs_by_node: dict[str, dict[str, Any]]
+
+
 class RuntimeSession:
     """Stateful runtime boundary used by the NDJSON worker.
 
-    Execution is intentionally fresh and stateless. The class remains as the
-    worker protocol facade, but it does not retain node outputs between runs.
+    Execution is always fresh. The only retained state is the latest successful
+    UI run's declared outputs for bounded, provenance-checked inspection.
     """
+
+    def __init__(self) -> None:
+        self._latest_result_store: LatestResultStore | None = None
 
     def load_document(self, document_path: str | Path) -> dict[str, Any]:
         resolved_path = self._resolve_document_path(document_path)
@@ -123,13 +135,15 @@ class RuntimeSession:
         trace: bool = False,
         inputs: dict[str, Any] | None = None,
         on_node_event: NodeEventCallback | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
-        return execute_source(
+        return self._execute_and_publish(
             source,
-            self._resolve_document_path(document_path),
+            document_path,
             trace=trace,
-            root_inputs=inputs,
+            inputs=inputs,
             on_node_event=on_node_event,
+            run_id=run_id,
         )
 
     def run_to_node(
@@ -141,14 +155,16 @@ class RuntimeSession:
         trace: bool = False,
         inputs: dict[str, Any] | None = None,
         on_node_event: NodeEventCallback | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
-        return execute_source(
+        return self._execute_and_publish(
             source,
-            self._resolve_document_path(document_path),
+            document_path,
             target=target,
             trace=trace,
-            root_inputs=inputs,
+            inputs=inputs,
             on_node_event=on_node_event,
+            run_id=run_id,
         )
 
     def run_node(
@@ -160,19 +176,120 @@ class RuntimeSession:
         trace: bool = False,
         inputs: dict[str, Any] | None = None,
         on_node_event: NodeEventCallback | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
-        return execute_source(
+        return self._execute_and_publish(
+            source,
+            document_path,
+            target=target,
+            trace=trace,
+            run_type="run_node",
+            inputs=inputs,
+            on_node_event=on_node_event,
+            run_id=run_id,
+        )
+
+    def query_table(
+        self,
+        *,
+        run_id: str,
+        document_revision: str,
+        node_id: str,
+        output_name: str,
+        offset: int,
+        sort: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        store = self._latest_result_store
+        if (
+            store is None
+            or store.run_id != run_id
+            or store.document_revision != document_revision
+        ):
+            return self._table_query_error(
+                "stale_result",
+                "These interactive results are no longer available. Run again to refresh them.",
+            )
+        node_outputs = store.outputs_by_node.get(node_id)
+        if node_outputs is None or output_name not in node_outputs:
+            return self._table_query_error(
+                "missing_output",
+                "The selected output was not produced by the latest successful run.",
+            )
+        try:
+            (table, resolved_offset), _, _ = run_with_captured_stdio(
+                lambda: query_table_preview(
+                    node_outputs[output_name],
+                    offset=offset,
+                    sort=sort,
+                )
+            )
+        except ValueError as exc:
+            return self._table_query_error("invalid_table_query", str(exc))
+        except Exception as exc:
+            return self._table_query_error("table_query_failed", str(exc))
+        if table is None:
+            return self._table_query_error(
+                "unsupported_output",
+                "Interactive tables currently support Pandas and Polars DataFrames and Series.",
+            )
+        return {
+            "ok": True,
+            "runId": run_id,
+            "documentRevision": document_revision,
+            "nodeId": node_id,
+            "outputName": output_name,
+            "offset": resolved_offset,
+            "sort": sort,
+            "table": table,
+        }
+
+    def _execute_and_publish(
+        self,
+        source: str,
+        document_path: str | Path,
+        *,
+        target: str | None = None,
+        trace: bool = False,
+        run_type: str | None = None,
+        inputs: dict[str, Any] | None = None,
+        on_node_event: NodeEventCallback | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = execute_source(
             source,
             self._resolve_document_path(document_path),
             target=target,
             trace=trace,
-            run_type="run_node",
+            run_type=run_type,
             root_inputs=inputs,
             on_node_event=on_node_event,
+            capture_raw_outputs=run_id is not None,
         )
+        raw_outputs = result.pop("_rawOutputsByNode", None)
+        document_revision = result.get("documentRevision")
+        if (
+            result.get("ok")
+            and run_id is not None
+            and isinstance(document_revision, str)
+            and isinstance(raw_outputs, dict)
+        ):
+            self._latest_result_store = LatestResultStore(
+                run_id=run_id,
+                document_revision=document_revision,
+                outputs_by_node=raw_outputs,
+            )
+            result["resultStore"] = {
+                "runId": run_id,
+                "documentRevision": document_revision,
+            }
+        return result
+
+    @staticmethod
+    def _table_query_error(kind: str, message: str) -> dict[str, Any]:
+        return {"ok": False, "error": {"kind": kind, "message": message}}
 
     def clear_session_cache(self) -> dict[str, Any]:
-        """Compatibility response for pre-beta clients; no cache is retained."""
+        """Compatibility response; result inspection is not computation caching."""
         return {"ok": True, "clearedEntries": 0, "cachingDisabled": True}
 
     def _resolve_document_path(self, document_path: str | Path) -> Path:

@@ -45,6 +45,40 @@ export type TablePreview = {
   truncated: boolean;
 };
 
+export type ResultStoreIdentity = {
+  runId: string;
+  documentRevision: string;
+};
+
+export type TableSort =
+  | { kind: "index"; descending: boolean }
+  | { kind: "column"; columnIndex: number; descending: boolean };
+
+export type TableQueryRequest = ResultStoreIdentity & {
+  nodeId: string;
+  outputName: string;
+  offset: number;
+  sort: TableSort | null;
+};
+
+export type TableQueryResponse =
+  | (TableQueryRequest & {
+    ok: true;
+    table: TablePreview;
+  })
+  | {
+    ok: false;
+    error: {
+      kind:
+        | "stale_result"
+        | "missing_output"
+        | "unsupported_output"
+        | "invalid_table_query"
+        | "table_query_failed";
+      message: string;
+    };
+  };
+
 export type DisplayPreview = {
   value: ValuePreview;
 };
@@ -146,6 +180,8 @@ export type ExecutionResponse = {
   finalOutputsByNode: Record<string, Record<string, ValuePreview>>;
   trace: ExecutionStepTrace[] | null;
   error: ExecutionError | null;
+  documentRevision?: string;
+  resultStore?: ResultStoreIdentity;
 };
 
 export type ExecutionRunType = ExecutionResponse["runType"];

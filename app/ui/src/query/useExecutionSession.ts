@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
+  ResultStoreIdentity,
 } from "../../../../types.ts";
 import type {
   ExecutionDisplayState,
@@ -44,6 +45,17 @@ export function useExecutionSession(
   const activePlanNodeIdsRef = useRef<string[]>([]);
   const notificationIdRef = useRef(0);
   const notifiedResponseRef = useRef<ExecutionResponse | null>(null);
+  const executionStateByNodeIdRef = useRef(executionStateByNodeId);
+  executionStateByNodeIdRef.current = executionStateByNodeId;
+  const graphExecutionStateRef = useRef(graphExecutionState);
+  graphExecutionStateRef.current = graphExecutionState;
+  const preRunExecutionStateRef = useRef<
+    Record<string, ExecutionDisplayState>
+  >({});
+  const preRunGraphExecutionStateRef = useRef<
+    GraphExecutionDisplayState | null
+  >(null);
+  const latestResultStoreRef = useRef<ResultStoreIdentity | null>(null);
 
   function getCurrentSourceValue(): string {
     return options.getCurrentSourceValue?.() ?? selectedSourceValueRef.current;
@@ -175,10 +187,105 @@ export function useExecutionSession(
   ) {
     const completedNodeIds = new Set(nodeIds);
 
+    if (!response.ok) {
+      storeFailedExecutionResponse(response, completedNodeIds);
+      return;
+    }
+
+    const publishedResultStore = response.resultStore;
+    if (publishedResultStore) {
+      latestResultStoreRef.current = publishedResultStore;
+      setGraphExecutionState((current) =>
+        current?.status === "completed" && current.response.resultStore &&
+          !sameResultStore(current.response.resultStore, publishedResultStore)
+          ? { ...current, freshness: "replaced" }
+          : current
+      );
+    }
+
+    setExecutionStateByNodeId((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).map(([nodeId, state]) => [
+          nodeId,
+          state.status === "completed" && state.response.resultStore &&
+            publishedResultStore &&
+            !sameResultStore(state.response.resultStore, publishedResultStore)
+            ? { ...state, freshness: "replaced" as const }
+            : state,
+        ]),
+      );
+
+      for (const nodeId of completedNodeIds) {
+        next[nodeId] = {
+          status: "completed",
+          response,
+          freshness: "fresh",
+        };
+      }
+
+      return next;
+    });
+    setNodeRunStatuses((current) => {
+      const next = { ...current };
+
+      for (const nodeId of Object.keys(executionStateByNodeIdRef.current)) {
+        if (!completedNodeIds.has(nodeId)) {
+          next[nodeId] = "stale";
+        }
+      }
+
+      for (const nodeId of completedNodeIds) {
+        next[nodeId] = getNodeRunVisualStatusFromResponse(response, nodeId);
+      }
+
+      if (response.error?.nodeId) {
+        next[response.error.nodeId] = "failed";
+      }
+
+      return next;
+    });
+  }
+
+  function storeFailedExecutionResponse(
+    response: ExecutionResponse,
+    completedNodeIds: Set<string>,
+  ) {
+    const latestResultStore = latestResultStoreRef.current;
+    const canRestoreLatest = latestResultStore !== null &&
+      response.documentRevision === latestResultStore.documentRevision;
+    const prior = preRunExecutionStateRef.current;
+    const restoredEntries = canRestoreLatest
+      ? Object.entries(prior).filter(([, state]) =>
+        state.status === "completed" && state.response.resultStore &&
+        sameResultStore(state.response.resultStore, latestResultStore)
+      )
+      : [];
+    const restoredNodeIds = new Set(restoredEntries.map(([nodeId]) => nodeId));
+
+    if (canRestoreLatest) {
+      setGraphExecutionState((current) =>
+        current?.status === "completed" && current.response.resultStore &&
+          sameResultStore(current.response.resultStore, latestResultStore)
+          ? { ...current, freshness: "failed_run", latestFailure: response }
+          : current
+      );
+    }
+
     setExecutionStateByNodeId((current) => {
       const next = { ...current };
 
+      for (const [nodeId, state] of restoredEntries) {
+        if (state.status === "completed") {
+          next[nodeId] = {
+            ...state,
+            freshness: "failed_run",
+            latestFailure: response,
+          };
+        }
+      }
+
       for (const nodeId of completedNodeIds) {
+        if (restoredNodeIds.has(nodeId)) continue;
         const result = response.resultsByNode[nodeId];
         next[nodeId] = result && !result.ok
           ? {
@@ -189,6 +296,7 @@ export function useExecutionSession(
           : {
             status: "completed",
             response,
+            freshness: "fresh",
           };
       }
 
@@ -197,10 +305,14 @@ export function useExecutionSession(
     setNodeRunStatuses((current) => {
       const next = { ...current };
 
-      for (const nodeId of completedNodeIds) {
-        next[nodeId] = getNodeRunVisualStatusFromResponse(response, nodeId);
+      for (const nodeId of restoredNodeIds) {
+        next[nodeId] = response.error?.nodeId === nodeId ? "failed" : "stale";
       }
-
+      for (const nodeId of completedNodeIds) {
+        if (!restoredNodeIds.has(nodeId)) {
+          next[nodeId] = getNodeRunVisualStatusFromResponse(response, nodeId);
+        }
+      }
       if (response.error?.nodeId) {
         next[response.error.nodeId] = "failed";
       }
@@ -254,6 +366,8 @@ export function useExecutionSession(
         ),
       )
     );
+    preRunExecutionStateRef.current = executionStateByNodeIdRef.current;
+    preRunGraphExecutionStateRef.current = graphExecutionStateRef.current;
 
     const controller = new AbortController();
     activeRunAbortControllerRef.current = controller;
@@ -299,11 +413,20 @@ export function useExecutionSession(
       storeRunNotification(response);
       return;
     }
-    setGraphExecutionState({
-      status: "completed",
-      response,
-      freshness: "fresh",
-    });
+    const latestResultStore = latestResultStoreRef.current;
+    const prior = preRunGraphExecutionStateRef.current;
+    setGraphExecutionState(
+      !response.ok && latestResultStore &&
+        response.documentRevision === latestResultStore.documentRevision &&
+        prior?.status === "completed" && prior.response.resultStore &&
+        sameResultStore(prior.response.resultStore, latestResultStore)
+        ? { ...prior, freshness: "failed_run", latestFailure: response }
+        : {
+          status: "completed",
+          response,
+          freshness: "fresh",
+        },
+    );
     storeRunNotification(response);
   }
 
@@ -340,6 +463,7 @@ export function useExecutionSession(
     setNodeRunStatuses({});
     setRunNotification(null);
     notifiedResponseRef.current = null;
+    latestResultStoreRef.current = null;
   }
 
   function prepareForDocumentEdit() {
@@ -351,6 +475,7 @@ export function useExecutionSession(
     resetUnfinishedRunStatuses();
     setRunNotification(null);
     notifiedResponseRef.current = null;
+    latestResultStoreRef.current = null;
   }
 
   function markNodesStale(nodeIds: Iterable<string>) {
@@ -413,4 +538,12 @@ export function useExecutionSession(
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
   };
+}
+
+function sameResultStore(
+  left: ResultStoreIdentity,
+  right: ResultStoreIdentity,
+): boolean {
+  return left.runId === right.runId &&
+    left.documentRevision === right.documentRevision;
 }

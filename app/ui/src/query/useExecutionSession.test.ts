@@ -62,10 +62,33 @@ Deno.test("graph edits preserve completed graph results as stale", () => {
 
   assertEquals(preserveGraphExecutionStateForEdit(current), {
     ...current,
-    freshness: "stale",
+    freshness: "document_changed",
   });
   assertEquals(
     preserveGraphExecutionStateForEdit({ status: "running" }),
     null,
   );
+});
+
+Deno.test("document edits mark completed node results stale", () => {
+  const response: ExecutionResponse = {
+    ok: true,
+    runType: "run_to_node",
+    targetNodeId: "target",
+    finalNodeIds: ["target"],
+    executedNodeIds: ["target"],
+    resultsByNode: {},
+    finalOutputsByNode: {},
+    trace: null,
+    error: null,
+  };
+  const current: ExecutionDisplayState = {
+    status: "completed",
+    response,
+    freshness: "fresh",
+  };
+
+  assertEquals(preserveCompletedExecutionStatesForEdit({ target: current }), {
+    target: { ...current, freshness: "document_changed" },
+  });
 });

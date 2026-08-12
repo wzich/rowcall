@@ -28,6 +28,7 @@ Deno.test("Python worker protocol declares document and run operations", () => {
     "run_graph",
     "run_to_node",
     "run_node",
+    "query_table",
     "load_document",
     "apply_operations",
     "clear_session_cache",
