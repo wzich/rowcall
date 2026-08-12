@@ -81,6 +81,9 @@ type LauncherInvocation = {
 };
 
 const bundledSourceRoot = new URL(".", import.meta.url);
+// Increment when bundled runtime dependencies must refresh independently of
+// the public Nodebook version.
+export const managedEnvironmentRevision = 1;
 const sourceModePermissionArgs = [
   "--allow-read",
   "--allow-write",
@@ -217,10 +220,12 @@ Working with coding agents:
   with nodebook new or nodebook example include a short project-specific
   AGENTS.md.
 
-Opening a document creates or reuses its project .venv by default. Pass
---python to use a specific interpreter or --managed-env to use Nodebook's
-shared starter environment. Headless run and validate commands use your active
-Python environment by default.
+Open and run prefer an existing project .venv, then an active virtualenv or
+Conda environment. If neither exists, they create a project .venv and install
+its requirements.txt once. Validate uses the same existing-environment order
+but never creates an environment or installs packages. Pass --python to use a
+specific interpreter or --managed-env to use Nodebook's shared starter
+environment.
 `;
 
 const formatHelpText = `Nodebook Python Document Format
@@ -271,6 +276,9 @@ const runHelpText = `Usage:
   nodebook run <folder-or-document.py> [--to <node-id-or-function-name>] --outputs-only [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder.
+Run prefers a compatible project .venv, then an active virtualenv or Conda
+environment. If neither exists, it creates .venv and installs requirements.txt
+once. Existing environments are never modified automatically.
 
 Examples:
   nodebook run my-work
@@ -285,6 +293,8 @@ const validateHelpText = `Usage:
 
 Folders resolve to graph.py inside the folder.
 See nodebook help format for the required node and return structure.
+Validate prefers an existing project .venv, then an active environment, then
+system Python. It never creates .venv or installs requirements.txt.
 
 Examples:
   nodebook validate my-work
@@ -297,8 +307,8 @@ const newHelpText = `Usage:
 If the path ends with .py, Nodebook creates that file. Otherwise Nodebook
 creates graph.py, .gitignore, AGENTS.md, and requirements.txt inside the folder
 path. Existing .gitignore, AGENTS.md, and requirements.txt files are preserved.
-Opening without an explicit Python interpreter creates or reuses the project's
-.venv.
+Opening prefers an existing project .venv, then an active environment. If
+neither exists, it creates the project's .venv and installs requirements.txt.
 
 Examples:
   nodebook new my-work
@@ -311,6 +321,8 @@ const openHelpText = `Usage:
   nodebook open <folder-or-document.py> [--no-open] [--port <port>] [--hostname <host>] [--python <path>] [--managed-env]
 
 Folders resolve to graph.py inside the folder. The path must already exist.
+Open prefers an existing project .venv, then an active environment. If neither
+exists, it creates the project's .venv and installs requirements.txt once.
 
 Examples:
   nodebook open my-work
@@ -583,17 +595,44 @@ export async function runBetaCommand(
     }
     case "headless": {
       await appendLog(paths, `nodebook ${command.kind}`);
-      const runtime = await resolveRuntimeSelection(paths, {
-        mode: command.managedEnv ? "managed" : "user",
-        pythonCommand: command.pythonCommand,
-      });
-      const status = await runChild(runtime.pythonCommand, [
-        "-m",
-        "nodebook",
+      const preflight = preflightHeadlessCommand(
         command.cliCommand,
-        ...command.args,
-      ], runtime.mode === "user" ? pythonRuntimeEnv(paths) : undefined);
-      return { code: status.code };
+        command.args,
+      );
+      const documentPath = preflight.documentInput
+        ? await resolveExistingDocumentPath(preflight.documentInput).catch(() =>
+          null
+        )
+        : null;
+      try {
+        let runtime: RuntimeSelection & { pythonCommand: string };
+        if (!preflight.allowsEnvironmentSetup || !documentPath) {
+          runtime = await resolveRuntimeSelection(paths, {
+            mode: "user",
+            pythonCommand: command.pythonCommand,
+          });
+        } else if (command.managedEnv || command.pythonCommand) {
+          runtime = await resolveRuntimeSelection(paths, {
+            mode: command.managedEnv ? "managed" : "user",
+            pythonCommand: command.pythonCommand,
+          });
+        } else {
+          runtime = await resolveDocumentRuntime(paths, documentPath, {
+            bootstrap: command.cliCommand === "run",
+          });
+        }
+        const status = await runChild(runtime.pythonCommand, [
+          "-m",
+          "nodebook",
+          command.cliCommand,
+          ...command.args,
+        ], runtime.mode === "user" ? pythonRuntimeEnv(paths) : undefined);
+        return { code: status.code };
+      } catch (error) {
+        if (!preflight.machineReadable) throw error;
+        printHeadlessEnvironmentError(command, preflight.documentInput, error);
+        return { code: 1 };
+      }
     }
     case "launch": {
       await appendLog(paths, `nodebook ${command.kind}`);
@@ -809,9 +848,11 @@ export async function ensureManagedEnvironment(
   await Deno.mkdir(paths.logsDir, { recursive: true });
   const venvPython = getVenvPythonPath(paths.venvDir);
   if (await commandWorks(venvPython, ["--version"])) {
-    if (await managedEnvironmentVersion(paths) !== nodebookVersion) {
+    if (
+      await readManagedEnvironmentStamp(paths) !== managedEnvironmentStamp()
+    ) {
       await installBundledPythonRuntime(paths, venvPython);
-      await writeManagedEnvironmentVersion(paths);
+      await writeManagedEnvironmentStamp(paths);
     }
     return venvPython;
   }
@@ -819,7 +860,7 @@ export async function ensureManagedEnvironment(
   const basePython = pythonOverride ?? await findCompatiblePython();
   await runChecked(basePython, ["-m", "venv", paths.venvDir]);
   await installBundledPythonRuntime(paths, venvPython);
-  await writeManagedEnvironmentVersion(paths);
+  await writeManagedEnvironmentStamp(paths);
   return venvPython;
 }
 
@@ -872,10 +913,64 @@ async function resolveLaunchRuntime(
     });
   }
 
+  return await resolveDocumentRuntime(paths, documentPath, {
+    bootstrap: true,
+  });
+}
+
+async function resolveDocumentRuntime(
+  paths: BetaPaths,
+  documentPath: string,
+  options: { bootstrap: boolean },
+): Promise<RuntimeSelection & { pythonCommand: string }> {
   return await resolveRuntimeSelection(paths, {
     mode: "user",
-    pythonCommand: await ensureProjectEnvironment(documentPath),
+    pythonCommand: await resolveProjectPython(documentPath, options),
   });
+}
+
+export async function resolveProjectPython(
+  documentPath: string,
+  options: { bootstrap: boolean },
+): Promise<string> {
+  const projectDirectory = getParentDirectory(documentPath) ?? ".";
+  const venvDirectory = `${projectDirectory}/.venv`;
+  const venvPython = getVenvPythonPath(venvDirectory);
+  if (await isCompatiblePython(venvPython)) {
+    if (options.bootstrap) {
+      await completeProjectEnvironmentSetup(
+        projectDirectory,
+        venvDirectory,
+      );
+    }
+    reportEnvironment(`Using project Python environment: ${venvPython}`);
+    return venvPython;
+  }
+
+  if (await pathExists(venvDirectory)) {
+    if (
+      options.bootstrap &&
+      (await readOptionalTextFile(projectEnvironmentSetupPath(venvDirectory)))
+          ?.trim() === "creating"
+    ) {
+      return await ensureProjectEnvironment(documentPath);
+    }
+    throw brokenProjectEnvironmentError(venvDirectory);
+  }
+
+  const activePython = await findCompatibleActivePython();
+  if (activePython) {
+    reportEnvironment(`Using active Python environment: ${activePython}`);
+    return activePython;
+  }
+
+  if (options.bootstrap) {
+    return await ensureProjectEnvironment(documentPath);
+  }
+
+  const systemPython = await findCompatiblePython();
+  reportEnvironment(`Using Python for validation: ${systemPython}`);
+  return systemPython;
 }
 
 export async function ensureProjectEnvironment(
@@ -884,28 +979,121 @@ export async function ensureProjectEnvironment(
   const projectDirectory = getParentDirectory(documentPath) ?? ".";
   const venvDirectory = `${projectDirectory}/.venv`;
   const venvPython = getVenvPythonPath(venvDirectory);
+  const setupPath = projectEnvironmentSetupPath(venvDirectory);
   if (await isCompatiblePython(venvPython)) {
-    console.info(`Using project Python environment: ${venvPython}`);
+    await completeProjectEnvironmentSetup(
+      projectDirectory,
+      venvDirectory,
+    );
+    reportEnvironment(`Using project Python environment: ${venvPython}`);
     return venvPython;
   }
 
   if (await pathExists(venvDirectory)) {
-    throw new Error(
-      `Project environment exists but does not contain Python 3.10 or newer: ${venvDirectory}\n\n` +
-        `Remove or repair it, or pass --python /path/to/python.`,
-    );
+    const setupState = await readOptionalTextFile(setupPath);
+    if (setupState?.trim() !== "creating") {
+      throw brokenProjectEnvironmentError(venvDirectory);
+    }
+  } else {
+    await Deno.mkdir(venvDirectory);
+    await Deno.writeTextFile(setupPath, "creating\n");
   }
 
-  const basePython = await findCompatibleUserPython();
-  console.info(`Creating project Python environment: ${venvDirectory}`);
-  await runChecked(basePython, ["-m", "venv", venvDirectory]);
-  if (!await isCompatiblePython(venvPython)) {
+  await completeProjectEnvironmentSetup(
+    projectDirectory,
+    venvDirectory,
+  );
+  reportEnvironment(`Using project Python environment: ${venvPython}`);
+  return venvPython;
+}
+
+async function completeProjectEnvironmentSetup(
+  projectDirectory: string,
+  venvDirectory: string,
+): Promise<void> {
+  const setupPath = projectEnvironmentSetupPath(venvDirectory);
+  const setupState = await readOptionalTextFile(setupPath);
+  if (setupState === null || setupState.trim() === "complete") return;
+  if (setupState.trim() === "creating") {
+    await finishProjectEnvironmentCreation(venvDirectory);
+    await Deno.writeTextFile(setupPath, "incomplete\n");
+  }
+
+  const requirementsPath = `${projectDirectory}/requirements.txt`;
+  if (await pathExists(requirementsPath)) {
+    const absoluteProjectDirectory = await Deno.realPath(projectDirectory);
+    const absoluteRequirementsPath = await Deno.realPath(requirementsPath);
+    const absoluteVenvDirectory = await Deno.realPath(venvDirectory);
+    const absoluteVenvPython = getVenvPythonPath(absoluteVenvDirectory);
+    reportEnvironment(
+      `Installing project dependencies from ${absoluteRequirementsPath} (one-time setup; this may take a minute)...`,
+    );
+    try {
+      await runChecked(absoluteVenvPython, [
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        absoluteRequirementsPath,
+      ], { cwd: absoluteProjectDirectory });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Could not install project dependencies from ${absoluteRequirementsPath}.\n` +
+          `Nodebook will retry this one-time setup on the next open or run.\n\n${detail}`,
+      );
+    }
+  }
+
+  await Deno.writeTextFile(setupPath, "complete\n");
+  reportEnvironment("Project Python environment is ready.");
+}
+
+async function finishProjectEnvironmentCreation(
+  venvDirectory: string,
+): Promise<void> {
+  const basePython = await findCompatiblePython();
+  reportEnvironment(`Creating project Python environment: ${venvDirectory}`);
+  try {
+    await runChecked(basePython, ["-m", "venv", venvDirectory]);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Created project environment could not run Python 3.10 or newer: ${venvDirectory}`,
+      `Could not finish creating the project environment: ${venvDirectory}\n` +
+        `Nodebook will retry creation on the next open or run.\n\n${detail}`,
     );
   }
-  console.info(`Using project Python environment: ${venvPython}`);
-  return venvPython;
+  const venvPython = getVenvPythonPath(venvDirectory);
+  if (!await isCompatiblePython(venvPython)) {
+    throw new Error(
+      `Created project environment could not run Python 3.10 or newer: ${venvDirectory}\n` +
+        "Nodebook will retry creation on the next open or run.",
+    );
+  }
+}
+
+function projectEnvironmentSetupPath(venvDirectory: string): string {
+  return `${venvDirectory}/.nodebook-setup`;
+}
+
+async function readOptionalTextFile(path: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(path);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+}
+
+function brokenProjectEnvironmentError(venvDirectory: string): Error {
+  return new Error(
+    `Project environment exists but does not contain Python 3.10 or newer: ${venvDirectory}\n\n` +
+      `Remove or repair it, or pass --python /path/to/python.`,
+  );
+}
+
+function reportEnvironment(message: string): void {
+  console.error(message);
 }
 
 export async function resetManagedEnvironment(paths: BetaPaths): Promise<void> {
@@ -942,11 +1130,11 @@ async function installBundledPythonRuntime(
   }
 }
 
-async function managedEnvironmentVersion(
+async function readManagedEnvironmentStamp(
   paths: BetaPaths,
 ): Promise<string | null> {
   try {
-    return (await Deno.readTextFile(managedEnvironmentVersionPath(paths)))
+    return (await Deno.readTextFile(managedEnvironmentStampPath(paths)))
       .trim();
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return null;
@@ -954,14 +1142,18 @@ async function managedEnvironmentVersion(
   }
 }
 
-async function writeManagedEnvironmentVersion(paths: BetaPaths): Promise<void> {
+async function writeManagedEnvironmentStamp(paths: BetaPaths): Promise<void> {
   await Deno.writeTextFile(
-    managedEnvironmentVersionPath(paths),
-    `${nodebookVersion}\n`,
+    managedEnvironmentStampPath(paths),
+    `${managedEnvironmentStamp()}\n`,
   );
 }
 
-function managedEnvironmentVersionPath(paths: BetaPaths): string {
+function managedEnvironmentStamp(): string {
+  return `${nodebookVersion}:${managedEnvironmentRevision}`;
+}
+
+function managedEnvironmentStampPath(paths: BetaPaths): string {
   return `${paths.venvDir}/.nodebook-version`;
 }
 
@@ -999,7 +1191,10 @@ type DoctorReport = {
       command?: string;
       error?: string;
     };
-    imports: Record<"nodebook" | "pandas" | "polars", DoctorCheckStatus>;
+    imports: Record<
+      "nodebook" | "pandas" | "polars" | "matplotlib",
+      DoctorCheckStatus
+    >;
   };
   updateCheck: "not_requested" | "not_implemented";
 };
@@ -1039,6 +1234,11 @@ export async function buildDoctorReport(
     nodebook: await inspectPythonImport(pythonCommand, "nodebook", runtimeEnv),
     pandas: await inspectPythonImport(pythonCommand, "pandas", runtimeEnv),
     polars: await inspectPythonImport(pythonCommand, "polars", runtimeEnv),
+    matplotlib: await inspectPythonImport(
+      pythonCommand,
+      "matplotlib",
+      runtimeEnv,
+    ),
   };
 
   return {
@@ -1108,6 +1308,7 @@ async function printDoctor(
   console.info(`nodebook package: ${report.runtime.imports.nodebook}`);
   console.info(`pandas: ${report.runtime.imports.pandas}`);
   console.info(`polars: ${report.runtime.imports.polars}`);
+  console.info(`matplotlib: ${report.runtime.imports.matplotlib}`);
   if (command.checkUpdates) {
     console.info("Update checks are not implemented yet.");
   }
@@ -1257,6 +1458,101 @@ function stripGlobalRuntimeOptions(args: string[]): {
   };
 }
 
+export function preflightHeadlessCommand(
+  cliCommand: "run" | "validate",
+  args: string[],
+): {
+  documentInput?: string;
+  allowsEnvironmentSetup: boolean;
+  machineReadable: boolean;
+} {
+  const positionals: string[] = [];
+  let valid = true;
+  let jsonMode: "none" | "full" | "summary" = "none";
+  let traceMode: "none" | "full" | "summary" = "none";
+  let outputsOnly = false;
+  let hasTarget = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      jsonMode = "full";
+    } else if (arg.startsWith("--json=")) {
+      const value = arg.slice("--json=".length);
+      if (value === "full" || value === "summary") {
+        jsonMode = value;
+      } else {
+        valid = false;
+      }
+    } else if (arg === "--trace") {
+      traceMode = "full";
+    } else if (arg.startsWith("--trace=")) {
+      const value = arg.slice("--trace=".length);
+      if (value === "full" || value === "summary") {
+        traceMode = value;
+      } else {
+        valid = false;
+      }
+    } else if (arg === "--outputs-only") {
+      outputsOnly = true;
+    } else if (arg === "--to") {
+      if (!args[index + 1] || args[index + 1].startsWith("-")) {
+        valid = false;
+      } else {
+        hasTarget = true;
+        index += 1;
+      }
+    } else if (arg.startsWith("--to=")) {
+      if (arg.length === "--to=".length) {
+        valid = false;
+      } else {
+        hasTarget = true;
+      }
+    } else if (arg.startsWith("-")) {
+      valid = false;
+    } else {
+      positionals.push(arg);
+    }
+  }
+
+  valid = valid && positionals.length === 1;
+  if (cliCommand === "validate" && hasTarget) valid = false;
+  if (cliCommand === "validate" && traceMode !== "none") valid = false;
+  if (cliCommand === "validate" && outputsOnly) valid = false;
+  if (outputsOnly && jsonMode === "summary") valid = false;
+  if (outputsOnly && traceMode !== "none") valid = false;
+  if (traceMode === "summary" && jsonMode === "none") valid = false;
+
+  return {
+    ...(positionals.length === 1 ? { documentInput: positionals[0] } : {}),
+    allowsEnvironmentSetup: valid,
+    machineReadable: args.some((arg) =>
+      arg === "--outputs-only" ||
+      arg === "--json" ||
+      arg.startsWith("--json=")
+    ),
+  };
+}
+
+function printHeadlessEnvironmentError(
+  command: Extract<BetaCommand, { kind: "headless" }>,
+  documentInput: string | undefined,
+  error: unknown,
+): void {
+  console.info(JSON.stringify(
+    {
+      ok: false,
+      command: command.cliCommand,
+      documentPath: documentInput ?? null,
+      error: {
+        kind: "environment_error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    },
+    null,
+    2,
+  ));
+}
+
 function rejectPythonWithManagedEnv(
   pythonCommand: unknown,
   managedEnv: unknown,
@@ -1293,20 +1589,23 @@ async function findCompatiblePython(): Promise<string> {
 }
 
 async function findCompatibleUserPython(): Promise<string> {
-  for (
-    const command of [
-      ...getActiveEnvironmentPythonCandidates(),
-      "python3",
-      "python",
-    ]
-  ) {
-    if (await isCompatiblePython(command)) {
-      return command;
-    }
+  const activePython = await findCompatibleActivePython();
+  if (activePython) return activePython;
+  try {
+    return await findCompatiblePython();
+  } catch {
+    // Use the user-facing message below, which includes the launcher escapes.
   }
   throw new Error(
     "Could not find Python 3.10 or newer. Pass --managed-env to use Nodebook's starter environment, or pass --python /path/to/python.",
   );
+}
+
+async function findCompatibleActivePython(): Promise<string | undefined> {
+  for (const command of getActiveEnvironmentPythonCandidates()) {
+    if (await isCompatiblePython(command)) return command;
+  }
+  return undefined;
 }
 
 async function isCompatiblePython(command: string): Promise<boolean> {
@@ -1344,28 +1643,39 @@ function pythonRuntimeEnv(paths: BetaPaths): Record<string, string> {
   };
 }
 
-async function runChecked(command: string, args: string[]): Promise<void> {
-  const output = await new Deno.Command(command, {
+async function runChecked(
+  command: string,
+  args: string[],
+  options: { cwd?: string } = {},
+): Promise<void> {
+  const child = new Deno.Command(command, {
     args,
     stdout: "piped",
     stderr: "piped",
-  }).output();
-  await forwardSetupOutput(output);
-  if (!output.success) {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+  }).spawn();
+  const outputDone = Promise.all([
+    forwardProcessOutput(child.stdout, Deno.stderr),
+    forwardProcessOutput(child.stderr, Deno.stderr),
+  ]);
+  const status = await child.status;
+  await outputDone;
+  if (!status.success) {
     throw new Error(
-      `${command} ${args.join(" ")} failed with exit code ${output.code}`,
+      `${command} ${args.join(" ")} failed with exit code ${status.code}`,
     );
   }
 }
 
-async function forwardSetupOutput(output: Deno.CommandOutput): Promise<void> {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const text = `${decoder.decode(output.stdout)}${
-    decoder.decode(output.stderr)
-  }`;
-  if (text.length > 0) {
-    await Deno.stderr.write(encoder.encode(text));
+async function forwardProcessOutput(
+  stream: ReadableStream<Uint8Array>,
+  output: { write(chunk: Uint8Array): Promise<number> },
+): Promise<void> {
+  const reader = stream.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    await output.write(value);
   }
 }
 

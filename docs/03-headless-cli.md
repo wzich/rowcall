@@ -2,8 +2,11 @@
 
 Nodebook documents can be validated and run without opening the canvas editor.
 The `nodebook` launcher is the beta automation surface for humans, agents, and
-scripts. By default, it routes headless commands through your active Python
-environment; pass `--managed-env` to use Nodebook's starter environment under
+scripts. `run` prefers an existing project `.venv`, then an active virtualenv or
+Conda environment; if none exists, it creates the project environment and
+installs `requirements.txt` once. `validate` uses the same existing-environment
+order but never creates an environment or installs packages. Pass
+`--managed-env` to use Nodebook's starter environment under
 `~/.nodebook/venvs/default`.
 
 The Python module CLI remains the underlying runtime contract for headless
@@ -20,16 +23,18 @@ nodebook new path/to/project
 
 This creates `path/to/project/graph.py`, `.gitignore`, `AGENTS.md`, and
 `requirements.txt`. The agent instructions describe the edit/validate/run
-workflow, while the requirements file lists the starter data packages without
-installing them. To create and immediately open the canvas editor, pass
+workflow, while the requirements file lists the starter data packages. `new`
+does not install them. To create and immediately open the canvas editor, pass
 `--open`:
 
 ```sh
 nodebook new path/to/project --open
 ```
 
-Opening creates or reuses `path/to/project/.venv` by default. To use a specific
-interpreter directly instead:
+Opening uses `path/to/project/.venv` when it exists, otherwise an active
+environment when available. With neither, it creates the project `.venv` and
+installs `requirements.txt` once. To use a specific interpreter directly
+instead:
 
 ```sh
 nodebook new path/to/project --open --python /path/to/python
@@ -156,8 +161,11 @@ between nodes.
   failed.
 - `2`: CLI usage failed before document validation or execution.
 
-When `--json` is set, failures still print structured JSON before exiting
-nonzero.
+When `--json`, `--json=summary`, or `--outputs-only` is set, failures still
+print structured JSON before exiting nonzero. Launcher-level Python selection,
+environment creation, and dependency installation failures use an
+`environment_error` object in the same top-level envelope; setup progress and
+package-manager diagnostics remain on stderr.
 
 ## Inputs
 
@@ -171,9 +179,24 @@ document remains the complete source of truth for a run.
 
 ## Python Environment Troubleshooting
 
-The beta launcher opens documents with a project-local `.venv` by default.
-Headless `run` and `validate` commands continue to use the active Python
-environment. Pass a specific interpreter to override either behavior:
+The beta launcher uses this order for `open` and `run`:
+
+1. Explicit `--python`.
+2. A compatible project `.venv`.
+3. A compatible active `VIRTUAL_ENV`.
+4. A compatible active `CONDA_PREFIX`.
+5. A new project `.venv` created with compatible `python3` or `python`.
+
+Only a project environment created by Nodebook receives the current
+`requirements.txt`, once. Existing project and active environments are never
+auto-installed into. If first-time installation fails or is interrupted,
+Nodebook preserves the environment and retries setup on the next `open` or
+`run`. Share `requirements.txt`, not `.venv`; virtual environments contain
+machine-specific paths and the generated `.gitignore` excludes them.
+
+`validate` stops before the creation step and falls back to compatible system
+Python instead. It never creates `.venv` or installs packages. Pass a specific
+interpreter to override automatic selection:
 
 ```sh
 nodebook run --python "$CONDA_PREFIX/bin/python" my-work --json
@@ -200,10 +223,10 @@ then `python` and requires Python 3.10 or newer.
 
 Use `nodebook doctor` to inspect the selected user Python runtime. Use
 `nodebook doctor --managed-env` to inspect the managed venv, installed package
-status, pandas/polars availability, and log path. Doctor is read-only and does
-not materialize launcher assets, create environments, or append to the log. Pass
-`--json` for a structured report; checks that cannot run are reported as
-`not_checked` rather than as missing packages.
+status, pandas/polars/matplotlib availability, and log path. Doctor is read-only
+and does not materialize launcher assets, create environments, or append to the
+log. Pass `--json` for a structured report; checks that cannot run are reported
+as `not_checked` rather than as missing packages.
 
 The lower-level Python module CLI runs with the interpreter used to launch it.
 It does not auto-detect Conda, virtualenv, or other interpreters.

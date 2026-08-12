@@ -8,9 +8,10 @@ editing and managing those documents.
 ## Beta Tester Start
 
 Beta testers will install a single `nodebook` launcher. Python 3.10 or newer
-must already be installed. Opening a document creates or reuses a project-local
-`.venv` by default and temporarily adds Nodebook's own runtime package to the
-Nodebook process.
+must already be installed. Opening or running a document prefers its
+project-local `.venv`, then an active virtualenv or Conda environment. If
+neither exists, Nodebook creates `.venv`, installs the project requirements
+once, and temporarily adds Nodebook's own runtime package to the process.
 
 This is an invited beta, not a hardened public release. The macOS launcher is
 currently unsigned and not notarized, and Nodebook executes Python with the
@@ -77,11 +78,13 @@ my-work/
 ```
 
 `AGENTS.md` gives coding agents a short project-specific workflow.
-`requirements.txt` lists the starter data packages without installing them;
-environment setup remains separate.
+`requirements.txt` lists the starter data packages. The `new` command does not
+install them; the first `open` or `run` that creates a project environment does.
 
-Opening also creates `my-work/.venv` when the project does not already have one.
-To create and open with a specific interpreter instead, run:
+Opening uses `my-work/.venv` when it exists. Without one, Nodebook uses a
+compatible active environment if available, or creates `my-work/.venv` and
+installs `requirements.txt` once. To create and open with a specific interpreter
+instead, run:
 
 ```sh
 nodebook new my-work --open --python /path/to/python
@@ -107,9 +110,16 @@ only.
 
 ### Python Environments
 
-Opening a document creates or reuses `.venv` beside the document by default.
-Pass a specific interpreter to use it directly without creating the project
-environment:
+Opening and running use this interpreter order: explicit `--python`, an existing
+`.venv` beside the document, an active virtualenv, an active Conda environment,
+then a newly created project `.venv`. Nodebook installs `requirements.txt` only
+when it creates the project environment; it never auto-installs into an existing
+or active environment.
+
+Share `requirements.txt`, not `.venv`; virtual environments contain
+machine-specific paths and the generated `.gitignore` excludes them.
+
+Pass a specific interpreter to override automatic selection:
 
 ```sh
 nodebook open --python "$CONDA_PREFIX/bin/python" my-work
@@ -136,7 +146,7 @@ The beta launcher stores its managed files under:
 On first managed-env use, or after `nodebook reset-env`, the launcher uses
 `python3` then `python` to find Python 3.10 or newer, creates the managed venv,
 installs the bundled `nodebook` Python package, and installs
-`requirements-alpha.txt` dependencies such as pandas and polars.
+`requirements-alpha.txt` dependencies: pandas, polars, and matplotlib.
 
 Inspect the default user Python runtime:
 
@@ -180,7 +190,10 @@ previews:
 nodebook run my-work --json --trace
 ```
 
-The launcher delegates headless commands to the selected Python runtime. During
+The launcher delegates headless commands to the selected Python runtime. `run`
+uses the same environment policy as `open`. `validate` prefers an explicit
+interpreter, existing project `.venv`, or active environment, then falls back to
+system Python; it never creates `.venv` or installs packages. During
 development, `uv run nodebook`, `python3 -m nodebook`, and `deno task cli` are
 still useful local wrappers. Opening commands invoked through the Python CLI
 delegate to the full launcher in the source checkout or installed on `PATH`:
