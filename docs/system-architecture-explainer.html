@@ -1,0 +1,2055 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <link rel="icon" href="data:,">
+    <title>How Rowcall Works — System Architecture</title>
+    <style>
+    :root {
+      --paper: #f3f0e7;
+      --panel: #fffdf8;
+      --panel-2: #f8f8f3;
+      --ink: #152c2f;
+      --muted: #576b6d;
+      --faint: #718082;
+      --line: #d5d8d0;
+      --line-strong: #b8c1ba;
+      --teal: #087b73;
+      --teal-dark: #075d58;
+      --teal-wash: #e2f2ed;
+      --blue: #365f88;
+      --blue-wash: #e7eef6;
+      --amber: #a96216;
+      --amber-wash: #fff0d8;
+      --violet: #675487;
+      --violet-wash: #eee9f6;
+      --red: #a7443b;
+      --red-wash: #fae9e6;
+      --shadow: 0 22px 55px rgb(22 42 44 / 0.09);
+      --radius: 18px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+    html {
+      scroll-behavior: smooth;
+    }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 4% 0%, rgb(8 123 115 / 0.09), transparent 30rem),
+        linear-gradient(rgb(21 44 47 / 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(21 44 47 / 0.025) 1px, transparent 1px),
+        var(--paper);
+      background-size: auto, 28px 28px, 28px 28px, auto;
+      font-family: var(--sans);
+      line-height: 1.58;
+    }
+
+    a {
+      color: var(--teal-dark);
+      text-underline-offset: 3px;
+    }
+    a:hover {
+      color: var(--teal);
+    }
+    button,
+    summary {
+      font: inherit;
+    }
+    code,
+    pre {
+      font-family: var(--mono);
+    }
+    code {
+      overflow-wrap: anywhere;
+    }
+    p {
+      margin: 0;
+    }
+    p + p {
+      margin-top: 12px;
+    }
+    ul,
+    ol {
+      margin: 11px 0 0;
+      padding-left: 1.22rem;
+    }
+    li + li {
+      margin-top: 7px;
+    }
+    h1,
+    h2,
+    h3,
+    h4 {
+      text-wrap: balance;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 100;
+      top: 8px;
+      left: 8px;
+      transform: translateY(-160%);
+      border-radius: 9px;
+      background: var(--ink);
+      color: white;
+      padding: 9px 12px;
+    }
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .topbar {
+      position: sticky;
+      z-index: 30;
+      top: 0;
+      border-bottom: 1px solid rgb(184 193 186 / 0.82);
+      background: rgb(243 240 231 / 0.92);
+      backdrop-filter: blur(18px);
+    }
+    .topbar-inner {
+      width: min(1200px, calc(100% - 32px));
+      min-height: 60px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .brand {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 0.84rem;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 29px;
+      height: 29px;
+      border: 1.5px solid var(--ink);
+      border-radius: 8px;
+      background:
+        linear-gradient(90deg, transparent 45%, var(--teal) 45% 55%, transparent
+        55%),
+        linear-gradient(transparent 45%, var(--teal) 45% 55%, transparent 55%),
+        var(--panel);
+      box-shadow: 3px 3px 0 var(--amber);
+    }
+    .topnav {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .topnav::-webkit-scrollbar {
+      display: none;
+    }
+    .topnav a {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      color: var(--muted);
+      padding: 6px 9px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .topnav a:hover {
+      background: var(--panel);
+      color: var(--ink);
+    }
+    .companion-link {
+      flex: 0 0 auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--panel);
+      padding: 7px 11px;
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1200px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 56px 0 90px;
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 30px;
+      background: linear-gradient(135deg, rgb(255 255 255 / 0.98), rgb(239 248 244 /
+        0.96));
+      box-shadow: var(--shadow);
+      padding: clamp(30px, 6vw, 76px);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -125px;
+      bottom: -165px;
+      width: 420px;
+      height: 420px;
+      border: 68px solid rgb(8 123 115 / 0.075);
+      border-radius: 50%;
+    }
+    .eyebrow {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 18px;
+      color: var(--teal-dark);
+      font-size: 0.76rem;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 980px;
+      margin: 0;
+      font-size: clamp(3rem, 7.2vw, 6.65rem);
+      font-weight: 770;
+      letter-spacing: -0.06em;
+      line-height: 0.96;
+    }
+    .hero-lede {
+      position: relative;
+      z-index: 1;
+      max-width: 840px;
+      margin-top: 27px;
+      color: var(--muted);
+      font-size: clamp(1.06rem, 2.1vw, 1.36rem);
+      line-height: 1.58;
+    }
+    .hero-model {
+      position: relative;
+      z-index: 1;
+      max-width: 910px;
+      margin-top: 34px;
+      border-left: 5px solid var(--teal);
+      border-radius: 0 15px 15px 0;
+      background: rgb(255 255 255 / 0.78);
+      padding: 18px 21px;
+      font-size: clamp(0.98rem, 1.6vw, 1.12rem);
+    }
+    .hero-model strong {
+      color: var(--teal-dark);
+    }
+    .meta-row {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 27px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgb(255 255 255 / 0.76);
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 0.76rem;
+      font-weight: 720;
+    }
+
+    .section {
+      scroll-margin-top: 78px;
+      margin-top: 78px;
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.34fr) minmax(0, 0.66fr);
+      gap: 34px;
+      align-items: start;
+      margin-bottom: 28px;
+    }
+    .section-number {
+      margin: 7px 0 0;
+      color: var(--teal);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(2.1rem, 4.5vw, 3.9rem);
+      letter-spacing: -0.05em;
+      line-height: 1.02;
+    }
+    .section-intro {
+      max-width: 800px;
+      margin-top: 11px;
+      color: var(--muted);
+      font-size: 1.04rem;
+    }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 1.18rem;
+      line-height: 1.3;
+    }
+    h4 {
+      margin: 0 0 7px;
+      font-size: 0.96rem;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 14px;
+    }
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 22px;
+      box-shadow: 0 8px 26px rgb(22 42 44 / 0.035);
+    }
+    .card p,
+    .card li {
+      color: var(--muted);
+    }
+    .card-kicker {
+      display: inline-block;
+      margin-bottom: 11px;
+      border-radius: 999px;
+      background: var(--teal-wash);
+      color: var(--teal-dark);
+      padding: 4px 8px;
+      font-size: 0.67rem;
+      font-weight: 850;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .callout {
+      border: 1px solid #a9d2c8;
+      border-radius: var(--radius);
+      background: var(--teal-wash);
+      padding: 22px;
+    }
+    .callout strong {
+      color: var(--teal-dark);
+    }
+    .callout.amber {
+      border-color: #e1c188;
+      background: var(--amber-wash);
+    }
+    .callout.amber strong {
+      color: #7b480e;
+    }
+    .callout.red {
+      border-color: #dfb4ae;
+      background: var(--red-wash);
+    }
+    .callout.red strong {
+      color: var(--red);
+    }
+    .callout.violet {
+      border-color: #c9bce0;
+      background: var(--violet-wash);
+    }
+    .callout.violet strong {
+      color: var(--violet);
+    }
+    .source {
+      display: block;
+      margin-top: 12px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.73rem;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .architecture-shell {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 24px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: clamp(18px, 4vw, 36px);
+    }
+    .architecture-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgb(21 44 47 / 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(21 44 47 / 0.035) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: linear-gradient(to bottom, black, transparent 90%);
+    }
+    .map-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .map-row.launcher {
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+    }
+    .map-row.runtime {
+      grid-template-columns: minmax(170px, 1fr) 72px minmax(190px, 1.06fr) 72px
+        minmax(190px, 1.06fr);
+    }
+    .map-row.foundation {
+      grid-template-columns: 1fr 72px 1.06fr 72px 1.06fr;
+      margin-top: 11px;
+    }
+    .map-note {
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .starts {
+      position: relative;
+      z-index: 1;
+      width: fit-content;
+      margin: 8px 0 8px 5%;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+    .starts::before {
+      content: "↓ ";
+      color: var(--teal);
+    }
+    .system-node,
+    .store-node {
+      min-width: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 15px;
+      color: var(--ink);
+      text-align: left;
+      box-shadow: 0 6px 18px rgb(22 42 44 / 0.035);
+    }
+    .system-node {
+      cursor: pointer;
+      background: white;
+      padding: 17px;
+      transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms
+        ease;
+    }
+    .system-node:hover,
+    .system-node:focus-visible {
+      transform: translateY(-2px);
+      border-color: var(--teal);
+      box-shadow: 0 10px 24px rgb(22 42 44 / 0.1);
+      outline: none;
+    }
+    .system-node.browser {
+      background: var(--blue-wash);
+      border-color: #b8cbdc;
+    }
+    .system-node.server {
+      background: var(--teal-wash);
+      border-color: #a7d1c7;
+    }
+    .system-node.core {
+      background: var(--violet-wash);
+      border-color: #c8badd;
+    }
+    .system-node.launcher-node {
+      background: var(--amber-wash);
+      border-color: #e1c188;
+    }
+    .node-number {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      font-weight: 800;
+    }
+    .system-node strong,
+    .store-node strong {
+      display: block;
+      font-size: 0.94rem;
+    }
+    .system-node span,
+    .store-node span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.74rem;
+      line-height: 1.45;
+    }
+    .connector {
+      display: grid;
+      place-items: center;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.67rem;
+      text-align: center;
+      line-height: 1.35;
+    }
+    .connector::before {
+      content: "↔";
+      display: block;
+      color: var(--teal);
+      font-size: 1.35rem;
+      line-height: 1;
+    }
+    .store-node {
+      background: var(--panel-2);
+      padding: 14px 16px;
+    }
+    .store-node.files {
+      grid-column: 3;
+    }
+    .store-node.runtime-store {
+      grid-column: 5;
+    }
+    .map-caption {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 22px;
+      border-top: 1px dashed var(--line-strong);
+      padding-top: 15px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .invariant-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0;
+      list-style: none;
+      counter-reset: invariant;
+    }
+    .invariant-list li {
+      position: relative;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 15px 15px 15px 49px;
+    }
+    .invariant-list li::before {
+      counter-increment: invariant;
+      content: counter(invariant, decimal-leading-zero);
+      position: absolute;
+      top: 15px;
+      left: 14px;
+      color: var(--teal);
+      font-family: var(--mono);
+      font-size: 0.73rem;
+      font-weight: 850;
+    }
+    .invariant-list strong {
+      color: var(--ink);
+    }
+
+    .system-stack {
+      display: grid;
+      gap: 14px;
+    }
+    .system-detail {
+      scroll-margin-top: 76px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: 0 9px 28px rgb(22 42 44 / 0.04);
+    }
+    .system-detail-head {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr) minmax(180px, 0.34fr);
+      gap: 17px;
+      align-items: start;
+      padding: 24px;
+    }
+    .system-detail-number {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 13px;
+      background: var(--teal-wash);
+      color: var(--teal-dark);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      font-weight: 850;
+    }
+    .system-detail h3 {
+      font-size: 1.35rem;
+    }
+    .system-detail .summary {
+      color: var(--muted);
+    }
+    .owns {
+      border-left: 3px solid var(--teal);
+      color: var(--muted);
+      padding-left: 13px;
+      font-size: 0.84rem;
+    }
+    .owns strong {
+      color: var(--ink);
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+    }
+    .detail-cell {
+      padding: 20px 24px;
+    }
+    .detail-cell + .detail-cell {
+      border-left: 1px solid var(--line);
+    }
+    .detail-cell p,
+    .detail-cell li {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .detail-cell h4 {
+      color: var(--faint);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.075em;
+      text-transform: uppercase;
+    }
+
+    details {
+      border-top: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+    summary {
+      cursor: pointer;
+      padding: 15px 24px;
+      color: var(--ink);
+      font-weight: 760;
+    }
+    summary::marker {
+      color: var(--teal);
+    }
+    .details-body {
+      border-top: 1px dashed var(--line);
+      padding: 18px 24px 22px;
+      color: var(--muted);
+    }
+    .details-body .source {
+      margin-top: 15px;
+    }
+
+    .tab-shell {
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 22px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .tab-list {
+      display: flex;
+      gap: 5px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+      padding: 9px;
+      scrollbar-width: thin;
+    }
+    .tab-button {
+      flex: 0 0 auto;
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 12px;
+      font-size: 0.79rem;
+      font-weight: 780;
+    }
+    .tab-button[aria-selected="true"] {
+      border-color: var(--line-strong);
+      background: white;
+      color: var(--teal-dark);
+      box-shadow: 0 3px 10px rgb(22 42 44 / 0.06);
+    }
+    .tab-panel {
+      padding: clamp(20px, 4vw, 34px);
+    }
+    .tab-panel[hidden] {
+      display: none;
+    }
+    .journey-title-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(190px, 0.35fr);
+      gap: 24px;
+      align-items: start;
+      margin-bottom: 23px;
+    }
+    .journey-title-row p {
+      color: var(--muted);
+    }
+    .journey-rule {
+      border-left: 3px solid var(--amber);
+      color: var(--muted);
+      padding-left: 13px;
+      font-size: 0.82rem;
+    }
+    .journey-flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 25px;
+      counter-reset: step;
+    }
+    .journey-step {
+      position: relative;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      padding: 16px;
+    }
+    .journey-step::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      margin-bottom: 10px;
+      border-radius: 50%;
+      background: var(--teal);
+      color: white;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 850;
+    }
+    .journey-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -17px;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid var(--teal);
+      border-right: 2px solid var(--teal);
+      transform: rotate(45deg);
+    }
+    .journey-step strong {
+      display: block;
+      font-size: 0.86rem;
+    }
+    .journey-step span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+    .journey-evidence {
+      margin-top: 20px;
+      color: var(--faint);
+      font-size: 0.76rem;
+    }
+
+    .document-demo {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 15px;
+    }
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      border: 1px solid #243d3d;
+      border-radius: 17px;
+      background: #172a2b;
+      color: #edf7f3;
+      padding: 20px;
+      font-size: 0.79rem;
+      line-height: 1.72;
+      tab-size: 2;
+    }
+    .code-dim {
+      color: #8eb0aa;
+    }
+    .code-accent {
+      color: #91e3c8;
+    }
+    .contract-list {
+      display: grid;
+      gap: 9px;
+    }
+    .contract-item {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      padding: 14px;
+    }
+    .contract-item strong {
+      display: block;
+      font-size: 0.84rem;
+    }
+    .contract-item span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.77rem;
+    }
+
+    .run-inside {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 22px;
+      padding: 0;
+      list-style: none;
+    }
+    .run-inside li {
+      position: relative;
+      margin: 0;
+      border-top: 4px solid var(--teal);
+      border-radius: 0 0 13px 13px;
+      background: var(--panel);
+      padding: 14px;
+      box-shadow: 0 4px 16px rgb(22 42 44 / 0.04);
+      font-size: 0.76rem;
+    }
+    .run-inside li:nth-child(4),
+    .run-inside li:nth-child(5) {
+      border-color: var(--violet);
+    }
+    .run-inside li:nth-child(6),
+    .run-inside li:nth-child(7) {
+      border-color: var(--amber);
+    }
+    .run-inside li:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 42%;
+      right: -16px;
+      width: 7px;
+      height: 7px;
+      border-top: 2px solid var(--faint);
+      border-right: 2px solid var(--faint);
+      transform: rotate(45deg);
+    }
+    .run-inside strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.79rem;
+    }
+    .run-inside span {
+      color: var(--muted);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 8px 26px rgb(22 42 44 / 0.03);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.87rem;
+    }
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 13px 15px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f4ef;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.065em;
+      text-transform: uppercase;
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    td {
+      color: var(--muted);
+    }
+    td strong {
+      color: var(--ink);
+    }
+    .lifetime {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      color: var(--teal-dark);
+      font-size: 0.78rem;
+      font-weight: 760;
+    }
+    .lifetime::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .lifetime.memory {
+      color: var(--violet);
+    }
+    .lifetime.process {
+      color: var(--amber);
+    }
+
+    .boundary-map {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    .boundary-zone {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 22px;
+    }
+    .boundary-zone.safe {
+      border-color: #a9d2c8;
+      background: var(--teal-wash);
+    }
+    .boundary-zone.trusted {
+      border-color: #dfb4ae;
+      background: var(--red-wash);
+    }
+    .boundary-divider {
+      display: grid;
+      place-items: center;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      text-align: center;
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+    }
+    .boundary-zone p,
+    .boundary-zone li {
+      color: var(--muted);
+    }
+
+    .source-map td:first-child {
+      width: 22%;
+    }
+    .source-map td:nth-child(2) {
+      width: 36%;
+    }
+    .source-map a {
+      font-family: var(--mono);
+      font-size: 0.76rem;
+    }
+
+    .footer {
+      margin-top: 78px;
+      border-top: 1px solid var(--line-strong);
+      padding-top: 25px;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: end;
+    }
+    .footer strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 980px) {
+      .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .journey-flow {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        row-gap: 14px;
+      }
+      .journey-step::after {
+        display: none;
+      }
+      .run-inside {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        row-gap: 14px;
+      }
+      .run-inside li::after {
+        display: none;
+      }
+      .system-detail-head {
+        grid-template-columns: 54px minmax(0, 1fr);
+      }
+      .owns {
+        grid-column: 2;
+      }
+    }
+
+    @media (max-width: 800px) {
+      .section-head {
+        grid-template-columns: 1fr;
+        gap: 9px;
+      }
+      .map-row.launcher {
+        grid-template-columns: 1fr;
+      }
+      .map-row.runtime,
+      .map-row.foundation {
+        display: flex;
+        flex-direction: column;
+      }
+      .connector {
+        min-height: 28px;
+        writing-mode: horizontal-tb;
+      }
+      .connector::before {
+        content: "↕";
+      }
+      .store-node.files,
+      .store-node.runtime-store {
+        grid-column: auto;
+      }
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+      .detail-cell + .detail-cell {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+      .document-demo {
+        grid-template-columns: 1fr;
+      }
+      .boundary-map {
+        grid-template-columns: 1fr;
+      }
+      .boundary-divider {
+        min-height: 32px;
+        writing-mode: horizontal-tb;
+        transform: none;
+      }
+      .journey-title-row {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .companion-link {
+        display: none;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .topbar-inner,
+      main {
+        width: min(100% - 20px, 1200px);
+      }
+      .topbar-inner {
+        min-height: 54px;
+        gap: 11px;
+      }
+      .brand span:last-child {
+        display: none;
+      }
+      .topnav a {
+        padding: 6px 8px;
+        font-size: 0.71rem;
+      }
+      main {
+        padding-top: 24px;
+      }
+      .hero {
+        border-radius: 20px;
+        padding: 27px 20px;
+      }
+      .hero::after {
+        display: none;
+      }
+      h1 {
+        font-size: clamp(2.55rem, 14vw, 4.2rem);
+      }
+      .section {
+        margin-top: 58px;
+      }
+      .grid-2,
+      .grid-3,
+      .grid-4,
+      .invariant-list {
+        grid-template-columns: 1fr;
+      }
+      .card,
+      .callout {
+        padding: 18px;
+      }
+      .system-detail-head {
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 12px;
+        padding: 19px;
+      }
+      .system-detail-number {
+        width: 40px;
+        height: 40px;
+      }
+      .owns {
+        grid-column: 1 / -1;
+      }
+      .detail-cell,
+      summary,
+      .details-body {
+        padding-left: 19px;
+        padding-right: 19px;
+      }
+      .journey-flow,
+      .run-inside {
+        grid-template-columns: 1fr;
+      }
+      .table-wrap table {
+        min-width: 720px;
+      }
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+      .system-node {
+        transition: none;
+      }
+    }
+
+    @media print {
+      body {
+        background: white;
+      }
+      .topbar,
+      .tab-list {
+        display: none;
+      }
+      main {
+        width: 100%;
+        padding: 0;
+      }
+      .hero,
+      .architecture-shell,
+      .card,
+      .tab-shell,
+      .system-detail,
+      .table-wrap {
+        box-shadow: none;
+      }
+      .tab-panel[hidden] {
+        display: block;
+        border-top: 1px solid var(--line);
+      }
+      .section,
+      .system-detail {
+        break-inside: avoid;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#top" aria-label="Rowcall architecture overview">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Rowcall architecture</span>
+        </a>
+        <nav class="topnav" aria-label="Page sections">
+          <a href="#model">Model</a>
+          <a href="#systems">Systems</a>
+          <a href="#journeys">Journeys</a>
+          <a href="#document">Document</a>
+          <a href="#state">State</a>
+          <a href="#trust">Trust</a>
+          <a href="#source-map">Source map</a>
+        </nav>
+        <a class="companion-link"
+          href="simplification-opportunities.html">Simplification audit →</a>
+      </div>
+    </header>
+
+    <main id="content">
+      <section class="hero" id="top">
+        <p
+          class="eyebrow">Architecture explainer · current working tree · August 12, 2026</p>
+        <h1>How Rowcall works.</h1>
+        <p class="hero-lede">
+        Rowcall is a local web app wrapped around a Python graph runtime. The browser helps a person edit and inspect one Python document. Python remains the authority for what that document means and how it runs.
+      </p>
+        <p class="hero-model">
+        <strong>The shortest useful model:</strong> a launcher starts a browser and a local server; the server reads and safely rewrites one Python file; a Python worker executes its graph and returns bounded previews.
+      </p>
+        <div class="meta-row" aria-label="Architecture traits">
+          <span class="pill">Local-first</span>
+          <span class="pill">One active document</span>
+          <span class="pill">Python is canonical</span>
+          <span class="pill">No database</span>
+          <span class="pill">No compute cache</span>
+          <span class="pill">Trusted Python execution</span>
+        </div>
+      </section>
+
+      <section class="section" id="model">
+        <div class="section-head">
+          <p class="section-number">01 / MODEL</p>
+          <div>
+            <h2>Five blocks explain most of the system.</h2>
+            <p
+              class="section-intro">Select a block to jump to its responsibilities. The lines show runtime communication, not source-code imports.</p>
+          </div>
+        </div>
+
+        <div class="architecture-shell"
+          aria-label="Rowcall high-level architecture map">
+          <div class="map-row launcher">
+            <button class="system-node launcher-node" type="button"
+              data-jump="system-launcher">
+              <span class="node-number">01</span>
+              <strong>Launcher &amp; Environment Setup</strong>
+              <span>Selects Python, prepares bundled assets, starts the server, and opens the browser.</span>
+            </button>
+            <p
+              class="map-note">The installed launcher is a compiled Deno binary. In development, Deno and Vite start separately.</p>
+          </div>
+          <p class="starts">starts the two local app processes</p>
+          <div class="map-row runtime">
+            <button class="system-node browser" type="button"
+              data-jump="system-browser">
+              <span class="node-number">02</span>
+              <strong>Browser Workspace</strong>
+              <span>Canvas, inspector, unsaved operations, save state, and run presentation.</span>
+            </button>
+            <div class="connector">HTTP + SSE</div>
+            <button class="system-node server" type="button"
+              data-jump="system-server">
+              <span class="node-number">03</span>
+              <strong>Local App Server</strong>
+              <span>Serves the UI, protects APIs, fixes one active path, and coordinates local work.</span>
+            </button>
+            <div class="connector">NDJSON</div>
+            <button class="system-node core" type="button"
+              data-jump="system-core">
+              <span class="node-number">04</span>
+              <strong>Python Core</strong>
+              <span>Inspects, validates, rewrites, plans, executes, and creates previews.</span>
+            </button>
+          </div>
+          <div class="map-row foundation">
+            <div class="store-node files">
+              <strong>05 · Document Files</strong>
+              <span>Canonical <code>.py</code> source plus optional <code>.rowcall.json</code> canvas metadata.</span>
+            </div>
+            <div class="store-node runtime-store">
+              <strong>User Python environment &amp; data</strong>
+              <span>Libraries, local files, network access, and latest raw results in worker memory.</span>
+            </div>
+          </div>
+          <div class="map-caption">
+            <span><strong>No normal-runtime cloud:</strong> the browser, server, files, and Python process are local.</span>
+            <span><strong>No database:</strong> durable state is the document and its sidecar.</span>
+          </div>
+        </div>
+
+        <ol class="invariant-list" aria-label="Ten architecture invariants">
+          <li><strong>One server process owns one active Python document.</strong> There is no document registry or multi-document session.</li>
+          <li><strong>The Python file owns computation.</strong> It contains imports, globals, steps, declared values, and graph edges.</li>
+          <li><strong>The sidecar owns editor metadata.</strong> Position and description do not affect Python execution.</li>
+          <li><strong>Unsaved browser edits live only in memory.</strong> They are a projected document plus a queue of semantic operations.</li>
+          <li><strong>Python owns language meaning.</strong> The browser does not validate or execute an independent graph payload.</li>
+          <li><strong>Saves are revision-bound.</strong> Rowcall refuses to overwrite a file that changed after the browser loaded it.</li>
+          <li><strong>Runs are revision-bound too.</strong> The browser saves first, then runs the exact displayed disk revision.</li>
+          <li><strong>Each run computes fresh.</strong> A selected-step run recomputes every required upstream step.</li>
+          <li><strong>Nodes get separate namespaces, not separate processes.</strong> Some process-wide Python state can still leak.</li>
+          <li><strong>Only one successful result set stays inspectable.</strong> This supports table paging; it is not a compute cache.</li>
+        </ol>
+      </section>
+
+      <section class="section" id="systems">
+        <div class="section-head">
+          <p class="section-number">02 / SYSTEMS</p>
+          <div>
+            <h2>What each block owns.</h2>
+            <p
+              class="section-intro">Ownership is the easiest way to navigate this repository. Each block below says what belongs there, what does not, and how long its state lives.</p>
+          </div>
+        </div>
+
+        <div class="system-stack">
+          <article class="system-detail" id="system-launcher">
+            <div class="system-detail-head">
+              <span class="system-detail-number">01</span>
+              <div>
+                <h3>Launcher &amp; Environment Setup</h3>
+                <p
+                  class="summary">The public front door. It turns a command and a project path into a running local app or a headless Python command.</p>
+              </div>
+              <p
+                class="owns"><strong>Owns:</strong> command parsing, project creation, Python selection, environment setup, bundled assets, server startup, and release-facing diagnostics.</p>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-cell">
+                <h4>Main parts</h4>
+                <ul>
+                  <li><code>beta_launcher.ts</code></li>
+                  <li><code>beta_paths.ts</code></li>
+                  <li><code>startup_args.ts</code></li>
+                  <li><code>runtime_config.ts</code></li>
+                </ul>
+              </div>
+              <div class="detail-cell">
+                <h4>Python selection</h4>
+                <p>Explicit interpreter, project <code>.venv</code>, active virtualenv or Conda, then a new project <code>.venv</code>. A separate managed starter environment is optional.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Does not own</h4>
+                <p>Document semantics or execution. Headless <code>run</code> and <code>validate</code> are delegated to <code>python -m rowcall</code>.</p>
+              </div>
+            </div>
+            <details>
+              <summary>Drill down: installed launch sequence</summary>
+              <div class="details-body">
+                <ol>
+                  <li>Resolve a folder to its <code>graph.py</code>, or accept a specific <code>.py</code> file.</li>
+                  <li>Select or create a compatible Python environment.</li>
+                  <li>Materialize the bundled UI and Python package under <code>~/.rowcall/bundled</code>.</li>
+                  <li>Create a random token and start a child <code>__server</code> process.</li>
+                  <li>Wait for readiness, then open the tokenized local URL.</li>
+                </ol>
+                <span
+                  class="source">Source trail: <a href="../beta_launcher.ts#L698">beta_launcher.ts:698</a>, <a href="../beta_launcher.ts#L849">:849</a>, <a href="../beta_launcher.ts#L1165">:1165</a>, <a href="../beta_launcher.ts#L1347">:1347</a></span>
+              </div>
+            </details>
+          </article>
+
+          <article class="system-detail" id="system-browser">
+            <div class="system-detail-head">
+              <span class="system-detail-number">02</span>
+              <div>
+                <h3>Browser Workspace</h3>
+                <p
+                  class="summary">One React screen for one document. It shows the graph, accepts edits, coordinates saves, and presents live run state.</p>
+              </div>
+              <p
+                class="owns"><strong>Owns:</strong> unsaved intent and presentation state. It does not own the authoritative Python source or graph semantics.</p>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-cell">
+                <h4>Workspace Coordinator</h4>
+                <p><code>App.tsx</code> connects document load, edit, save, disk polling, selection, canvas, inspector, and execution.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Document Session</h4>
+                <p>An in-memory editable document, the loaded base revision, a coalesced operation queue, and save/reload state.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Run Session</h4>
+                <p><code>useExecutionSession</code> tracks the plan, per-step state, final results, freshness, notifications, and result-store identity.</p>
+              </div>
+            </div>
+            <details>
+              <summary>Drill down: canvas and inspector</summary>
+              <div class="details-body">
+                <p><strong>Graph Canvas</strong> is a React Flow projection. It shows step cards and connections and reports gestures upward. <strong>Inspector</strong> contains Develop, Overview, and Results views. It edits code and declared values, and it renders previews and diagnostics.</p>
+                <p>The browser keeps three related shapes: the editable document, a derived runtime graph, and a React Flow rendering graph. The Python file is still the authority.</p>
+                <span
+                  class="source">Source trail: <a href="../app/ui/src/App.tsx#L130">App.tsx:130</a>, <a href="../app/ui/src/components/Canvas.tsx#L108">Canvas.tsx:108</a>, <a href="../app/ui/src/components/InspectorPanel.tsx#L3281">InspectorPanel.tsx:3281</a>, <a href="../app/ui/src/query/useExecutionSession.ts#L22">useExecutionSession.ts:22</a></span>
+              </div>
+            </details>
+          </article>
+
+          <article class="system-detail" id="system-server">
+            <div class="system-detail-head">
+              <span class="system-detail-number">03</span>
+              <div>
+                <h3>Local App Server</h3>
+                <p
+                  class="summary">A Deno/Hono server that binds the browser to one local document and one selected Python environment.</p>
+              </div>
+              <p
+                class="owns"><strong>Owns:</strong> static files, local-request security, HTTP contracts, revision-bound source reads, SSE framing, and coordination between browser, disk, and Python.</p>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-cell">
+                <h4>Document Coordinator</h4>
+                <p><code>python_document.ts</code> serializes document access, locks and recovers files, calls short-lived workers, checks revisions, and commits source plus sidecar.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Python Worker Bridge</h4>
+                <p><code>PythonWorkerClient</code> starts Python, sends NDJSON commands one at a time, reads events, and kills the process group on cancellation.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Single-instance state</h4>
+                <p>The active document path, UI directory, security context, status cache, document queue, and shared execution worker are module-level state.</p>
+              </div>
+            </div>
+            <details>
+              <summary>Drill down: request boundaries</summary>
+              <div class="details-body">
+                <ul>
+                  <li><code>GET /document</code> loads the current document.</li>
+                  <li><code>GET /document/status</code> reports source/sidecar freshness and validity.</li>
+                  <li><code>POST /document/operations</code> applies a revision-bound edit batch.</li>
+                  <li><code>POST /run-to-node</code> and <code>POST /run-graph</code> execute a checked source revision.</li>
+                  <li><code>POST /results/table</code> pages or sorts the latest retained table.</li>
+                </ul>
+                <p>The browser requests Server-Sent Events for runs. The server converts Python worker events to SSE and sends a heartbeat while Python is busy.</p>
+                <span
+                  class="source">Source trail: <a href="../main.ts#L674">main.ts:674</a>, <a href="../main.ts#L713">:713</a>, <a href="../main.ts#L753">:753</a>, <a href="../main.ts#L899">:899</a>, <a href="../main.ts#L1008">:1008</a></span>
+              </div>
+            </details>
+          </article>
+
+          <article class="system-detail" id="system-core">
+            <div class="system-detail-head">
+              <span class="system-detail-number">04</span>
+              <div>
+                <h3>Python Core</h3>
+                <p
+                  class="summary">The semantic center. Both the visual app and the headless CLI converge here.</p>
+              </div>
+              <p
+                class="owns"><strong>Owns:</strong> the accepted Python grammar, document validation, source rewriting, graph planning, execution, value copying, previews, and interactive result inspection.</p>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-cell">
+                <h4>Document Engine</h4>
+                <p><code>rowcall/document/</code> parses the AST without executing user code, validates the graph, applies semantic rewrites, and builds plans.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Execution Engine</h4>
+                <p>Evaluates document globals once, runs planned steps sequentially in new namespaces, stops at the first failure, and captures bounded diagnostics.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Preview Engine</h4>
+                <p>Leaves rich values in Python. It sends only safe JSON, table, text, <code>repr</code>, and declared PNG previews to the browser.</p>
+              </div>
+            </div>
+            <details>
+              <summary>Drill down: workers and result state</summary>
+              <div class="details-body">
+                <p>Document inspection and rewrite calls use a new Python process for each operation. Execution uses one long-lived <strong>Runtime Worker</strong>. The long-lived process lets Rowcall retain raw Pandas or Polars outputs for later table paging.</p>
+                <p>The worker retains raw outputs for only the latest successful app run. A later successful run replaces them. Cancellation kills the worker, which also clears them.</p>
+                <span
+                  class="source">Source trail: <a href="../rowcall/runtime/worker.py#L14">worker.py:14</a>, <a href="../rowcall/runtime/session.py#L18">session.py:18</a>, <a href="../rowcall/runtime/executor.py#L70">executor.py:70</a>, <a href="../rowcall/runtime/previews.py#L16">previews.py:16</a></span>
+              </div>
+            </details>
+          </article>
+
+          <article class="system-detail" id="system-files">
+            <div class="system-detail-head">
+              <span class="system-detail-number">05</span>
+              <div>
+                <h3>Document Files</h3>
+                <p
+                  class="summary">Two local files form the durable editor document. Only one is required to run.</p>
+              </div>
+              <p
+                class="owns"><strong>Owns:</strong> durable user work. The Python source is canonical for computation; the sidecar is optional and non-executable.</p>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-cell">
+                <h4>Python document</h4>
+                <p>Imports, globals, decorated functions, declared outputs and views, return dictionaries, and <code>depends_on</code> calls.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>Sidecar</h4>
+                <p>A sibling <code>.rowcall.json</code> with node IDs, canvas positions, descriptions, and a currently transported title field.</p>
+              </div>
+              <div class="detail-cell">
+                <h4>App Revision</h4>
+                <p>A SHA-256 value derived from the source revision and normalized sidecar. Both kinds of edit participate in conflict detection.</p>
+              </div>
+            </div>
+            <details>
+              <summary>Drill down: safe two-file saves</summary>
+              <div class="details-body">
+                <p>The Document Coordinator uses a lock, temporary files, directory sync, alias checks, and a small transaction journal. If a save is interrupted between the Python and sidecar commits, the next read can recover or report a safe failure.</p>
+                <p>This is one of the most complex areas in the repository. It protects the user’s source file, so the companion audit recommends keeping its behavior for beta.</p>
+                <span
+                  class="source">Source trail: <a href="../python_document.ts#L737">python_document.ts:737</a>, <a href="../python_document.ts#L802">:802</a>, <a href="../python_document.ts#L1020">:1020</a>, <a href="../python_document.ts#L1216">:1216</a></span>
+              </div>
+            </details>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="journeys">
+        <div class="section-head">
+          <p class="section-number">03 / JOURNEYS</p>
+          <div>
+            <h2>Follow work across the boundaries.</h2>
+            <p
+              class="section-intro">These are the end-to-end paths that matter. Switch journeys to see who owns each step.</p>
+          </div>
+        </div>
+
+        <div class="tab-shell" data-tabs>
+          <div class="tab-list" role="tablist"
+            aria-label="Architecture journeys">
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="true" aria-controls="journey-open"
+              id="tab-open">Open project</button>
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="false" aria-controls="journey-load"
+              id="tab-load">Load &amp; watch</button>
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="false" aria-controls="journey-save"
+              id="tab-save">Edit &amp; save</button>
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="false" aria-controls="journey-run"
+              id="tab-run">Run</button>
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="false" aria-controls="journey-table"
+              id="tab-table">Inspect table</button>
+            <button class="tab-button" type="button" role="tab"
+              aria-selected="false" aria-controls="journey-cli"
+              id="tab-cli">Headless CLI</button>
+          </div>
+
+          <section class="tab-panel" role="tabpanel" id="journey-open"
+            aria-labelledby="tab-open">
+            <div class="journey-title-row">
+              <div>
+                <h3>Open a project</h3>
+                <p>The launcher assembles the local runtime around a fixed document.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Key rule:</strong> one launch creates one server context for one active document.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>Resolve path</strong><span>A folder becomes <code>graph.py</code>; a <code>.py</code> path stays exact.</span></div>
+              <div
+                class="journey-step"><strong>Select Python</strong><span>Use an override, existing environment, or create a project environment.</span></div>
+              <div
+                class="journey-step"><strong>Prepare assets</strong><span>Materialize bundled UI and the Rowcall Python package.</span></div>
+              <div
+                class="journey-step"><strong>Start server</strong><span>Pass document, Python, host, port, runtime mode, and random token.</span></div>
+              <div
+                class="journey-step"><strong>Open browser</strong><span>Wait for readiness, then launch a tokenized local URL.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>beta_launcher.ts:698–735, 909–979, 1165–1179, 1347–1401</code>.</p>
+          </section>
+
+          <section class="tab-panel" role="tabpanel" id="journey-load"
+            aria-labelledby="tab-load" hidden>
+            <div class="journey-title-row">
+              <div>
+                <h3>Load and watch a document</h3>
+                <p>The browser receives a parsed projection, then polls a cheap freshness endpoint.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Key rule:</strong> external edits remain valid. The canvas reloads automatically only when it has no local changes.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>GET document</strong><span>The request waits behind already queued document operations.</span></div>
+              <div
+                class="journey-step"><strong>Read snapshot</strong><span>Lock, recover any prior transaction, then read source and sidecar together.</span></div>
+              <div
+                class="journey-step"><strong>Inspect source</strong><span>A short-lived Python worker parses and validates without executing user code.</span></div>
+              <div
+                class="journey-step"><strong>Merge metadata</strong><span>Deno applies sidecar positions/descriptions and calculates the App Revision.</span></div>
+              <div
+                class="journey-step"><strong>Poll status</strong><span>Every four seconds; unchanged hashes reuse the cached inspection.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>main.ts:674–732</code>, <code>python_document.ts:96–207, 255–401</code>, <code>App.tsx:186–302, 479–537</code>.</p>
+          </section>
+
+          <section class="tab-panel" role="tabpanel" id="journey-save"
+            aria-labelledby="tab-save" hidden>
+            <div class="journey-title-row">
+              <div>
+                <h3>Edit and save</h3>
+                <p>The browser saves intent as typed operations. It does not send a replacement Python file.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Key rule:</strong> the base revision turns an external edit into a visible conflict, not a silent overwrite.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>Project locally</strong><span>Update the canvas now; queue and coalesce a semantic operation.</span></div>
+              <div
+                class="journey-step"><strong>Check disk</strong><span>Refresh document status before any write.</span></div>
+              <div
+                class="journey-step"><strong>Rewrite in Python</strong><span>The Document Engine applies operations and validates the candidate source.</span></div>
+              <div
+                class="journey-step"><strong>Commit safely</strong><span>Recheck revision, lock, write temp files, journal, and atomically publish.</span></div>
+              <div
+                class="journey-step"><strong>Adopt result</strong><span>Reinspect the files and return the new document and App Revision.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>App.tsx:304–395</code>, <code>main.ts:753–832</code>, <code>python_document.ts:403–550, 737–1092</code>.</p>
+          </section>
+
+          <section class="tab-panel" role="tabpanel" id="journey-run"
+            aria-labelledby="tab-run" hidden>
+            <div class="journey-title-row">
+              <div>
+                <h3>Run through a step or run the graph</h3>
+                <p>The same worker path handles both. The planner chooses the required nodes.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Key rule:</strong> pending edits save first. A run never consumes the browser’s derived graph.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>Save first</strong><span>Check freshness and flush the operation queue.</span></div>
+              <div
+                class="journey-step"><strong>Bind revision</strong><span>POST the displayed revision and request an SSE stream.</span></div>
+              <div
+                class="journey-step"><strong>Plan in Python</strong><span>Parse, validate, and topologically select upstream steps or all sinks.</span></div>
+              <div
+                class="journey-step"><strong>Execute fresh</strong><span>Run globals, then each planned step in order; stop on failure.</span></div>
+              <div
+                class="journey-step"><strong>Stream evidence</strong><span>Queued/running/completed events and a final bounded response update the UI.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>App.tsx:1334–1379</code>, <code>main.ts:338–374, 528–644, 899–1006</code>, <code>worker.py:203–272</code>.</p>
+          </section>
+
+          <section class="tab-panel" role="tabpanel" id="journey-table"
+            aria-labelledby="tab-table" hidden>
+            <div class="journey-title-row">
+              <div>
+                <h3>Page or sort a large table</h3>
+                <p>The first result is a small preview. Later pages query the raw Python object that stayed in the worker.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Key rule:</strong> only the latest successful run is queryable, and its run ID and source revision must match.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>Keep identity</strong><span>The final response names a run ID and document revision.</span></div>
+              <div
+                class="journey-step"><strong>Request page</strong><span>Send run, revision, step, output, offset, and optional sort.</span></div>
+              <div
+                class="journey-step"><strong>Check disk</strong><span>The server rejects results from an older source revision.</span></div>
+              <div
+                class="journey-step"><strong>Check store</strong><span>The worker verifies this is its latest retained successful run.</span></div>
+              <div
+                class="journey-step"><strong>Build page</strong><span>Slice or sort the Pandas/Polars object and return another bounded table.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>main.ts:1008–1064</code>, <code>session.py:192–285</code>, <code>ResultTable.tsx:57–141</code>.</p>
+          </section>
+
+          <section class="tab-panel" role="tabpanel" id="journey-cli"
+            aria-labelledby="tab-cli" hidden>
+            <div class="journey-title-row">
+              <div>
+                <h3>Run without the browser</h3>
+                <p>The launcher chooses Python, then the Python CLI calls the same parser and executor directly.</p>
+              </div>
+              <p
+                class="journey-rule"><strong>Skipped:</strong> Hono, auth, sidecar metadata, SSE, the NDJSON worker, and interactive table state.</p>
+            </div>
+            <div class="journey-flow">
+              <div
+                class="journey-step"><strong>Parse command</strong><span><code>rowcall run</code> or <code>validate</code> resolves the document and options.</span></div>
+              <div
+                class="journey-step"><strong>Select Python</strong><span>The launcher applies the environment policy.</span></div>
+              <div
+                class="journey-step"><strong>Invoke module</strong><span>Run <code>selected-python -m rowcall …</code>.</span></div>
+              <div
+                class="journey-step"><strong>Use Python core</strong><span>Load, validate, plan, execute, and build previews directly.</span></div>
+              <div
+                class="journey-step"><strong>Print result</strong><span>Human text or bounded JSON, with a meaningful exit code.</span></div>
+            </div>
+            <p
+              class="journey-evidence">Evidence: <code>beta_launcher.ts:601–640</code>, <code>rowcall/cli.py:260–379</code>.</p>
+          </section>
+        </div>
+      </section>
+
+      <section class="section" id="document">
+        <div class="section-head">
+          <p class="section-number">04 / DOCUMENT</p>
+          <div>
+            <h2>The graph is normal Python with a strict shape.</h2>
+            <p
+              class="section-intro">The restrictions make a visual editor possible. Rowcall can find and rewrite graph structure without importing or executing the document.</p>
+          </div>
+        </div>
+
+        <div class="document-demo">
+          <pre
+            aria-label="Small Rowcall Python document"><span class="code-dim">from rowcall import node</span>
+
+<span class="code-accent">@node(id="n_load", outputs=["orders"])</span>
+def load_orders():
+    orders = read_orders("orders.csv")
+    return {"orders": orders}
+
+<span class="code-accent">@node(
+    id="n_summary",
+    outputs=["summary"],
+    views=["chart"],
+)</span>
+def summarize_orders(orders):
+    summary = orders.group_by("region").sum()
+    chart = make_chart(summary)
+    return {"summary": summary, "chart": chart}
+
+<span class="code-accent">summarize_orders.depends_on(load_orders)</span></pre>
+          <div class="contract-list">
+            <div
+              class="contract-item"><strong>Stable node ID</strong><span><code>n_summary</code> anchors edges and sidecar metadata even if the function name changes.</span></div>
+            <div
+              class="contract-item"><strong>Whole-node edge</strong><span>Every declared output from <code>load_orders</code> becomes a direct input candidate for <code>summarize_orders</code>.</span></div>
+            <div
+              class="contract-item"><strong>Parameters are the input contract</strong><span>The downstream parameter names must exactly match the combined direct upstream outputs.</span></div>
+            <div
+              class="contract-item"><strong>Outputs flow</strong><span><code>summary</code> can become a downstream input and is also previewed.</span></div>
+            <div
+              class="contract-item"><strong>Views do not flow</strong><span><code>chart</code> is for a person to inspect. It does not become a downstream input.</span></div>
+            <div
+              class="contract-item"><strong>Strict return</strong><span>The final dictionary must contain the ordered union of declared outputs and views.</span></div>
+          </div>
+        </div>
+
+        <div class="callout amber" style="margin-top: 15px">
+        <strong>Important limitation:</strong> a node gets a fresh dictionary namespace, but all nodes in a run share one Python process. Rowcall copies upstream values when it can. If copying a custom value fails, the current runtime passes it by reference with a warning. That can let mutation cross branches.
+      </div>
+
+        <h3 style="margin-top: 32px">What happens inside a fresh run</h3>
+        <ol class="run-inside">
+          <li><strong>Invalidate local imports</strong><span>Try to observe edits to helper modules.</span></li>
+          <li><strong>Parse AST</strong><span>Discover steps, declarations, source ranges, and edges.</span></li>
+          <li><strong>Validate graph</strong><span>Reject cycles, missing steps, name conflicts, and bad parameters.</span></li>
+          <li><strong>Build plan</strong><span>Topologically order the required dependency subgraph.</span></li>
+          <li><strong>Run globals</strong><span>Evaluate non-node top-level code once.</span></li>
+          <li><strong>Run steps</strong><span>Copy inputs, execute each namespace, stop on failure.</span></li>
+          <li><strong>Publish previews</strong><span>Keep rich values in Python; send bounded evidence.</span></li>
+        </ol>
+      </section>
+
+      <section class="section" id="state">
+        <div class="section-head">
+          <p class="section-number">05 / STATE</p>
+          <div>
+            <h2>Where state lives, and when it disappears.</h2>
+            <p
+              class="section-intro">There is no single store. The system deliberately uses files for durable work and memory for editing and inspection.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Owner and location</th>
+                <th>Lifetime</th>
+                <th>What replaces it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Computation and graph</strong></td>
+                <td>Python document on disk</td>
+                <td><span class="lifetime">Durable</span></td>
+                <td>A successful save or an external file edit</td>
+              </tr>
+              <tr>
+                <td><strong>Canvas metadata</strong></td>
+                <td>Sibling <code>.rowcall.json</code></td>
+                <td><span class="lifetime">Durable, optional</span></td>
+                <td>A metadata save; deleting it loses layout, not computation</td>
+              </tr>
+              <tr>
+                <td><strong>Unsaved document</strong></td>
+                <td>React memory in the Document Session</td>
+                <td><span class="lifetime memory">Browser memory</span></td>
+                <td>Save response, reload, browser close, or crash</td>
+              </tr>
+              <tr>
+                <td><strong>Pending operations</strong></td>
+                <td>Browser queue; Deno serializes active file work</td>
+                <td><span class="lifetime memory">Until save settles</span></td>
+                <td>Successful save, definite rejection, or guarded reload</td>
+              </tr>
+              <tr>
+                <td><strong>Run presentation</strong></td>
+                <td>Run Session and TanStack Query</td>
+                <td><span class="lifetime memory">Browser memory</span></td>
+                <td>New run, edit freshness change, reload, or close</td>
+              </tr>
+              <tr>
+                <td><strong>Raw Python results</strong></td>
+                <td>Latest Result Store in the Runtime Worker</td>
+                <td><span class="lifetime process">Worker lifetime</span></td>
+                <td>Later successful run, cancellation, or process exit</td>
+              </tr>
+              <tr>
+                <td><strong>Project packages</strong></td>
+                <td>Project <code>.venv</code></td>
+                <td><span class="lifetime">Project lifetime</span></td>
+                <td>Environment repair or deletion</td>
+              </tr>
+              <tr>
+                <td><strong>Managed starter packages</strong></td>
+                <td><code>~/.rowcall/venvs/default</code></td>
+                <td><span class="lifetime">Launcher-managed</span></td>
+                <td>Version refresh or <code>reset-env</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid-3" style="margin-top: 15px">
+          <div class="card">
+            <span class="card-kicker">Freshness</span>
+            <h3>“Fresh” has two meanings</h3>
+            <p>A document is fresh when source plus sidecar match the loaded App Revision. A result is fresh when it was produced from the current source value.</p>
+          </div>
+          <div class="card">
+            <span class="card-kicker">No cache</span>
+            <h3>Results do not skip computation</h3>
+            <p>The Latest Result Store exists only for inspection. Running again still rebuilds the full required plan.</p>
+          </div>
+          <div class="card">
+            <span class="card-kicker">Failure</span>
+            <h3>Unknown save outcome is conservative</h3>
+            <p>If the browser cannot know whether a save committed, it blocks further edit/save/run actions until reload. It does not replay the operation batch.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="trust">
+        <div class="section-head">
+          <p class="section-number">06 / TRUST</p>
+          <div>
+            <h2>Protected local app; fully trusted Python.</h2>
+            <p
+              class="section-intro">The web boundary has safeguards. The Python boundary intentionally does not: opening a document means trusting its code.</p>
+          </div>
+        </div>
+
+        <div class="boundary-map">
+          <div class="boundary-zone safe">
+            <h3>Local web boundary</h3>
+            <ul>
+              <li>Default bind is loopback.</li>
+              <li>Host and Origin headers are checked.</li>
+              <li>Document and run routes require a random session token.</li>
+              <li>The first URL carries the token; the browser stores it and removes it from the visible URL.</li>
+              <li>The active document path is fixed at server startup.</li>
+            </ul>
+          </div>
+          <div class="boundary-divider">trust boundary</div>
+          <div class="boundary-zone trusted">
+            <h3>Python execution boundary</h3>
+            <ul>
+              <li>User Python runs with the launching user’s permissions.</li>
+              <li>It can read/write files, use the network, start processes, and import native packages.</li>
+              <li>There is no sandbox, time limit, or memory limit.</li>
+              <li>Namespace isolation is not process isolation.</li>
+              <li>Only trusted documents are appropriate for this beta.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout red" style="margin-top: 15px">
+        <strong>Current-state caveat:</strong> API authentication is based on a list of known route prefixes, and the token-bearing server URL is written to the launcher log. The companion audit recommends a simpler fail-closed rule and token redaction.
+      </div>
+
+        <div class="grid-3" style="margin-top: 15px">
+          <div class="card">
+            <h3>Output is bounded</h3>
+            <p>Per-step stdout and stderr retain up to 1 MiB each. <code>repr</code>, JSON, table, warning, and image previews have separate limits.</p>
+          </div>
+          <div class="card">
+            <h3>Cancellation is forceful</h3>
+            <p>Aborting a streamed run terminates the Python worker process group. A later request starts a replacement worker.</p>
+          </div>
+          <div class="card">
+            <h3>Distribution is beta-grade</h3>
+            <p>The installer verifies SHA-256 checksums, but the macOS launcher is unsigned and not notarized. Publishing is manual.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="source-map">
+        <div class="section-head">
+          <p class="section-number">07 / SOURCE MAP</p>
+          <div>
+            <h2>Where to look when you have a question.</h2>
+            <p
+              class="section-intro">Start at the owner. Follow a boundary only when the behavior crosses it.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap source-map">
+          <table>
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Start here</th>
+                <th>Then follow</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>How does a command start?</strong></td>
+                <td><a href="../beta_launcher.ts#L530">beta_launcher.ts</a></td>
+                <td><code>startup_args.ts</code> → <code>main.ts</code></td>
+              </tr>
+              <tr>
+                <td><strong>Which Python is used?</strong></td>
+                <td><a href="../beta_launcher.ts#L849">beta_launcher.ts:849</a></td>
+                <td><code>runtime_config.ts</code> for development wrappers</td>
+              </tr>
+              <tr>
+                <td><strong>What owns the current UI?</strong></td>
+                <td><a href="../app/ui/src/App.tsx#L130">app/ui/src/App.tsx:130</a></td>
+                <td><code>Canvas.tsx</code>, <code>InspectorPanel.tsx</code>, <code>useExecutionSession.ts</code></td>
+              </tr>
+              <tr>
+                <td><strong>How is a request secured?</strong></td>
+                <td><a href="../main.ts#L191">main.ts:191</a></td>
+                <td><code>app/ui/src/api/auth.ts</code></td>
+              </tr>
+              <tr>
+                <td><strong>How is a document loaded?</strong></td>
+                <td><a href="../python_document.ts#L96">python_document.ts:96</a></td>
+                <td><code>python_worker_client.ts</code> → <code>runtime/worker.py</code> → <code>document/parser.py</code></td>
+              </tr>
+              <tr>
+                <td><strong>How is a document saved?</strong></td>
+                <td><a href="../python_document.ts#L403">python_document.ts:403</a></td>
+                <td><code>document/rewrite.py</code> → <code>python_document.ts:737</code></td>
+              </tr>
+              <tr>
+                <td><strong>What Python is accepted?</strong></td>
+                <td><a href="../rowcall/document/parser.py#L39">rowcall/document/parser.py:39</a></td>
+                <td><code>validation.py</code> and ADR 0004</td>
+              </tr>
+              <tr>
+                <td><strong>How is a plan built?</strong></td>
+                <td><a href="../rowcall/document/planning.py#L13">rowcall/document/planning.py:13</a></td>
+                <td><code>runtime/executor.py:70</code></td>
+              </tr>
+              <tr>
+                <td><strong>How does a run execute?</strong></td>
+                <td><a href="../rowcall/runtime/executor.py#L354">rowcall/runtime/executor.py:354</a></td>
+                <td><code>runtime/worker.py</code> → <code>executor.ts</code> → <code>main.ts</code></td>
+              </tr>
+              <tr>
+                <td><strong>How are values previewed?</strong></td>
+                <td><a href="../rowcall/runtime/previews.py#L16">rowcall/runtime/previews.py</a></td>
+                <td><code>types.ts</code> → Inspector preview components</td>
+              </tr>
+              <tr>
+                <td><strong>How does the CLI differ?</strong></td>
+                <td><a href="../rowcall/cli.py#L260">rowcall/cli.py:260</a></td>
+                <td><code>beta_launcher.ts:601</code> and <code>docs/03-headless-cli.md</code></td>
+              </tr>
+              <tr>
+                <td><strong>How is a release built?</strong></td>
+                <td><a href="../tools/release.ts#L85">tools/release.ts:85</a></td>
+                <td><code>packaging/smoke-installed-release.sh</code> → <code>packaging/install.sh</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout violet" style="margin-top: 15px">
+        <strong>One useful debugging order:</strong> browser intent → HTTP request → Deno coordination → worker command/event → Python semantic result → browser presentation. This prevents a UI symptom from being mistaken for a Python-rule bug, or the reverse.
+      </div>
+      </section>
+
+      <footer class="footer">
+        <div class="footer-grid">
+          <p><strong>Scope.</strong> This page describes the repository’s current working tree on August 12, 2026, including local uncommitted changes. It is a mental model, not a promise of a stable public API.</p>
+          <p><a href="simplification-opportunities.html">Continue to the simplification opportunities →</a></p>
+        </div>
+      </footer>
+    </main>
+
+    <script>
+    document.querySelectorAll("[data-jump]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = document.getElementById(button.dataset.jump);
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+        target?.animate(
+          [{ boxShadow: "0 0 0 0 rgba(8,123,115,0)" }, {
+            boxShadow: "0 0 0 6px rgba(8,123,115,.18)",
+          }, { boxShadow: "0 9px 28px rgba(22,42,44,.04)" }],
+          { duration: 900, easing: "ease-out" },
+        );
+      });
+    });
+
+    document.querySelectorAll("[data-tabs]").forEach((tabs) => {
+      const buttons = [...tabs.querySelectorAll('[role="tab"]')];
+      const panels = [...tabs.querySelectorAll('[role="tabpanel"]')];
+
+      function activate(button, moveFocus = false) {
+        buttons.forEach((candidate) =>
+          candidate.setAttribute("aria-selected", String(candidate === button))
+        );
+        panels.forEach((panel) => {
+          panel.hidden = panel.id !== button.getAttribute("aria-controls");
+        });
+        if (moveFocus) button.focus();
+      }
+
+      buttons.forEach((button, index) => {
+        button.addEventListener("click", () => activate(button));
+        button.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+            return;
+          }
+          event.preventDefault();
+          const nextIndex = event.key === "Home"
+            ? 0
+            : event.key === "End"
+            ? buttons.length - 1
+            : event.key === "ArrowRight"
+            ? (index + 1) % buttons.length
+            : (index - 1 + buttons.length) % buttons.length;
+          activate(buttons[nextIndex], true);
+        });
+      });
+    });
+    </script>
+  </body>
+</html>

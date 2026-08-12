@@ -1,0 +1,1788 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <link rel="icon" href="data:,">
+    <title>Rowcall Simplification Opportunities</title>
+    <style>
+    :root {
+      --paper: #f3f0e7;
+      --panel: #fffdf8;
+      --panel-2: #f8f8f3;
+      --ink: #152c2f;
+      --muted: #576b6d;
+      --faint: #718082;
+      --line: #d5d8d0;
+      --line-strong: #b8c1ba;
+      --teal: #087b73;
+      --teal-dark: #075d58;
+      --teal-wash: #e2f2ed;
+      --blue: #365f88;
+      --blue-wash: #e7eef6;
+      --amber: #a96216;
+      --amber-wash: #fff0d8;
+      --violet: #675487;
+      --violet-wash: #eee9f6;
+      --red: #a7443b;
+      --red-wash: #fae9e6;
+      --shadow: 0 22px 55px rgb(22 42 44 / 0.09);
+      --radius: 18px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+    html {
+      scroll-behavior: smooth;
+    }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 94% 0%, rgb(169 98 22 / 0.09), transparent 29rem),
+        linear-gradient(rgb(21 44 47 / 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(21 44 47 / 0.025) 1px, transparent 1px),
+        var(--paper);
+      background-size: auto, 28px 28px, 28px 28px, auto;
+      font-family: var(--sans);
+      line-height: 1.58;
+    }
+    a {
+      color: var(--teal-dark);
+      text-underline-offset: 3px;
+    }
+    a:hover {
+      color: var(--teal);
+    }
+    button,
+    summary {
+      font: inherit;
+    }
+    code,
+    pre {
+      font-family: var(--mono);
+    }
+    code {
+      overflow-wrap: anywhere;
+    }
+    p {
+      margin: 0;
+    }
+    p + p {
+      margin-top: 12px;
+    }
+    ul,
+    ol {
+      margin: 11px 0 0;
+      padding-left: 1.22rem;
+    }
+    li + li {
+      margin-top: 7px;
+    }
+    h1,
+    h2,
+    h3,
+    h4 {
+      text-wrap: balance;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 100;
+      top: 8px;
+      left: 8px;
+      transform: translateY(-160%);
+      border-radius: 9px;
+      background: var(--ink);
+      color: white;
+      padding: 9px 12px;
+    }
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .topbar {
+      position: sticky;
+      z-index: 30;
+      top: 0;
+      border-bottom: 1px solid rgb(184 193 186 / 0.82);
+      background: rgb(243 240 231 / 0.92);
+      backdrop-filter: blur(18px);
+    }
+    .topbar-inner {
+      width: min(1200px, calc(100% - 32px));
+      min-height: 60px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .brand {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 0.84rem;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 29px;
+      height: 29px;
+      border: 1.5px solid var(--ink);
+      border-radius: 8px;
+      background:
+        linear-gradient(90deg, transparent 45%, var(--amber) 45% 55%, transparent
+        55%),
+        linear-gradient(transparent 45%, var(--amber) 45% 55%, transparent 55%),
+        var(--panel);
+      box-shadow: 3px 3px 0 var(--teal);
+    }
+    .topnav {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .topnav::-webkit-scrollbar {
+      display: none;
+    }
+    .topnav a {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      color: var(--muted);
+      padding: 6px 9px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .topnav a:hover {
+      background: var(--panel);
+      color: var(--ink);
+    }
+    .companion-link {
+      flex: 0 0 auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--panel);
+      padding: 7px 11px;
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1200px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 56px 0 90px;
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 30px;
+      background: linear-gradient(135deg, rgb(255 255 255 / 0.98), rgb(255 247 233 /
+        0.95));
+      box-shadow: var(--shadow);
+      padding: clamp(30px, 6vw, 76px);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -125px;
+      bottom: -165px;
+      width: 420px;
+      height: 420px;
+      border: 68px solid rgb(169 98 22 / 0.075);
+      border-radius: 50%;
+    }
+    .eyebrow {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 18px;
+      color: #7b480e;
+      font-size: 0.76rem;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 980px;
+      margin: 0;
+      font-size: clamp(3rem, 7.2vw, 6.65rem);
+      font-weight: 770;
+      letter-spacing: -0.06em;
+      line-height: 0.96;
+    }
+    .hero-lede {
+      position: relative;
+      z-index: 1;
+      max-width: 840px;
+      margin-top: 27px;
+      color: var(--muted);
+      font-size: clamp(1.06rem, 2.1vw, 1.36rem);
+      line-height: 1.58;
+    }
+    .hero-verdict {
+      position: relative;
+      z-index: 1;
+      max-width: 920px;
+      margin-top: 34px;
+      border-left: 5px solid var(--amber);
+      border-radius: 0 15px 15px 0;
+      background: rgb(255 255 255 / 0.8);
+      padding: 18px 21px;
+      font-size: clamp(0.98rem, 1.6vw, 1.12rem);
+    }
+    .hero-verdict strong {
+      color: #7b480e;
+    }
+    .meta-row {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 27px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgb(255 255 255 / 0.78);
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 0.76rem;
+      font-weight: 720;
+    }
+
+    .section {
+      scroll-margin-top: 78px;
+      margin-top: 78px;
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.34fr) minmax(0, 0.66fr);
+      gap: 34px;
+      align-items: start;
+      margin-bottom: 28px;
+    }
+    .section-number {
+      margin: 7px 0 0;
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(2.1rem, 4.5vw, 3.9rem);
+      letter-spacing: -0.05em;
+      line-height: 1.02;
+    }
+    .section-intro {
+      max-width: 820px;
+      margin-top: 11px;
+      color: var(--muted);
+      font-size: 1.04rem;
+    }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 1.18rem;
+      line-height: 1.3;
+    }
+    h4 {
+      margin: 0 0 7px;
+      font-size: 0.96rem;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 14px;
+    }
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 22px;
+      box-shadow: 0 8px 26px rgb(22 42 44 / 0.035);
+    }
+    .card p,
+    .card li {
+      color: var(--muted);
+    }
+    .card-kicker {
+      display: inline-block;
+      margin-bottom: 11px;
+      border-radius: 999px;
+      background: var(--amber-wash);
+      color: #7b480e;
+      padding: 4px 8px;
+      font-size: 0.67rem;
+      font-weight: 850;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .callout {
+      border: 1px solid #a9d2c8;
+      border-radius: var(--radius);
+      background: var(--teal-wash);
+      padding: 22px;
+    }
+    .callout strong {
+      color: var(--teal-dark);
+    }
+    .callout.amber {
+      border-color: #e1c188;
+      background: var(--amber-wash);
+    }
+    .callout.amber strong {
+      color: #7b480e;
+    }
+    .callout.red {
+      border-color: #dfb4ae;
+      background: var(--red-wash);
+    }
+    .callout.red strong {
+      color: var(--red);
+    }
+    .callout.violet {
+      border-color: #c9bce0;
+      background: var(--violet-wash);
+    }
+    .callout.violet strong {
+      color: var(--violet);
+    }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: 1.2fr repeat(3, minmax(0, 0.7fr));
+      gap: 12px;
+    }
+    .signal-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      padding: 18px;
+    }
+    .signal-card.primary {
+      border-color: #a9d2c8;
+      background: var(--teal-wash);
+    }
+    .signal-label {
+      display: block;
+      color: var(--faint);
+      font-size: 0.67rem;
+      font-weight: 850;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .signal-value {
+      display: block;
+      margin-top: 5px;
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+    .signal-card.primary .signal-value {
+      color: var(--teal-dark);
+    }
+    .signal-note {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .ladder {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .ladder-step {
+      position: relative;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: var(--panel);
+      padding: 19px;
+      cursor: pointer;
+      color: var(--ink);
+      text-align: left;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+    .ladder-step:hover,
+    .ladder-step:focus-visible {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgb(22 42 44 / 0.09);
+      outline: none;
+    }
+    .ladder-step[aria-pressed="true"] {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgb(8 123 115 / 0.12);
+    }
+    .ladder-step.a {
+      background: var(--teal-wash);
+      border-color: #a9d2c8;
+    }
+    .ladder-step.b {
+      background: var(--blue-wash);
+      border-color: #b8cbdc;
+    }
+    .ladder-step.c {
+      background: var(--amber-wash);
+      border-color: #e1c188;
+    }
+    .ladder-step.d {
+      background: var(--violet-wash);
+      border-color: #c9bce0;
+    }
+    .ladder-grade {
+      display: block;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 850;
+    }
+    .ladder-step strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 0.95rem;
+    }
+    .ladder-step span:last-child {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 7px;
+      margin-top: 13px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .filter-all {
+      cursor: pointer;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 6px 10px;
+      font-size: 0.74rem;
+      font-weight: 760;
+    }
+
+    .finding-list {
+      display: grid;
+      gap: 16px;
+    }
+    .finding {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 21px;
+      background: var(--panel);
+      box-shadow: 0 9px 28px rgb(22 42 44 / 0.04);
+    }
+    .finding[hidden] {
+      display: none;
+    }
+    .finding::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 6px;
+      background: var(--line-strong);
+    }
+    .finding[data-grade="a"]::before {
+      background: var(--teal);
+    }
+    .finding[data-grade="b"]::before {
+      background: var(--blue);
+    }
+    .finding[data-grade="c"]::before {
+      background: var(--amber);
+    }
+    .finding[data-grade="d"]::before {
+      background: var(--violet);
+    }
+    .finding-head {
+      display: grid;
+      grid-template-columns: 62px minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      padding: 24px 24px 20px 29px;
+    }
+    .finding-rank {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 15px;
+      background: var(--panel-2);
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      font-weight: 850;
+    }
+    .finding h3 {
+      margin-bottom: 7px;
+      font-size: 1.35rem;
+    }
+    .recommendation-line {
+      color: var(--muted);
+    }
+    .recommendation-line strong {
+      color: var(--ink);
+    }
+    .grade-badge {
+      border-radius: 999px;
+      padding: 6px 9px;
+      white-space: nowrap;
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    [data-grade="a"] .grade-badge {
+      background: var(--teal-wash);
+      color: var(--teal-dark);
+    }
+    [data-grade="b"] .grade-badge {
+      background: var(--blue-wash);
+      color: var(--blue);
+    }
+    [data-grade="c"] .grade-badge {
+      background: var(--amber-wash);
+      color: var(--amber);
+    }
+    [data-grade="d"] .grade-badge {
+      background: var(--violet-wash);
+      color: var(--violet);
+    }
+    .finding-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 13px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      padding: 4px 8px;
+      font-size: 0.69rem;
+      font-weight: 720;
+    }
+    .finding-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+    }
+    .finding-cell {
+      padding: 20px 24px;
+    }
+    .finding-cell + .finding-cell {
+      border-left: 1px solid var(--line);
+    }
+    .finding-cell h4 {
+      color: var(--faint);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.075em;
+      text-transform: uppercase;
+    }
+    .finding-cell p,
+    .finding-cell li {
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+    .finding-evidence {
+      border-top: 1px dashed var(--line);
+      padding: 15px 24px 17px 29px;
+      color: var(--faint);
+      font-size: 0.75rem;
+    }
+    .finding-evidence a {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+    details {
+      border-top: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+    summary {
+      cursor: pointer;
+      padding: 15px 24px 15px 29px;
+      color: var(--ink);
+      font-weight: 760;
+    }
+    summary::marker {
+      color: var(--amber);
+    }
+    .details-body {
+      position: relative;
+      border-top: 1px dashed var(--line);
+      padding: 18px 24px 22px 29px;
+    }
+    .prompt {
+      margin: 0;
+      overflow-x: auto;
+      border: 1px solid #263d3d;
+      border-radius: 14px;
+      background: #172a2b;
+      color: #edf7f3;
+      padding: 17px;
+      white-space: pre-wrap;
+      font-size: 0.77rem;
+      line-height: 1.65;
+    }
+    .copy-button {
+      position: absolute;
+      top: 26px;
+      right: 32px;
+      cursor: pointer;
+      border: 1px solid #5c7572;
+      border-radius: 8px;
+      background: #203737;
+      color: #edf7f3;
+      padding: 5px 8px;
+      font-size: 0.68rem;
+      font-weight: 780;
+    }
+    .copy-status {
+      display: block;
+      min-height: 1.2em;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+
+    .quality-list {
+      display: grid;
+      gap: 13px;
+    }
+    .quality-card {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr) minmax(190px, 0.34fr);
+      gap: 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 21px;
+    }
+    .quality-icon {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: var(--red-wash);
+      color: var(--red);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 850;
+    }
+    .quality-card h3 {
+      margin-bottom: 6px;
+    }
+    .quality-card p,
+    .quality-card li {
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+    .quality-action {
+      border-left: 3px solid var(--amber);
+      padding-left: 13px;
+    }
+    .quality-action strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.81rem;
+    }
+
+    .keep-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .keep-card {
+      border: 1px solid #a9d2c8;
+      border-radius: 16px;
+      background: var(--teal-wash);
+      padding: 19px;
+    }
+    .keep-card::before {
+      content: "KEEP";
+      display: block;
+      margin-bottom: 8px;
+      color: var(--teal-dark);
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+    .keep-card h3 {
+      margin-bottom: 6px;
+      font-size: 1rem;
+    }
+    .keep-card p {
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .roadmap {
+      display: grid;
+      gap: 12px;
+      counter-reset: wave;
+    }
+    .wave {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr) minmax(180px, 0.3fr);
+      gap: 20px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      padding: 21px;
+    }
+    .wave-label {
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 850;
+    }
+    .wave h3 {
+      margin-bottom: 6px;
+    }
+    .wave p,
+    .wave li {
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+    .wave-gate {
+      border-left: 3px solid var(--teal);
+      padding-left: 13px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .wave-gate strong {
+      color: var(--ink);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 8px 26px rgb(22 42 44 / 0.03);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 13px 15px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f4ef;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.065em;
+      text-transform: uppercase;
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    td {
+      color: var(--muted);
+    }
+    td strong {
+      color: var(--ink);
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      font-size: 0.77rem;
+      font-weight: 780;
+    }
+    .status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status.pass {
+      color: var(--teal-dark);
+    }
+    .status.gap {
+      color: var(--amber);
+    }
+
+    .footer {
+      margin-top: 78px;
+      border-top: 1px solid var(--line-strong);
+      padding-top: 25px;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: end;
+    }
+    .footer strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 980px) {
+      .signal-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .ladder,
+      .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .quality-card {
+        grid-template-columns: 54px minmax(0, 1fr);
+      }
+      .quality-action {
+        grid-column: 2;
+      }
+      .keep-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 800px) {
+      .section-head {
+        grid-template-columns: 1fr;
+        gap: 9px;
+      }
+      .finding-head {
+        grid-template-columns: 52px minmax(0, 1fr);
+      }
+      .grade-badge {
+        grid-column: 2;
+        width: fit-content;
+      }
+      .finding-grid {
+        grid-template-columns: 1fr;
+      }
+      .finding-cell + .finding-cell {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+      .wave {
+        grid-template-columns: 90px minmax(0, 1fr);
+      }
+      .wave-gate {
+        grid-column: 2;
+      }
+      .companion-link {
+        display: none;
+      }
+    }
+    @media (max-width: 640px) {
+      .topbar-inner,
+      main {
+        width: min(100% - 20px, 1200px);
+      }
+      .topbar-inner {
+        min-height: 54px;
+        gap: 11px;
+      }
+      .brand span:last-child {
+        display: none;
+      }
+      .topnav a {
+        padding: 6px 8px;
+        font-size: 0.71rem;
+      }
+      main {
+        padding-top: 24px;
+      }
+      .hero {
+        border-radius: 20px;
+        padding: 27px 20px;
+      }
+      .hero::after {
+        display: none;
+      }
+      h1 {
+        font-size: clamp(2.55rem, 14vw, 4.2rem);
+      }
+      .section {
+        margin-top: 58px;
+      }
+      .grid-2,
+      .grid-3,
+      .grid-4,
+      .signal-grid,
+      .ladder,
+      .keep-grid {
+        grid-template-columns: 1fr;
+      }
+      .card,
+      .callout {
+        padding: 18px;
+      }
+      .finding-head {
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 11px;
+        padding: 19px 18px 18px 23px;
+      }
+      .finding-rank {
+        width: 40px;
+        height: 40px;
+      }
+      .finding-cell,
+      summary,
+      .details-body,
+      .finding-evidence {
+        padding-left: 23px;
+        padding-right: 18px;
+      }
+      .quality-card {
+        grid-template-columns: 42px minmax(0, 1fr);
+        padding: 18px;
+      }
+      .quality-icon {
+        width: 40px;
+        height: 40px;
+      }
+      .quality-action {
+        grid-column: 1 / -1;
+      }
+      .wave {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .wave-gate {
+        grid-column: auto;
+      }
+      .copy-button {
+        position: static;
+        margin: 10px 0 0;
+      }
+      .table-wrap table {
+        min-width: 710px;
+      }
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+      .ladder-step {
+        transition: none;
+      }
+    }
+    @media print {
+      body {
+        background: white;
+      }
+      .topbar,
+      .filter-row,
+      .copy-button {
+        display: none;
+      }
+      main {
+        width: 100%;
+        padding: 0;
+      }
+      .hero,
+      .card,
+      .finding,
+      .table-wrap {
+        box-shadow: none;
+      }
+      .finding[hidden] {
+        display: block;
+      }
+      .finding,
+      .quality-card,
+      .wave {
+        break-inside: avoid;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#top"
+          aria-label="Rowcall simplification overview">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Rowcall simplification</span>
+        </a>
+        <nav class="topnav" aria-label="Page sections">
+          <a href="#assessment">Assessment</a>
+          <a href="#ladder">Priority ladder</a>
+          <a href="#opportunities">Opportunities</a>
+          <a href="#quality">Quality fixes</a>
+          <a href="#keep">Keep</a>
+          <a href="#sequence">Sequence</a>
+          <a href="#evidence">Evidence</a>
+        </nav>
+        <a class="companion-link"
+          href="system-architecture-explainer.html">← Architecture explainer</a>
+      </div>
+    </header>
+
+    <main id="content">
+      <section class="hero" id="top">
+        <p
+          class="eyebrow">Simplification audit · companion to the architecture explainer</p>
+        <h1>Keep the core. Trim the edges.</h1>
+        <p class="hero-lede">
+        Rowcall’s central model is coherent. The best beta work is not a rewrite. It is a short pass that removes obsolete routes and duplicate contracts, closes a few visible seams, and gives document and run state clearer owners.
+      </p>
+        <p class="hero-verdict">
+        <strong>Recommended posture:</strong> take the low-risk deletions and boundary fixes now. Stage the Browser Workspace extractions later. Keep the careful save transaction and current worker model until beta evidence justifies a larger change.
+      </p>
+        <div class="meta-row" aria-label="Audit traits">
+          <span class="pill">Beta-pragmatic</span>
+          <span class="pill">Evidence-backed</span>
+          <span class="pill">Few focused changes</span>
+          <span class="pill">No app code changed</span>
+        </div>
+      </section>
+
+      <section class="section" id="assessment">
+        <div class="section-head">
+          <p class="section-number">01 / ASSESSMENT</p>
+          <div>
+            <h2>A good core with too many surrounding representations.</h2>
+            <p
+              class="section-intro">Most complexity does not come from the graph model. It comes from compatibility paths, repeated protocol shapes, and browser state that crosses several owners.</p>
+          </div>
+        </div>
+
+        <div class="signal-grid">
+          <div class="signal-card primary">
+            <span class="signal-label">Overall judgment</span>
+            <span class="signal-value">Suitable for an invited beta</span>
+            <span
+              class="signal-note">After a small confidence pass; no production-hardening program is required.</span>
+          </div>
+          <div class="signal-card">
+            <span class="signal-label">Deno tests</span>
+            <span class="signal-value">124 passed</span>
+            <span
+              class="signal-note">Backend, launcher, worker bridge, save, and security behavior.</span>
+          </div>
+          <div class="signal-card">
+            <span class="signal-label">Python tests</span>
+            <span class="signal-value">144 passed</span>
+            <span
+              class="signal-note">2 skipped locally; parser, rewrite, runtime, previews, and CLI.</span>
+          </div>
+          <div class="signal-card">
+            <span class="signal-label">UI tests</span>
+            <span class="signal-value">52 passed</span>
+            <span
+              class="signal-note">Useful unit/state tests, but no rendered browser journey.</span>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-top: 15px">
+          <div class="card">
+            <span class="card-kicker">Strong center</span>
+            <h3>One semantic authority</h3>
+            <p>The Python Core owns inspection, validation, rewrite, planning, execution, and previews. That is the right place for Python meaning.</p>
+          </div>
+          <div class="card">
+            <span class="card-kicker">Main complexity</span>
+            <h3>Repeated edges</h3>
+            <p>Old HTTP and worker commands, duplicate TypeScript types, two sidecar rewriters, and multiple execution-state paths widen the mental model.</p>
+          </div>
+          <div class="card">
+            <span class="card-kicker">Risk balance</span>
+            <h3>Do not simplify file safety</h3>
+            <p>The Document Coordinator is large because it protects user Python from stale overwrites and interrupted two-file saves. Keep its behavior.</p>
+          </div>
+        </div>
+
+        <div class="callout amber" style="margin-top: 15px">
+        <strong>How to read this audit:</strong> the numbered opportunities simplify architecture. The later quality-fix section lists bugs and confidence gaps. A test or bug fix can be urgent without being an architectural simplification.
+      </div>
+      </section>
+
+      <section class="section" id="ladder">
+        <div class="section-head">
+          <p class="section-number">02 / PRIORITY LADDER</p>
+          <div>
+            <h2>Four grades, from deletion to design decision.</h2>
+            <p
+              class="section-intro">Select a grade to filter the detailed opportunities. “Discuss later” is not a polite way to say “must do.” It means the current beta design is acceptable.</p>
+          </div>
+        </div>
+
+        <div class="ladder" aria-label="Simplification grade filter">
+          <button class="ladder-step a" type="button" data-filter="a"
+            aria-pressed="false">
+          <span class="ladder-grade">GRADE A</span><strong>Low-hanging</strong><span>Mostly deletion or one-owner cleanup. Clear route and low behavior risk.</span>
+        </button>
+          <button class="ladder-step b" type="button" data-filter="b"
+            aria-pressed="false">
+          <span class="ladder-grade">GRADE B</span><strong>Focused next step</strong><span>Contained behavior-preserving work across a few layers.</span>
+        </button>
+          <button class="ladder-step c" type="button" data-filter="c"
+            aria-pressed="false">
+          <span class="ladder-grade">GRADE C</span><strong>Structural</strong><span>Useful ownership change. Stage it after beta-critical work.</span>
+        </button>
+          <button class="ladder-step d" type="button" data-filter="d"
+            aria-pressed="false">
+          <span class="ladder-grade">GRADE D</span><strong>Discuss later</strong><span>A product/runtime decision, not a cleanup ticket.</span>
+        </button>
+        </div>
+        <div class="filter-row">
+          <button class="filter-all" type="button"
+            data-filter-all>Show all</button>
+          <span id="filter-status"
+            aria-live="polite">Showing all six opportunities.</span>
+        </div>
+      </section>
+
+      <section class="section" id="opportunities">
+        <div class="section-head">
+          <p class="section-number">03 / OPPORTUNITIES</p>
+          <div>
+            <h2>Six changes worth considering.</h2>
+            <p
+              class="section-intro">Each item states the recommendation, the concrete change, why it matters, and a stopping condition. Expand the agent brief if you want to delegate it.</p>
+          </div>
+        </div>
+
+        <div class="finding-list">
+          <article class="finding" data-grade="a">
+            <div class="finding-head">
+              <span class="finding-rank">01</span>
+              <div>
+                <h3>Delete the compatibility shell before it becomes a promise.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> remove old paths that have no in-repo production caller, after one final private-caller check.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: low–medium</span><span class="metric">Risk: low</span><span class="metric">Payoff: high clarity</span><span class="metric">Confidence: high</span></div>
+              </div>
+              <span class="grade-badge">Grade A · do now</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <ul>
+                  <li><code>/run-node</code> duplicates <code>/run-to-node</code>.</li>
+                  <li><code>/runtime-session/clear-cache</code> is a no-op.</li>
+                  <li><code>rowcall update</code> exists only to report that updates are not implemented.</li>
+                  <li>An unused whole-document decoder occupies <code>document.ts:451</code> to the end.</li>
+                  <li>Several worker verbs have only test callers.</li>
+                </ul>
+              </div>
+              <div class="finding-cell">
+                <h4>What changes</h4>
+                <p>Remove each zero-caller feature as a vertical slice: route or command, Deno wrapper, worker verb, Python session method, types, tests, and docs. Keep the active operations decoder and the two real run modes: run through a step and run the graph.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Why it matters</h4>
+                <p>The code currently suggests three execution modes, cache management, an update system, and a whole-document JSON write model. None is real product behavior. This is the best time to delete them because beta users have not built on them.</p>
+                <p><strong>Done when:</strong> every remaining public command, HTTP route, and worker verb has a known product caller.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: <a href="../document.ts#L451">document.ts:451</a> · <a href="../main.ts#L834">main.ts:834</a> · <a href="../main.ts#L1066">main.ts:1066</a> · <a href="../beta_launcher.ts#L357">beta_launcher.ts:357</a> · <a href="../python_worker_client.ts#L12">python_worker_client.ts:12</a> · browser calls only <a href="../app/ui/src/api/execution.ts#L200">execution.ts:200</a></p>
+            <details>
+              <summary>Agent brief: inventory and remove the compatibility surface</summary>
+              <div class="details-body">
+              <pre class="prompt">Inventory every non-test caller of POST /run-node, POST /runtime-session/clear-cache, the `rowcall update` and `doctor --updates` paths, `decodeRowcallDocument`, and every Python worker operation. Separate real product callers from tests and documentation. Produce a keep/delete table first. Then remove only zero-caller surfaces in vertical slices, including types, tests, and docs. Preserve /run-to-node, /run-graph, document inspection/rewrite, table queries, shutdown, and the Python core functions they use.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+
+          <article class="finding" data-grade="a">
+            <div class="finding-head">
+              <span class="finding-rank">02</span>
+              <div>
+                <h3>Give the document contract one TypeScript definition and one metadata owner.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> consolidate the raw document and operation types; resolve fields that no longer have a product meaning.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: low–medium</span><span class="metric">Risk: low</span><span class="metric">Payoff: high clarity</span><span class="metric">Confidence: high</span></div>
+              </div>
+              <span class="grade-badge">Grade A · focused cleanup</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <p>The server and Browser Workspace define separate <code>RowcallDocumentV1</code> and <code>DocumentOperation</code> unions. Python and Deno both apply sidecar metadata operations. A <code>title</code> field crosses Python, TypeScript, the API, and sidecars, but the UI labels steps from <code>functionName</code> and never emits a title update.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>What changes</h4>
+                <ul>
+                  <li>Move the raw TypeScript contract to one shared pure module.</li>
+                  <li>Let either Python or Deno—not both—own sidecar operation application.</li>
+                  <li>For beta, remove custom <code>title</code> unless it is intentionally restored to the UI.</li>
+                  <li>Stop sending generated <code>runtimeCode</code> to the browser if no UI behavior needs it.</li>
+                </ul>
+              </div>
+              <div class="finding-cell">
+                <h4>Why it matters</h4>
+                <p>One edit currently has several opportunities to drift between languages and projections. A small field matrix and one-owner rule are enough; a schema generator or monorepo reorganization is not needed.</p>
+                <p><strong>Done when:</strong> a raw document field is defined once in TypeScript and each persisted metadata operation has one authoritative implementation.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: <a href="../document.ts#L3">document.ts:3</a> · <a href="../app/ui/src/api/documents.ts#L55">UI documents.ts:55</a> · <a href="../app/ui/src/graph/documentTypes.ts#L3">documentTypes.ts:3</a> · <a href="../python_document.ts#L478">python_document.ts:478</a> and <a href="../python_document.ts#L1465">:1465</a> · <a href="../rowcall/document/rewrite.py#L544">rewrite.py:544</a></p>
+            <details>
+              <summary>Agent brief: build the contract field matrix</summary>
+              <div class="details-body">
+              <pre class="prompt">Build a field matrix for the server RowcallDocumentV1, the UI raw document, RuntimeGraph, DocumentOperation, the Python app document dictionary, and sidecar metadata. Mark where each field is produced, consumed, dropped, derived, or rewritten. Recommend a minimal consolidation: one shared raw TypeScript contract, one sidecar rewrite owner, and an explicit keep/remove decision for title and runtimeCode. Do not introduce code generation or change save semantics.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+
+          <article class="finding" data-grade="b">
+            <div class="finding-head">
+              <span class="finding-rank">03</span>
+              <div>
+                <h3>Make one path authoritative for a run plan and a final result.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> remove duplicate work on both sides of the worker boundary without changing the SSE experience.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: medium</span><span class="metric">Risk: low–medium</span><span class="metric">Payoff: medium</span><span class="metric">Confidence: high</span></div>
+              </div>
+              <span class="grade-badge">Grade B · next</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <p>The Runtime Worker calls <code>plan_run</code> to emit <code>run_plan</code>, then <code>execute_source</code> parses and plans the same source again. In the browser, the final SSE event stores the response, then the mutation <code>onSuccess</code> stores the same response again.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>What changes</h4>
+                <p>Let the execution path emit its own authoritative plan, perhaps through an <code>on_plan</code> callback. In the Browser Workspace, make the Run Session the only owner of terminal response storage; mutation completion should only finalize transport and active-run cleanup.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Why it matters</h4>
+                <p>This reduces two subtle forms of duplication: two parse/plan error paths in Python and two final-state writers in React. It keeps progress streaming, which is useful for slow beta runs.</p>
+                <p><strong>Done when:</strong> one parse produces the plan used to execute, and one browser reducer/path records the final response exactly once.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: <a href="../rowcall/runtime/worker.py#L221">worker.py:221</a> → <a href="../rowcall/runtime/executor.py#L106">executor.py:106</a> · <a href="../app/ui/src/query/useExecutionSession.ts#L166">useExecutionSession.ts:166</a> and <a href="../app/ui/src/App.tsx#L413">App.tsx:413</a></p>
+            <details>
+              <summary>Agent brief: create one run lifecycle</summary>
+              <div class="details-body">
+              <pre class="prompt">Trace one streamed run from worker request through run_plan, node events, terminal SSE, fetch resolution, React mutation onSuccess, and useExecutionSession. Propose the smallest behavior-preserving change that (1) parses and plans source once, while still emitting run_plan before node_started, and (2) stores a terminal ExecutionResponse once in the browser. Preserve SSE event shapes, cancellation, result freshness, notifications, and non-streaming API behavior. Add focused regression tests before refactoring.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+
+          <article class="finding" data-grade="c">
+            <div class="finding-head">
+              <span class="finding-rank">04</span>
+              <div>
+                <h3>Extract Browser Workspace state by ownership, not by file size.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> create a real Document Session first, then make the Run Session the complete execution owner, then split Inspector modes.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: medium–high</span><span class="metric">Risk: medium</span><span class="metric">Payoff: high maintainability</span><span class="metric">Confidence: high</span></div>
+              </div>
+              <span class="grade-badge">Grade C · stage it</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <p><code>App.tsx</code> is 2,900 lines and owns document load, edits, save/revision/reload, disk polling, graph transformations, run orchestration, notices, and shell UI. <code>InspectorPanel.tsx</code> is 3,587 lines and mixes modes, previews, trace UI, local drafts, and its exported shell. A query hook imports display-state types from the Inspector component.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>What changes</h4>
+                <ol>
+                  <li>Move domain display-state types out of React components.</li>
+                  <li>Extract <code>useDocumentSession</code>: document, path, revision, pending operations, save state, disk state, edit/save/reload.</li>
+                  <li>Move run start/stream/finish/failure behind the Run Session.</li>
+                  <li>Split Inspector into Develop, Overview, Results, and shared preview primitives.</li>
+                </ol>
+              </div>
+              <div class="finding-cell">
+                <h4>Why it matters</h4>
+                <p>This gives future agents an answer to “where does this state belong?” The objective is not smaller files by itself. It is one write owner for document state and one for execution state.</p>
+                <p><strong>Done when:</strong> <code>App</code> composes sessions and views; it no longer implements their state machines.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: <a href="../app/ui/src/App.tsx#L130">App.tsx:130</a> · <a href="../app/ui/src/components/InspectorPanel.tsx#L3281">InspectorPanel.tsx:3281</a> · reversed type dependency at <a href="../app/ui/src/query/useExecutionSession.ts#L7">useExecutionSession.ts:7</a></p>
+            <details>
+              <summary>Agent brief: propose a safe extraction sequence</summary>
+              <div class="details-body">
+              <pre class="prompt">Draw an ownership table for every state value and mutable ref in App.tsx and useExecutionSession, plus the local state families in InspectorPanel.tsx. Propose a four-PR extraction sequence. Start with type movement and useDocumentSession; preserve all current revision, external-change, unknown-save-outcome, result-freshness, and network behavior. State the public contract for each extracted module and the focused tests that lock behavior before each move. Do not rewrite the UI or persistence model.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+
+          <article class="finding" data-grade="d">
+            <div class="finding-head">
+              <span class="finding-rank">05</span>
+              <div>
+                <h3>Decide whether input copying is a guarantee or best effort.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> resolve this semantic mismatch deliberately; do not hide it inside a refactor.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: medium</span><span class="metric">Risk: product behavior</span><span class="metric">Payoff: semantic honesty</span><span class="metric">Confidence: high</span></div>
+              </div>
+              <span class="grade-badge">Grade D · decide</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <p>The product model says branches receive copies and do not affect one another. The Preview Engine has special copy handlers for common data types, then tries <code>deepcopy</code>. If either copy fails, it passes the original object by reference and adds a warning.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Two honest choices</h4>
+                <ol>
+                  <li><strong>Fail closed:</strong> stop the downstream step with a clear input-copy error.</li>
+                  <li><strong>Best effort:</strong> keep the fallback, but describe branch isolation as best effort and make the warning prominent.</li>
+                </ol>
+                <p>For the stated product promise, fail closed is cleaner. It may reject advanced custom objects.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Why it matters</h4>
+                <p>A first sibling can mutate a shared fallback object before a later sibling runs. This is uncommon for supported DataFrames, but it touches Rowcall’s central “branch without interference” story.</p>
+                <p><strong>Done when:</strong> a regression test and the runtime contract agree on copy failure behavior.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: product claim at <a href="01-product-scope.md#branching">01-product-scope.md</a> · implementation at <a href="../rowcall/runtime/previews.py#L698">previews.py:698</a> · current contract acknowledges reference fallback at <a href="02-runtime-contract.md#runtime-rules">02-runtime-contract.md</a></p>
+            <details>
+              <summary>Agent brief: characterize branch isolation</summary>
+              <div class="details-body">
+              <pre class="prompt">Build a regression test where one root returns a mutable custom object whose __deepcopy__ raises and two sibling nodes consume it. Prove whether the first sibling can affect the second. Confirm supported behavior for normal containers, Pandas, Polars, and NumPy. Compare a fail-closed input_copy_error with the current pass-by-reference warning. Recommend one contract and list the user-visible error/documentation changes. Do not add serialization or process isolation.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+
+          <article class="finding" data-grade="d">
+            <div class="finding-head">
+              <span class="finding-rank">06</span>
+              <div>
+                <h3>Keep the long-lived Runtime Worker for beta; revisit only with evidence.</h3>
+                <p
+                  class="recommendation-line"><strong>Recommendation:</strong> document the process boundary now. Consider a run-scoped worker later if cross-run state or memory retention becomes a real tester problem.</p>
+                <div
+                  class="finding-metrics"><span class="metric">Effort: high</span><span class="metric">Risk: high</span><span class="metric">Payoff: uncertain</span><span class="metric">Confidence: medium–high</span></div>
+              </div>
+              <span class="grade-badge">Grade D · defer</span>
+            </div>
+            <div class="finding-grid">
+              <div class="finding-cell">
+                <h4>Current state</h4>
+                <p>One Python process handles successive runs and retains the Latest Result Store. To honor “fresh run,” the Execution Engine contains substantial local-import and bytecode invalidation logic. Process-wide modules, builtins, native state, and background threads can still persist.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Possible later model</h4>
+                <p>Start a new worker for each run, then keep that worker alive only as the successful result-inspection session. Starting the next run replaces it. This could simplify import freshness and strengthen cross-run isolation, but it changes startup, cancellation, table inspection, and concurrency behavior.</p>
+              </div>
+              <div class="finding-cell">
+                <h4>Why defer</h4>
+                <p>The current model is clear enough for trusted invited users, and it supports interactive tables naturally. A redesign before beta would spend risk without evidence.</p>
+                <p><strong>Revisit when:</strong> testers report stale imports, cross-run state, runaway memory, or worker crashes that materially hurt use.</p>
+              </div>
+            </div>
+            <p
+              class="finding-evidence">Evidence: shared worker at <a href="../executor.ts#L40">executor.ts:40</a> · import invalidation at <a href="../rowcall/runtime/executor.py#L172">executor.py:172</a> · Latest Result Store at <a href="../rowcall/runtime/session.py#L18">session.py:18</a></p>
+            <details>
+              <summary>Agent brief: compare worker lifecycles without implementing</summary>
+              <div class="details-body">
+              <pre class="prompt">Compare the current long-lived Runtime Worker with a run-scoped worker that remains alive only to serve the latest successful result set. Map impacts on import freshness, startup cost, cancellation, child-process cleanup, table paging, latest-result replacement, direct API concurrency, and memory. Estimate which current code could be deleted and which new lifecycle state would be required. Do not implement. Recommend measurable beta signals that would justify the change.</pre>
+              <button class="copy-button" type="button">Copy brief</button><span class="copy-status" aria-live="polite"></span>
+            </div>
+            </details>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="quality">
+        <div class="section-head">
+          <p class="section-number">04 / QUALITY FIXES</p>
+          <div>
+            <h2>Small seams worth closing before or during beta.</h2>
+            <p
+              class="section-intro">These are not reasons to delay indefinitely. The first two bundles are short, high-confidence work. The last two buy debugging and release confidence.</p>
+          </div>
+        </div>
+
+        <div class="quality-list">
+          <article class="quality-card">
+            <span class="quality-icon">UI</span>
+            <div>
+              <h3>Make basic Browser Workspace controls tell the truth.</h3>
+              <ul>
+                <li><strong>Ctrl/Cmd+S while editing code:</strong> the UI advertises the shortcut, but the Canvas handler excludes CodeMirror and the editor keymap defines only Shift+Enter. A browser Save Page action can win.</li>
+                <li><strong>Initial invalid file:</strong> status polling starts only after a successful load. Repairing an invalid startup file requires a browser refresh because the error view has no Retry action.</li>
+                <li><strong>Read-only contract:</strong> it is currently latent because Python always reports <code>false</code>, but node dragging and Save do not honor it. Remove the unused contract or enforce it everywhere.</li>
+              </ul>
+              <p class="finding-evidence"
+                style="border:0;padding:10px 0 0">Evidence: <a href="../app/ui/src/components/Canvas.tsx#L230">Canvas.tsx:230</a>, <a href="../app/ui/src/components/InspectorPanel.tsx#L1582">InspectorPanel.tsx:1582</a>, <a href="../app/ui/src/App.tsx#L186">App.tsx:186</a>, <a href="../app/ui/src/App.tsx#L1201">App.tsx:1201</a>, <a href="../app/ui/src/App.tsx#L1728">App.tsx:1728</a></p>
+            </div>
+            <div
+              class="quality-action"><strong>Recommendation</strong><p>Add one application-level save command, add Retry to initial load failure, and make one explicit decision on document-level read-only. These are small fixes with direct user impact.</p></div>
+          </article>
+
+          <article class="quality-card">
+            <span class="quality-icon">API</span>
+            <div>
+              <h3>Make the local API fail predictably and fail closed.</h3>
+              <ul>
+                <li>The three run routes call <code>c.req.json()</code> without catching malformed JSON and then access properties without first requiring a plain object. Invalid requests can become unstructured HTTP 500 responses.</li>
+                <li>Authentication exempts static GET files, then protects a manual list of API prefixes. A future route that is not added to the list fails open.</li>
+                <li>The server prints its token-bearing URL; the launcher tees that output into <code>~/.rowcall/logs/rowcall.log</code>.</li>
+              </ul>
+              <p class="finding-evidence"
+                style="border:0;padding:10px 0 0">Evidence: <a href="../main.ts#L231">main.ts:231</a>, <a href="../main.ts#L834">:834</a>, <a href="../main.ts#L899">:899</a>, <a href="../main.ts#L961">:961</a>, <a href="../main.ts#L101">:101</a>, <a href="../beta_launcher.ts#L1755">beta_launcher.ts:1755</a></p>
+            </div>
+            <div
+              class="quality-action"><strong>Recommendation</strong><p>Add one shared run-request decoder, require auth for everything except explicit public static GET paths, and redact the token from persisted logs. Keep Host and Origin checks.</p></div>
+          </article>
+
+          <article class="quality-card">
+            <span class="quality-icon">DX</span>
+            <div>
+              <h3>Make debugging point to the user’s real source.</h3>
+              <p>Rowcall slices node function text and removes excluded globals lines before compiling them with the original filename. That restarts line numbering at 1. A reproduced exception on source line 13 reported line 2; a globals exception on line 9 reported line 1.</p>
+              <p>Also, generated projects ignore <code>.venv</code> and Python caches but not Rowcall’s persistent lock and transaction/temp patterns. Opening a new project can immediately create an unexplained untracked lock file.</p>
+              <p class="finding-evidence"
+                style="border:0;padding:10px 0 0">Evidence: <a href="../rowcall/document/parser.py#L957">parser.py:957</a>, <a href="../rowcall/document/parser.py#L988">:988</a>, <a href="../rowcall/runtime/executor.py#L521">executor.py:521</a>, <a href="../rowcall/runtime/executor.py#L587">:587</a>, <a href="../beta_launcher.ts#L119">beta_launcher.ts:119</a>, <a href="../python_document.ts#L1216">python_document.ts:1216</a></p>
+            </div>
+            <div
+              class="quality-action"><strong>Recommendation</strong><p>Preserve line offsets with blank padding or adjusted AST locations and add exact-line tests. Copy the repository’s Rowcall save-control patterns into the new-project <code>.gitignore</code>.</p></div>
+          </article>
+
+          <article class="quality-card">
+            <span class="quality-icon">TEST</span>
+            <div>
+              <h3>Add two journeys, not a broad test program.</h3>
+              <p>The suite strongly covers functions and several process/file boundaries. It does not render the app in a real browser. The installed-release smoke runs outside the checkout, but uses an explicit clean Python and exercises headless <code>new</code>, <code>validate</code>, and <code>run</code>, not the actual managed environment or visual app.</p>
+              <ol>
+                <li><strong>Browser smoke:</strong> load fixture → edit in CodeMirror → save with shortcut → run through step → see output.</li>
+                <li><strong>Packaged environment smoke:</strong> outside checkout, exercise managed setup and one starter-library document; assert the materialized requirements file removed editable-install lines.</li>
+              </ol>
+              <p class="finding-evidence"
+                style="border:0;padding:10px 0 0">Evidence: <a href="../app/ui/deno.json#L3">app/ui/deno.json:3</a>, <a href="../packaging/smoke-installed-release.sh#L78">smoke-installed-release.sh:78</a>, <a href="../.github/workflows/ci.yml#L22">ci.yml:22</a></p>
+            </div>
+            <div
+              class="quality-action"><strong>Recommendation</strong><p>Keep both as release or one-platform integration checks if dependency installation makes them slow. Do not pursue broad screenshot coverage or a full test pyramid for this beta.</p></div>
+          </article>
+        </div>
+
+        <div class="callout red" style="margin-top: 15px">
+        <strong>Known and acceptable for invited beta:</strong> no Python sandbox, no server-enforced time or memory limit, one active document, one serialized Runtime Worker, unsigned/unnotarized macOS binaries, manual publishing, and no compute cache. State these limits; do not build production infrastructure around them yet.
+      </div>
+      </section>
+
+      <section class="section" id="keep">
+        <div class="section-head">
+          <p class="section-number">05 / KEEP</p>
+          <div>
+            <h2>Complexity that earns its place.</h2>
+            <p
+              class="section-intro">Removing these would make the system shorter and less trustworthy. Preserve the behavior even if code is later moved into smaller modules.</p>
+          </div>
+        </div>
+
+        <div class="keep-grid">
+          <article class="keep-card">
+            <h3>Python as the canonical document</h3>
+            <p>It remains reviewable in Git, runnable without the UI, and directly editable by people and agents.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Python-owned semantics</h3>
+            <p>Do not reimplement Python parsing, validation, rewrite, planning, or execution rules in TypeScript.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Semantic operation batches</h3>
+            <p>They express user intent and avoid blind whole-file replacement from a browser projection.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Revision-bound save and run</h3>
+            <p>They protect changes made by an external editor or agent and bind execution to visible source.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Unknown save-outcome lock</h3>
+            <p>It prevents a second write from replaying an operation batch that may already have committed.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Atomic source/sidecar recovery</h3>
+            <p>The Document Coordinator’s journal, locks, temp files, fsync, and alias checks protect real user work.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Strict document grammar</h3>
+            <p>The constraints are what make safe AST inspection and visual source rewriting understandable.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Fresh runs with no compute cache</h3>
+            <p>It is the simplest behavior to explain and avoids provenance and invalidation work during beta.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Bounded previews</h3>
+            <p>Rich Python values stay in Python; browser payloads and user-defined representation hooks are controlled.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Latest Result Store</h3>
+            <p>Keep one provenance-checked result set for table paging. Name it as inspection state, not cache.</p>
+          </article>
+          <article class="keep-card">
+            <h3>Host, Origin, and token checks</h3>
+            <p>Simplify the token rule to fail closed, but keep all three protections around local code execution.</p>
+          </article>
+          <article class="keep-card">
+            <h3>One active document and run</h3>
+            <p>This matches the invited-beta scope. Do not introduce sessions, registries, queues, or multi-user ownership yet.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="sequence">
+        <div class="section-head">
+          <p class="section-number">06 / SEQUENCE</p>
+          <div>
+            <h2>A practical order of work.</h2>
+            <p
+              class="section-intro">Stop after any wave if the beta feels reliable and the next wave does not solve an observed problem.</p>
+          </div>
+        </div>
+
+        <div class="roadmap">
+          <article class="wave">
+            <span class="wave-label">WAVE 0 · HOURS</span>
+            <div>
+              <h3>Close obvious beta seams</h3>
+              <p>Fix the code-editor save shortcut, malformed run bodies, auth default, token logging, and generated <code>.gitignore</code>. Add Retry to the initial load error if time permits.</p>
+            </div>
+            <p
+              class="wave-gate"><strong>Stop gate:</strong> a tester can open, edit, save, and receive a predictable error without a misleading control or persisted token.</p>
+          </article>
+          <article class="wave">
+            <span class="wave-label">WAVE 1 · 1–2 PRs</span>
+            <div>
+              <h3>Delete false product surface</h3>
+              <p>Inventory private callers, then remove the unused full-document decoder, compatibility run/cache paths, unimplemented update path, and confirmed zero-caller worker verbs.</p>
+            </div>
+            <p
+              class="wave-gate"><strong>Stop gate:</strong> each public command, route, and worker verb describes real beta behavior.</p>
+          </article>
+          <article class="wave">
+            <span class="wave-label">WAVE 2 · DAYS</span>
+            <div>
+              <h3>Add two confidence journeys and repair tracebacks</h3>
+              <p>Add one browser smoke and one packaged managed-environment smoke. Preserve source line numbers in runtime exceptions.</p>
+            </div>
+            <p
+              class="wave-gate"><strong>Stop gate:</strong> the shipped path works end to end, and a failure points to the correct user line.</p>
+          </article>
+          <article class="wave">
+            <span class="wave-label">WAVE 3 · STAGED</span>
+            <div>
+              <h3>Consolidate ownership</h3>
+              <p>Unify document contracts and sidecar ownership. Parse/plan once. Store final run results once. Extract Document Session, then complete Run Session ownership, then split Inspector modes.</p>
+            </div>
+            <p
+              class="wave-gate"><strong>Only start if:</strong> ongoing agent changes are repeatedly hard to locate or regress across duplicate paths.</p>
+          </article>
+          <article class="wave">
+            <span class="wave-label">LATER · EVIDENCE</span>
+            <div>
+              <h3>Debate semantic and process boundaries</h3>
+              <p>Choose fail-closed versus best-effort copying. Revisit the long-lived worker only if real beta use shows cross-run state, memory, or freshness problems.</p>
+            </div>
+            <p
+              class="wave-gate"><strong>Do not prebuild:</strong> caching, sandboxing, multi-document sessions, collaboration, or distributed execution.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="evidence">
+        <div class="section-head">
+          <p class="section-number">07 / EVIDENCE</p>
+          <div>
+            <h2>What was checked, and what was not claimed.</h2>
+            <p
+              class="section-intro">The audit reflects the current working tree, including pre-existing uncommitted changes. It did not modify application code.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Result</th>
+                <th>Interpretation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong><code>deno task check</code></strong></td>
+                <td><span class="status pass">Passed</span></td>
+                <td>Formatting, lint, Deno type checks, and UI type checks passed at this snapshot.</td>
+              </tr>
+              <tr>
+                <td><strong>Deno/backend tests</strong></td>
+                <td><span class="status pass">124 passed</span></td>
+                <td>Strong coverage of security, launcher behavior, worker bridge, SSE, revisions, file transactions, recovery, and symlink races.</td>
+              </tr>
+              <tr>
+                <td><strong>Python tests</strong></td>
+                <td><span class="status pass">144 passed</span></td>
+                <td>Parser, validation, rewrite, planning, execution, previews, worker, and CLI. Two optional-library tests skipped locally.</td>
+              </tr>
+              <tr>
+                <td><strong>UI tests</strong></td>
+                <td><span class="status pass">52 passed</span></td>
+                <td>Pure state, graph, API-shape, preview, and presentation tests.</td>
+              </tr>
+              <tr>
+                <td><strong>Rendered browser journey</strong></td>
+                <td><span class="status gap">Not present</span></td>
+                <td>No DOM-rendered <code>App</code> test or real-browser edit/save/run journey was found.</td>
+              </tr>
+              <tr>
+                <td><strong>Installed artifact smoke</strong></td>
+                <td><span class="status pass">Present, partial</span></td>
+                <td>Runs outside checkout with explicit clean Python; it does not open the app or exercise managed setup.</td>
+              </tr>
+              <tr>
+                <td><strong>Code coverage percentage</strong></td>
+                <td><span class="status gap">Not measured</span></td>
+                <td>No percentage is claimed. Passing test counts do not prove coverage.</td>
+              </tr>
+              <tr>
+                <td><strong>Production readiness</strong></td>
+                <td><span class="status gap">Not assessed</span></td>
+                <td>The requested standard is an invited beta. This audit does not recommend production-scale infrastructure.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout" style="margin-top: 15px">
+        <strong>Bottom line:</strong> share the beta after a short seam-fix pass if practical. The architecture does not need a foundational rewrite. The largest simplification gains come from deleting false surface area and clarifying who owns document and run state.
+      </div>
+      </section>
+
+      <footer class="footer">
+        <div class="footer-grid">
+          <p><strong>Scope.</strong> This audit is intentionally selective. It prioritizes a few changes that improve comprehension, beta confidence, or semantic honesty.</p>
+          <p><a href="system-architecture-explainer.html">Return to the architecture explainer →</a></p>
+        </div>
+      </footer>
+    </main>
+
+    <script>
+    const findings = [...document.querySelectorAll(".finding")];
+    const gradeButtons = [...document.querySelectorAll("[data-filter]")];
+    const status = document.getElementById("filter-status");
+
+    function showGrade(grade) {
+      const active = gradeButtons.find((button) =>
+        button.getAttribute("aria-pressed") === "true"
+      );
+      const nextGrade = active?.dataset.filter === grade ? null : grade;
+      gradeButtons.forEach((button) =>
+        button.setAttribute(
+          "aria-pressed",
+          String(button.dataset.filter === nextGrade),
+        )
+      );
+      findings.forEach((finding) => {
+        finding.hidden = nextGrade !== null && finding.dataset.grade !== nextGrade;
+      });
+      const shown = findings.filter((finding) => !finding.hidden).length;
+      status.textContent = nextGrade
+        ? `Showing ${shown} Grade ${nextGrade.toUpperCase()} ${
+          shown === 1 ? "opportunity" : "opportunities"
+        }.`
+        : "Showing all six opportunities.";
+    }
+
+    gradeButtons.forEach((button) =>
+      button.addEventListener("click", () => showGrade(button.dataset.filter))
+    );
+    document.querySelector("[data-filter-all]").addEventListener("click", () => {
+      gradeButtons.forEach((button) =>
+        button.setAttribute("aria-pressed", "false")
+      );
+      findings.forEach((finding) => {
+        finding.hidden = false;
+      });
+      status.textContent = "Showing all six opportunities.";
+    });
+
+    document.querySelectorAll(".copy-button").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const body = button.closest(".details-body");
+        const prompt = body?.querySelector(".prompt")?.textContent ?? "";
+        const copyStatus = body?.querySelector(".copy-status");
+        try {
+          await navigator.clipboard.writeText(prompt);
+          button.textContent = "Copied";
+          if (copyStatus) {
+            copyStatus.textContent = "Agent brief copied to the clipboard.";
+          }
+        } catch {
+          if (copyStatus) {
+            copyStatus.textContent =
+              "Copy was blocked. Select the brief text and copy it manually.";
+          }
+        }
+        setTimeout(() => {
+          button.textContent = "Copy brief";
+        }, 1600);
+      });
+    });
+    </script>
+  </body>
+</html>
