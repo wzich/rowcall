@@ -1033,10 +1033,26 @@ function GraphInspector({
           <p className="font-medium">
             {globalsError.message || "Document Globals failed."}
           </p>
+          {globalsError.error && globalsError.error !== globalsError.message &&
+            (
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm">
+                {globalsError.error}
+              </p>
+            )}
           {globalsError.pythonExecutable && (
             <p className="mt-1 truncate font-mono text-xs opacity-80">
               Python: {globalsError.pythonExecutable}
             </p>
+          )}
+          {globalsError.stderr?.trim() && (
+            <details className="mt-3 overflow-hidden rounded border border-red-300 bg-white/60 dark:border-red-800 dark:bg-red-950/40">
+              <summary className="cursor-pointer px-3 py-2 text-xs font-medium">
+                Python traceback
+              </summary>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-red-300 p-3 font-mono text-xs leading-5 dark:border-red-800">
+                {globalsError.stderr}
+              </pre>
+            </details>
           )}
         </div>
       )}
