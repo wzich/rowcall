@@ -54,6 +54,11 @@ class BrokenPngFigure:
         raise RuntimeError("renderer unavailable")
 
 
+class MetadataPngFigure:
+    def _repr_png_(self) -> tuple[bytes, dict[str, int]]:
+        return PNG_1X1, {"width": 1, "height": 1}
+
+
 class RuntimePreviewTests(unittest.TestCase):
     def assert_bounded_with_marker(self, text: str, byte_limit: int) -> None:
         self.assertLessEqual(len(text.encode("utf-8")), byte_limit)
@@ -220,6 +225,146 @@ class RuntimePreviewTests(unittest.TestCase):
         self.assertEqual(figure.calls, 1)
         self.assertEqual(used_bytes, len(PNG_1X1))
         self.assertIn("image", rendered)
+
+    def test_png_hook_accepts_ipython_data_and_metadata_tuple(self) -> None:
+        rendered, used_bytes = previews.preview_view(
+            "figure",
+            MetadataPngFigure(),
+            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+        )
+
+        self.assertEqual(used_bytes, len(PNG_1X1))
+        self.assertEqual(
+            base64.b64decode(rendered["image"]["dataBase64"]),
+            PNG_1X1,
+        )
+
+    def test_matplotlib_figure_and_axes_views_render_without_user_export_code(self) -> None:
+        class Figure:
+            def savefig(self, buffer: object, *, format: str, bbox_inches: str) -> None:
+                self.saved_with = (format, bbox_inches)
+                buffer.write(PNG_1X1)
+
+        class Axes:
+            def __init__(self, figure: Figure) -> None:
+                self.figure = figure
+
+        Figure.__module__ = "matplotlib.figure"
+        Axes.__module__ = "matplotlib.axes"
+
+        fake_matplotlib = types.ModuleType("matplotlib")
+        fake_axes = types.ModuleType("matplotlib.axes")
+        fake_axes.Axes = Axes
+        fake_figure = types.ModuleType("matplotlib.figure")
+        fake_figure.Figure = Figure
+        with patch.dict(
+            sys.modules,
+            {
+                "matplotlib": fake_matplotlib,
+                "matplotlib.axes": fake_axes,
+                "matplotlib.figure": fake_figure,
+            },
+        ):
+            for value in (Figure(), Axes(Figure())):
+                rendered, used_bytes = previews.preview_view(
+                    "chart",
+                    value,
+                    remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+                )
+                self.assertEqual(used_bytes, len(PNG_1X1))
+                self.assertIn("image", rendered)
+
+    def test_seaborn_grid_view_renders_its_matplotlib_figure(self) -> None:
+        class Figure:
+            def savefig(self, buffer: object, *, format: str, bbox_inches: str) -> None:
+                buffer.write(PNG_1X1)
+
+        class Axes:
+            pass
+
+        class FacetGrid:
+            def __init__(self) -> None:
+                self.figure = Figure()
+
+        FacetGrid.__module__ = "seaborn.axisgrid"
+        fake_matplotlib = types.ModuleType("matplotlib")
+        fake_axes = types.ModuleType("matplotlib.axes")
+        fake_axes.Axes = Axes
+        fake_figure = types.ModuleType("matplotlib.figure")
+        fake_figure.Figure = Figure
+        with patch.dict(
+            sys.modules,
+            {
+                "matplotlib": fake_matplotlib,
+                "matplotlib.axes": fake_axes,
+                "matplotlib.figure": fake_figure,
+            },
+        ):
+            rendered, used_bytes = previews.preview_view(
+                "chart",
+                FacetGrid(),
+                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            )
+
+        self.assertEqual(used_bytes, len(PNG_1X1))
+        self.assertIn("image", rendered)
+
+    def test_plotly_figure_view_uses_static_image_export(self) -> None:
+        class BaseFigure:
+            def to_image(self, *, format: str) -> bytes:
+                self.format = format
+                return PNG_1X1
+
+        BaseFigure.__module__ = "plotly.basedatatypes"
+
+        fake_plotly = types.ModuleType("plotly")
+        fake_basedatatypes = types.ModuleType("plotly.basedatatypes")
+        fake_basedatatypes.BaseFigure = BaseFigure
+        with patch.dict(
+            sys.modules,
+            {
+                "plotly": fake_plotly,
+                "plotly.basedatatypes": fake_basedatatypes,
+            },
+        ):
+            figure = BaseFigure()
+            rendered, used_bytes = previews.preview_view(
+                "chart",
+                figure,
+                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            )
+
+        self.assertEqual(figure.format, "png")
+        self.assertEqual(used_bytes, len(PNG_1X1))
+        self.assertIn("image", rendered)
+
+    def test_plotly_static_export_failure_is_an_actionable_preview_warning(self) -> None:
+        class BaseFigure:
+            def to_image(self, *, format: str) -> bytes:
+                del format
+                raise RuntimeError("Kaleido is not installed")
+
+        BaseFigure.__module__ = "plotly.basedatatypes"
+
+        fake_plotly = types.ModuleType("plotly")
+        fake_basedatatypes = types.ModuleType("plotly.basedatatypes")
+        fake_basedatatypes.BaseFigure = BaseFigure
+        with patch.dict(
+            sys.modules,
+            {
+                "plotly": fake_plotly,
+                "plotly.basedatatypes": fake_basedatatypes,
+            },
+        ):
+            rendered, used_bytes = previews.preview_view(
+                "chart",
+                BaseFigure(),
+                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            )
+
+        self.assertEqual(used_bytes, 0)
+        self.assertNotIn("image", rendered)
+        self.assertIn("Kaleido and Chrome or Chromium", rendered["warning"])
 
     def test_png_render_failure_becomes_a_warning(self) -> None:
         preview, used_bytes = previews.preview_view(

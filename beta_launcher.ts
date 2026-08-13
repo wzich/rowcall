@@ -126,6 +126,7 @@ const defaultAgentInstructions = `# Rowcall
 - Edit \`graph.py\` directly. Node functions must follow \`rowcall help format\`.
 - After edits, run \`rowcall validate .\`; run \`rowcall run . --json=summary\` when execution is needed.
 - Do not relaunch Rowcall after every edit. The open UI reloads changes from disk.
+- For charts, assign the plotting object to a named value and include it in \`views\`; do not call \`plt.show()\` or manually export image bytes.
 - Keep dependencies in \`requirements.txt\` and the project environment.
 - Canvas metadata, when present, is in \`graph.rowcall.json\`; match it to stable node IDs in \`graph.py\`.
 `;
@@ -261,8 +262,11 @@ Return requirements:
   - Use return {} when outputs=[] and views=[]; do not return expressions inline.
 
 Outputs flow to downstream nodes. Views are only for human inspection. Views
-support normal table/value previews and static PNGs from PNG bytes or an
-object's _repr_png_() method. Interactive JavaScript views are not supported.
+support normal table/value previews and static PNGs from PNG bytes, objects with
+a _repr_png_() method, Matplotlib figures or axes, Seaborn plots, Pillow images,
+and Plotly figures when Kaleido and Chrome or Chromium are available. Assign and
+return the plotting object; do not call plt.show() or export image bytes
+yourself. Interactive JavaScript views are not supported.
 
 Invalid:
   return {"total": sum(numbers)}

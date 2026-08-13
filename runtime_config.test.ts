@@ -45,12 +45,18 @@ Deno.test("getPythonCommandEnvironment prepends configured Python paths", () => 
       runtimeMode: "user",
     });
     assertEquals(getPythonCommandEnvironment(), {
+      MPLBACKEND: "Agg",
       PYTHONPATH: `/rowcall${Deno.build.os === "windows" ? ";" : ":"}/existing`,
     });
   } finally {
     configurePythonRuntime({});
     restoreEnv("PYTHONPATH", previousPythonPath);
   }
+});
+
+Deno.test("getPythonCommandEnvironment forces a headless plotting backend", () => {
+  configurePythonRuntime({});
+  assertEquals(getPythonCommandEnvironment(), { MPLBACKEND: "Agg" });
 });
 
 function restoreEnv(name: string, value: string | undefined): void {

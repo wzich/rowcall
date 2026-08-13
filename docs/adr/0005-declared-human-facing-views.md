@@ -49,9 +49,17 @@ For static images, the runtime supports only PNG:
 
 - Raw `bytes` or `bytearray` declared as a view are interpreted as PNG data.
 - For any other declared view, the runtime calls `_repr_png_()` when that method
-  exists and is callable.
+  exists and is callable. Both raw bytes and the IPython-compatible
+  `(bytes, metadata)` return form are accepted.
 - `_repr_png_()` is inspected and called only for declared views. Rowcall does
-  not scan ordinary outputs or guess library-specific save/export methods.
+  not scan ordinary outputs.
+- Narrow adapters render Matplotlib figures and axes, Seaborn objects backed by
+  Matplotlib, and Plotly figures. Pillow images render through their
+  `_repr_png_()` method. Plotly's adapter is available only when its optional
+  Kaleido and Chrome/Chromium static export stack is installed.
+- Rowcall workers force Matplotlib's non-interactive `Agg` backend. `plt.show()`
+  therefore cannot open a native window or block the worker; the supported path
+  is to assign and declare the plotting object as a view.
 - Invalid PNG data, an unsupported return value, or a rendering exception
   produces a warning and fallback value preview; it does not fail the node.
 - PNGs are limited to 5 MiB per view, 20 MiB of raw PNG data per run, and 10
@@ -73,11 +81,11 @@ ambiguity.
   views.
 - Human-facing intent is visible to the editor, CLI, agents, and source review
   without executing code.
-- Plotting-library integration stays library agnostic as long as the object can
-  provide `_repr_png_()` or the node produces PNG bytes itself.
-- Libraries that cannot already produce PNG bytes are not specially supported.
-  Rowcall reports a bounded fallback preview/warning instead of adding image
-  conversion dependencies.
+- The most common static plotting path does not require authors to manually
+  produce PNG bytes. Additional libraries still need `_repr_png_()` or raw PNG
+  bytes and otherwise receive a bounded fallback preview/warning.
+- Plotly support is conditional rather than adding a browser or static export
+  stack to Rowcall's default project dependencies.
 - Static images have no tooltips, zoom protocol, selection callbacks, or
   JavaScript execution. Interactive/JS visualization support is deferred to a
   separate future decision.

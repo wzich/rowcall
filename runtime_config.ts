@@ -83,14 +83,18 @@ export function getLocalVirtualEnvPythonCandidates(
 }
 
 export function getPythonCommandEnvironment(): Record<string, string> {
-  if (configuredPythonPathEntries.length === 0) return {};
-  const existingPythonPath = Deno.env.get("PYTHONPATH");
-  return {
-    PYTHONPATH: [
-      ...configuredPythonPathEntries,
-      ...(existingPythonPath ? [existingPythonPath] : []),
-    ].join(Deno.build.os === "windows" ? ";" : ":"),
+  const environment: Record<string, string> = {
+    // Rowcall workers are headless. Prevent plotting libraries from selecting a
+    // native GUI backend that can open windows and block the worker process.
+    MPLBACKEND: "Agg",
   };
+  if (configuredPythonPathEntries.length === 0) return environment;
+  const existingPythonPath = Deno.env.get("PYTHONPATH");
+  environment.PYTHONPATH = [
+    ...configuredPythonPathEntries,
+    ...(existingPythonPath ? [existingPythonPath] : []),
+  ].join(Deno.build.os === "windows" ? ";" : ":");
+  return environment;
 }
 
 export async function getPythonEnvironmentInfo(): Promise<

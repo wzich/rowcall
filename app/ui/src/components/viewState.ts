@@ -26,3 +26,10 @@ export function toggleOrderedName(
   }
   return [...names, name];
 }
+
+export function orderDevelopResultNames(
+  outputs: string[],
+  views: string[],
+): string[] {
+  return [...views, ...outputs.filter((name) => !views.includes(name))];
+}

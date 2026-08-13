@@ -507,6 +507,7 @@ Deno.test({
     assertStringIncludes(agentInstructions, "rowcall help format");
     assertStringIncludes(agentInstructions, "rowcall validate .");
     assertStringIncludes(agentInstructions, "Do not relaunch Rowcall");
+    assertStringIncludes(agentInstructions, "do not call `plt.show()`");
     assertStringIncludes(agentInstructions, "stable node IDs");
   },
 });

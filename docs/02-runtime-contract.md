@@ -74,11 +74,17 @@ Nodes. A value may be both an output and a view without being duplicated in the
 function's return dictionary.
 
 Views use the same dataframe, JSON, text, and `repr` preview machinery as
-outputs. A declared view containing `bytes`/`bytearray`, or an object with a
-callable `_repr_png_()` method, can additionally produce a static PNG preview.
-Rowcall does not invoke `_repr_png_()` for ordinary outputs and does not contain
-library-specific plotting adapters. Rendering failures become preview warnings
-rather than node failures.
+outputs. A declared view containing `bytes`/`bytearray`, an object with a
+callable `_repr_png_()` method, or a supported plotting object can additionally
+produce a static PNG preview. Supported plotting objects include Matplotlib
+figures and axes, Seaborn objects backed by Matplotlib, Pillow images, and
+Plotly figures when Plotly's optional Kaleido and Chrome/Chromium static export
+stack is available. Rowcall does not invoke rich rendering for ordinary outputs.
+Rendering failures become preview warnings rather than node failures.
+
+Rowcall workers force Matplotlib's non-interactive `Agg` backend. Consequently,
+`plt.show()` cannot open a native GUI or block the worker; authors should assign
+the figure or axes to a declared view instead.
 
 Each Node may declare at most 10 views. PNG data is limited to 5 MiB per view
 and 20 MiB per Run. The app response carries accepted image bytes as base64; the

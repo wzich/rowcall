@@ -284,11 +284,14 @@ def make_plot(data):
     return {"summary": summary, "chart": chart}
 ```
 
-Views use Rowcall's existing dataframe/value previews. A view also renders as a
-static PNG when it is PNG `bytes`/`bytearray` or has a callable `_repr_png_()`
-method. Interactive JavaScript plots and library-specific adapters are not
-supported yet. See [ADR 0005](docs/adr/0005-declared-human-facing-views.md) for
-the full contract.
+Views use Rowcall's existing dataframe/value previews. Static image views accept
+PNG `bytes`/`bytearray`, objects with a callable `_repr_png_()` method, and
+common plotting objects from Matplotlib, Seaborn, and Pillow. Plotly figures are
+also supported when Plotly's optional Kaleido and Chrome/Chromium static export
+dependencies are installed. Assign the plotting object to a named value and
+declare that value as a view; do not call `plt.show()` or export the image
+yourself. Interactive JavaScript plots are not supported yet. See
+[ADR 0005](docs/adr/0005-declared-human-facing-views.md) for the full contract.
 
 The decorator records node metadata and returns the original function unchanged.
 `deno task setup` installs the local Python package into `.venv`. For local

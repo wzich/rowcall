@@ -35,6 +35,74 @@ VIEW_PNG_RUN_MAX_BYTES = 20 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
+def render_matplotlib_png(value: Any) -> bytes | None:
+    """Render supported Matplotlib-family objects without requiring user export code."""
+    value_modules = tuple(base.__module__ for base in type(value).__mro__)
+    if not any(
+        module.startswith(("matplotlib.", "seaborn.")) for module in value_modules
+    ):
+        return None
+
+    try:
+        from matplotlib.axes import Axes
+        from matplotlib.figure import Figure
+    except ImportError:
+        return None
+
+    figure = None
+    if isinstance(value, Figure):
+        figure = value
+    elif isinstance(value, Axes):
+        figure = value.figure
+    elif type(value).__module__.startswith("seaborn."):
+        candidate = getattr(value, "figure", None)
+        if candidate is None:
+            candidate = getattr(value, "fig", None)
+        if isinstance(candidate, Figure):
+            figure = candidate
+
+    if figure is None:
+        return None
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", bbox_inches="tight")
+    return buffer.getvalue()
+
+
+def render_plotly_png(value: Any) -> bytes | None:
+    """Render a Plotly figure when its optional static export stack is available."""
+    if not any(
+        base.__module__.startswith("plotly.") for base in type(value).__mro__
+    ):
+        return None
+
+    try:
+        from plotly.basedatatypes import BaseFigure
+    except ImportError:
+        return None
+
+    if not isinstance(value, BaseFigure):
+        return None
+
+    try:
+        rendered = value.to_image(format="png")
+    except Exception as exc:
+        raise RuntimeError(
+            "Plotly could not export this figure as PNG. Static Plotly views "
+            f"require Kaleido and Chrome or Chromium: {exc}"
+        ) from exc
+
+    if not isinstance(rendered, (bytes, bytearray)):
+        raise RuntimeError("Plotly's to_image(format='png') did not return PNG bytes.")
+    return bytes(rendered)
+
+
+PNG_VIEW_RENDERERS: tuple[tuple[str, Callable[[Any], bytes | None]], ...] = (
+    ("Matplotlib", render_matplotlib_png),
+    ("Plotly", render_plotly_png),
+)
+
+
 def register_copy_handler(predicate: Callable[[Any], bool], copier: Callable[[Any], Any], label: str) -> None:
     COPY_HANDLERS.append((predicate, copier, label))
 
@@ -623,6 +691,8 @@ def preview_view(
                         stderr_text,
                     ),
                 )
+                if isinstance(rendered, tuple) and len(rendered) == 2:
+                    rendered = rendered[0]
                 if isinstance(rendered, (bytes, bytearray)):
                     png_bytes = bytes(rendered)
                 else:
@@ -635,7 +705,44 @@ def preview_view(
                     png_warning,
                     f"Could not render view '{name}' with _repr_png_(): {exc}",
                 )
-        elif "table" not in preview and "jsonValue" not in preview:
+        else:
+            for renderer_name, library_renderer in PNG_VIEW_RENDERERS:
+                try:
+                    rendered, stdout_text, stderr_text = run_with_captured_stdio(
+                        lambda renderer=library_renderer: renderer(value)
+                    )
+                    renderer_warning = captured_stdio_warning(
+                        f"{renderer_name} rendering for view '{name}'",
+                        stdout_text,
+                        stderr_text,
+                    )
+                    if rendered is None:
+                        png_warning = combine_warnings(png_warning, renderer_warning)
+                        continue
+                    if not isinstance(rendered, (bytes, bytearray)):
+                        png_warning = combine_warnings(
+                            png_warning,
+                            renderer_warning,
+                            f"{renderer_name} renderer for view '{name}' did not return PNG bytes.",
+                        )
+                        break
+                    png_bytes = bytes(rendered)
+                    png_warning = combine_warnings(png_warning, renderer_warning)
+                    break
+                except Exception as exc:
+                    png_warning = combine_warnings(
+                        png_warning,
+                        f"Could not render view '{name}' with {renderer_name}: {exc}",
+                    )
+                    break
+
+        if (
+            png_bytes is None
+            and not callable(renderer)
+            and "table" not in preview
+            and "jsonValue" not in preview
+            and not png_warning
+        ):
             png_warning = combine_warnings(
                 png_warning,
                 f"View '{name}' has no supported rich renderer; showing its repr only.",

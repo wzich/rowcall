@@ -20,7 +20,11 @@ import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
 import { ResultTable } from "./ResultTable.tsx";
 import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
 import { isJsonContainer } from "./jsonPreviewState.ts";
-import { hasResultPreviews, toggleOrderedName } from "./viewState.ts";
+import {
+  hasResultPreviews,
+  orderDevelopResultNames,
+  toggleOrderedName,
+} from "./viewState.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -738,7 +742,10 @@ function RunResult({
         <div className="mt-4 space-y-4">
           <ResultOutputTabs previews={nodeResult.outputs} />
           {Object.keys(nodeResult.views).length > 0 && (
-            <ResultOutputTabs previews={nodeResult.views} title="Views" />
+            <ResultOutputTabs
+              previews={nodeResult.views}
+              title="Shown results"
+            />
           )}
           <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
           <WarningList warnings={nodeResult.warnings} />
@@ -854,7 +861,7 @@ function RunResult({
           interactiveTable={interactiveTable}
         />
         {Object.keys(views).length > 0 && (
-          <ResultOutputTabs previews={views} title="Views" />
+          <ResultOutputTabs previews={views} title="Shown results" />
         )}
         <TextOutputBlock title="Stdout" value={nodeResult?.stdout ?? ""} />
         <WarningList warnings={nodeResult?.warnings ?? []} />
@@ -1504,7 +1511,7 @@ function TraceStep({
         </section>
         <section>
           <h5 className="text-xs font-semibold uppercase text-zinc-500">
-            Views
+            Shown results
           </h5>
           <PreviewBlock previews={step.views} />
         </section>
@@ -1621,19 +1628,32 @@ function NodeInspector({
     () => flattenInputPreviews(selectedNode.inputGroups),
     [selectedNode.inputGroups],
   );
-  const outputPreviewOptions = useMemo(
-    () =>
-      selectedNode.outputs.map((name) => ({
+  const resultPreviewOptions = useMemo(
+    () => {
+      const resultNames = orderDevelopResultNames(
+        selectedNode.outputs,
+        selectedNode.views,
+      );
+      return resultNames.map((name) => ({
         name,
-        preview: selectedNode.outputPreviews[name] ?? null,
-      })),
-    [selectedNode.outputPreviews, selectedNode.outputs],
+        preview: selectedNode.viewPreviews[name] ??
+          selectedNode.outputPreviews[name] ?? null,
+        shown: selectedNode.views.includes(name),
+        downstream: selectedNode.outputs.includes(name),
+      }));
+    },
+    [
+      selectedNode.outputPreviews,
+      selectedNode.outputs,
+      selectedNode.viewPreviews,
+      selectedNode.views,
+    ],
   );
   const [selectedInputName, setSelectedInputName] = useState(
     () => getPreferredPreviewName(inputOptions),
   );
   const [selectedOutputName, setSelectedOutputName] = useState(
-    () => getPreferredPreviewName(outputPreviewOptions),
+    () => getPreferredPreviewName(resultPreviewOptions),
   );
 
   useEffect(() => {
@@ -1646,11 +1666,11 @@ function NodeInspector({
 
   useEffect(() => {
     setSelectedOutputName((current) =>
-      outputPreviewOptions.some((option) => option.name === current)
+      resultPreviewOptions.some((option) => option.name === current)
         ? current
-        : getPreferredPreviewName(outputPreviewOptions)
+        : getPreferredPreviewName(resultPreviewOptions)
     );
-  }, [outputPreviewOptions, selectedNode.id]);
+  }, [resultPreviewOptions, selectedNode.id]);
 
   const handleOutputReplacement = () => {
     if (!outputReplacement || readOnly || !selectedNode.editable) return;
@@ -1695,8 +1715,23 @@ function NodeInspector({
     setSelectedOutputName(name);
   };
 
+  const handleShowView = (name: string) => {
+    if (
+      readOnly || !selectedNode.editable || selectedNode.views.includes(name)
+    ) {
+      return;
+    }
+    const nextViews = toggleOrderedName(selectedNode.views, name, 10);
+    if (nextViews === selectedNode.views) return;
+    onViewsChange(selectedNode.id, nextViews);
+    setSelectedOutputName(name);
+  };
+
   const exposableOutputs = outputOptions.filter((option) =>
     option.source !== "missing" && !selectedNode.outputs.includes(option.name)
+  );
+  const showableValues = outputOptions.filter((option) =>
+    option.source !== "missing" && !selectedNode.views.includes(option.name)
   );
 
   if (mode === "overview") {
@@ -1746,7 +1781,8 @@ function NodeInspector({
       codeReadOnly={codeReadOnly}
       extensions={extensions}
       inputOptions={inputOptions}
-      outputOptions={outputPreviewOptions}
+      resultOptions={resultPreviewOptions}
+      showableValues={showableValues}
       exposableOutputs={exposableOutputs}
       selectedInputName={selectedInputName}
       selectedOutputName={selectedOutputName}
@@ -1756,6 +1792,7 @@ function NodeInspector({
       outputReplacementDisabled={readOnly || !selectedNode.editable}
       onInputSelect={setSelectedInputName}
       onOutputSelect={setSelectedOutputName}
+      onShowView={handleShowView}
       onExposeOutput={handleExposeOutput}
       onCodeChange={onCodeChange}
       onOutputReplacement={handleOutputReplacement}
@@ -1770,6 +1807,8 @@ function NodeInspector({
 type InspectorPreviewOption = {
   name: string;
   preview: ValuePreview | null;
+  shown?: boolean;
+  downstream?: boolean;
   sourceNodeId?: string;
   sourceLabel?: string;
   status?: NodeRunVisualStatus;
@@ -1803,7 +1842,8 @@ function NodeDevelop({
   codeReadOnly,
   extensions,
   inputOptions,
-  outputOptions,
+  resultOptions,
+  showableValues,
   exposableOutputs,
   selectedInputName,
   selectedOutputName,
@@ -1813,6 +1853,7 @@ function NodeDevelop({
   outputReplacementDisabled,
   onInputSelect,
   onOutputSelect,
+  onShowView,
   onExposeOutput,
   onCodeChange,
   onOutputReplacement,
@@ -1828,7 +1869,8 @@ function NodeDevelop({
     ReturnType<typeof python> | ReturnType<typeof keymap.of>
   >;
   inputOptions: InspectorPreviewOption[];
-  outputOptions: InspectorPreviewOption[];
+  resultOptions: InspectorPreviewOption[];
+  showableValues: OutputOption[];
   exposableOutputs: OutputOption[];
   selectedInputName: string;
   selectedOutputName: string;
@@ -1838,6 +1880,7 @@ function NodeDevelop({
   outputReplacementDisabled: boolean;
   onInputSelect: (name: string) => void;
   onOutputSelect: (name: string) => void;
+  onShowView: (name: string) => void;
   onExposeOutput: (name: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
   onOutputReplacement: () => void;
@@ -1847,7 +1890,7 @@ function NodeDevelop({
   const selectedInput =
     inputOptions.find((option) => option.name === selectedInputName) ?? null;
   const selectedOutput =
-    outputOptions.find((option) => option.name === selectedOutputName) ?? null;
+    resultOptions.find((option) => option.name === selectedOutputName) ?? null;
   const outputIssue = getDevelopOutputIssue(
     selectedNode,
     executionState,
@@ -1904,20 +1947,22 @@ function NodeDevelop({
         </section>
 
         <ValuePeek
-          label="Outputs"
+          label="Results"
           direction="output"
           className="h-[32%] min-h-36"
-          options={outputOptions}
+          options={resultOptions}
           selectedName={selectedOutputName}
           selectedOption={selectedOutput}
           status={runStatus}
-          emptyLabel="Expose a value to preview it here."
+          emptyLabel="Show a value here or pass it to downstream steps."
+          showableValues={showableValues}
           exposableOutputs={exposableOutputs}
           exposeDisabled={outputReplacementDisabled}
           issue={outputIssue}
           outputReplacement={outputReplacement}
           outputReplacementDisabled={outputReplacementDisabled}
           onOutputReplacement={onOutputReplacement}
+          onShow={onShowView}
           onExpose={onExposeOutput}
           onShowDocumentGlobals={onShowDocumentGlobals}
           onSelect={onOutputSelect}
@@ -1937,12 +1982,14 @@ function ValuePeek({
   selectedOption,
   status,
   emptyLabel,
+  showableValues = [],
   exposableOutputs = [],
   exposeDisabled = false,
   issue,
   outputReplacement,
   outputReplacementDisabled = false,
   onOutputReplacement,
+  onShow,
   onExpose,
   onShowDocumentGlobals,
   onSelect,
@@ -1956,12 +2003,14 @@ function ValuePeek({
   selectedOption: InspectorPreviewOption | null;
   status: NodeRunVisualStatus;
   emptyLabel: string;
+  showableValues?: OutputOption[];
   exposableOutputs?: OutputOption[];
   exposeDisabled?: boolean;
   issue?: DevelopOutputIssue | null;
   outputReplacement?: { from: string; to: string } | null;
   outputReplacementDisabled?: boolean;
   onOutputReplacement?: () => void;
+  onShow?: (name: string) => void;
   onExpose?: (name: string) => void;
   onShowDocumentGlobals?: () => void;
   onSelect: (name: string) => void;
@@ -1987,24 +2036,49 @@ function ValuePeek({
               <button
                 key={option.name}
                 type="button"
-                className={`shrink-0 border-b-2 pb-2.5 font-mono text-xs ${
+                className={`flex shrink-0 items-center gap-1.5 border-b-2 pb-2.5 font-mono text-xs ${
                   selected
                     ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
                     : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
                 onClick={() => onSelect(option.name)}
               >
-                {option.name}
+                <span>{option.name}</span>
+                {option.shown && (
+                  <span className="rounded bg-violet-100 px-1 py-0.5 font-sans text-[9px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                    shown
+                  </span>
+                )}
+                {option.downstream && (
+                  <span className="rounded bg-blue-100 px-1 py-0.5 font-sans text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                    output
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
         <div className="flex shrink-0 items-center gap-3 pb-2.5">
+          {onShow && (
+            <AddValueMenu
+              triggerLabel="+ Show"
+              title="Show a value"
+              description="Display it in Rowcall results without passing it downstream."
+              emptyLabel="Assign a value in the code to show it."
+              candidates={showableValues}
+              disabled={exposeDisabled}
+              onSelect={onShow}
+            />
+          )}
           {onExpose && (
-            <ExposeOutputMenu
+            <AddValueMenu
+              triggerLabel="+ Output"
+              title="Add an output"
+              description="Make it available to downstream steps."
+              emptyLabel="Assign a value in the code to output it."
               candidates={exposableOutputs}
               disabled={exposeDisabled}
-              onExpose={onExpose}
+              onSelect={onExpose}
             />
           )}
           {state && (
@@ -2064,14 +2138,22 @@ function ValuePeek({
   );
 }
 
-function ExposeOutputMenu({
+function AddValueMenu({
+  triggerLabel,
+  title,
+  description,
+  emptyLabel,
   candidates,
   disabled,
-  onExpose,
+  onSelect,
 }: {
+  triggerLabel: string;
+  title: string;
+  description: string;
+  emptyLabel: string;
   candidates: OutputOption[];
   disabled: boolean;
-  onExpose: (name: string) => void;
+  onSelect: (name: string) => void;
 }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const assigned = candidates.filter((candidate) =>
@@ -2079,9 +2161,9 @@ function ExposeOutputMenu({
   );
   const inputs = candidates.filter((candidate) => candidate.source === "input");
 
-  const expose = (name: string) => {
+  const select = (name: string) => {
     detailsRef.current?.removeAttribute("open");
-    onExpose(name);
+    onSelect(name);
   };
 
   return (
@@ -2094,34 +2176,34 @@ function ExposeOutputMenu({
         }`}
         aria-disabled={disabled}
       >
-        + Expose
+        {triggerLabel}
       </summary>
       <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded border border-zinc-200 bg-white text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
         <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
           <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-            Expose a value
+            {title}
           </p>
           <p className="mt-0.5 text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-            Make it available to downstream steps.
+            {description}
           </p>
         </div>
         {candidates.length === 0
           ? (
             <p className="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400">
-              Assign a value in the code to expose it.
+              {emptyLabel}
             </p>
           )
           : (
             <div className="max-h-52 overflow-y-auto py-1">
-              <ExposeOutputGroup
+              <AddValueGroup
                 label="Assigned in this step"
                 candidates={assigned}
-                onExpose={expose}
+                onSelect={select}
               />
-              <ExposeOutputGroup
+              <AddValueGroup
                 label="Pass through an input"
                 candidates={inputs}
-                onExpose={expose}
+                onSelect={select}
               />
             </div>
           )}
@@ -2130,14 +2212,14 @@ function ExposeOutputMenu({
   );
 }
 
-function ExposeOutputGroup({
+function AddValueGroup({
   label,
   candidates,
-  onExpose,
+  onSelect,
 }: {
   label: string;
   candidates: OutputOption[];
-  onExpose: (name: string) => void;
+  onSelect: (name: string) => void;
 }) {
   if (candidates.length === 0) return null;
 
@@ -2151,7 +2233,7 @@ function ExposeOutputGroup({
           key={candidate.name}
           type="button"
           className="flex w-full items-center px-3 py-2 text-left font-mono text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-          onClick={() => onExpose(candidate.name)}
+          onClick={() => onSelect(candidate.name)}
         >
           {candidate.name}
         </button>
@@ -2456,10 +2538,10 @@ function NodeOverview({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-                Declared Views
+                Shown in Results
               </h3>
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                Human-facing values; never passed downstream.
+                Displayed in Rowcall; never passed downstream.
               </p>
             </div>
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -2471,7 +2553,7 @@ function NodeOverview({
             outputOptions={outputOptions}
             readOnly={outputsReadOnly}
             onToggle={onViewToggle}
-            emptyLabel="No assignable views found."
+            emptyLabel="No values are available to show."
           />
         </section>
 
@@ -2635,7 +2717,7 @@ function NodeResults({
               <OutputPreviewSection previews={selectedNode.outputPreviews} />
               <OutputPreviewSection
                 previews={selectedNode.viewPreviews}
-                title="View previews"
+                title="Shown result previews"
               />
             </>
           )}

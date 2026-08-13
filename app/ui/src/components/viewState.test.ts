@@ -1,5 +1,9 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
-import { hasResultPreviews, toggleOrderedName } from "./viewState.ts";
+import {
+  hasResultPreviews,
+  orderDevelopResultNames,
+  toggleOrderedName,
+} from "./viewState.ts";
 
 Deno.test("hasResultPreviews recognizes view-only results", () => {
   assertEquals(hasResultPreviews({ outputs: {}, views: { chart: {} } }), true);
@@ -20,4 +24,11 @@ Deno.test("toggleOrderedName preserves existing order and appends additions", ()
 Deno.test("toggleOrderedName leaves a full selection unchanged", () => {
   const names = ["one", "two"];
   assertStrictEquals(toggleOrderedName(names, "three", 2), names);
+});
+
+Deno.test("develop results show views first and deduplicate shared outputs", () => {
+  assertEquals(
+    orderDevelopResultNames(["data", "chart", "summary"], ["chart", "note"]),
+    ["chart", "note", "data", "summary"],
+  );
 });

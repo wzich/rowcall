@@ -79,8 +79,10 @@ to the browser. The contract between nodes remains explicit and inspectable.
 A node may separately declare ordered **views**: values intended for a person to
 inspect rather than for downstream computation. Views can use the existing
 table, JSON, text, and value previews. Static PNGs are supported when the
-declared value is PNG bytes or supplies `_repr_png_()`. Interactive JavaScript
-visualizations and library-specific adapters are intentionally deferred.
+declared value is PNG bytes, supplies `_repr_png_()`, or is a supported
+Matplotlib, Seaborn, Pillow, or Plotly object. Plotly rendering requires its
+optional Kaleido and Chrome/Chromium export stack. Interactive JavaScript
+visualizations and broader library adapters are intentionally deferred.
 
 ### Manual Execution
 
