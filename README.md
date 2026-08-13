@@ -83,8 +83,9 @@ install them; the first `open` or `run` that creates a project environment does.
 
 Opening uses `my-work/.venv` when it exists. Without one, Rowcall uses a
 compatible active environment if available, or creates `my-work/.venv` and
-installs `requirements.txt` once. To create and open with a specific interpreter
-instead, run:
+installs `requirements.txt`. Rowcall records the file's hash and refreshes that
+environment whenever the requirements change. To create and open with a specific
+interpreter instead, run:
 
 ```sh
 rowcall new my-work --open --python /path/to/python
@@ -113,8 +114,8 @@ only.
 Opening and running use this interpreter order: explicit `--python`, an existing
 `.venv` beside the document, an active virtualenv, an active Conda environment,
 then a newly created project `.venv`. Rowcall installs `requirements.txt` only
-when it creates the project environment; it never auto-installs into an existing
-or active environment.
+in project environments it created, and refreshes dependencies whenever the file
+changes. It never auto-installs into a pre-existing or active environment.
 
 Share `requirements.txt`, not `.venv`; virtual environments contain
 machine-specific paths and the generated `.gitignore` excludes them.

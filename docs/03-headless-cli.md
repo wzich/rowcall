@@ -4,9 +4,10 @@ Rowcall documents can be validated and run without opening the canvas editor.
 The `rowcall` launcher is the beta automation surface for humans, agents, and
 scripts. `run` prefers an existing project `.venv`, then an active virtualenv or
 Conda environment; if none exists, it creates the project environment and
-installs `requirements.txt` once. `validate` uses the same existing-environment
-order but never creates an environment or installs packages. Pass
-`--managed-env` to use Rowcall's starter environment under
+installs `requirements.txt`. Rowcall-created project environments refresh their
+dependencies when that file changes. `validate` uses the same
+existing-environment order but never creates an environment or installs
+packages. Pass `--managed-env` to use Rowcall's starter environment under
 `~/.rowcall/venvs/default`.
 
 The Python module CLI remains the underlying runtime contract for headless
@@ -33,8 +34,8 @@ rowcall new path/to/project --open
 
 Opening uses `path/to/project/.venv` when it exists, otherwise an active
 environment when available. With neither, it creates the project `.venv` and
-installs `requirements.txt` once. To use a specific interpreter directly
-instead:
+installs `requirements.txt`; later changes to that file refresh its
+dependencies. To use a specific interpreter directly instead:
 
 ```sh
 rowcall new path/to/project --open --python /path/to/python
@@ -191,9 +192,10 @@ The beta launcher uses this order for `open` and `run`:
 5. A new project `.venv` created with compatible `python3` or `python`.
 
 Only a project environment created by Rowcall receives the current
-`requirements.txt`, once. Existing project and active environments are never
-auto-installed into. If first-time installation fails or is interrupted, Rowcall
-preserves the environment and retries setup on the next `open` or `run`. Share
+`requirements.txt`. Rowcall records the file's hash and runs pip again whenever
+it changes. Pre-existing project and active environments are never
+auto-installed into. If installation fails or is interrupted, Rowcall preserves
+the environment and retries setup on the next `open` or `run`. Share
 `requirements.txt`, not `.venv`; virtual environments contain machine-specific
 paths and the generated `.gitignore` excludes them.
 

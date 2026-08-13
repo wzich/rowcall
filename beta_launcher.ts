@@ -222,10 +222,11 @@ Working with coding agents:
 
 Open and run prefer an existing project .venv, then an active virtualenv or
 Conda environment. If neither exists, they create a project .venv and install
-its requirements.txt once. Validate uses the same existing-environment order
-but never creates an environment or installs packages. Pass --python to use a
-specific interpreter or --managed-env to use Rowcall's shared starter
-environment.
+its requirements.txt. Rowcall-created project environments refresh dependencies
+when requirements.txt changes; pre-existing and active environments are never
+modified automatically. Validate uses the same existing-environment order but
+never creates an environment or installs packages. Pass --python to use a
+specific interpreter or --managed-env to use Rowcall's shared starter environment.
 `;
 
 const formatHelpText = `Rowcall Python Document Format
@@ -283,7 +284,8 @@ const runHelpText = `Usage:
 Folders resolve to graph.py inside the folder.
 Run prefers a compatible project .venv, then an active virtualenv or Conda
 environment. If neither exists, it creates .venv and installs requirements.txt
-once. Existing environments are never modified automatically.
+and refreshes dependencies when that file changes. Pre-existing and active
+environments are never modified automatically.
 
 Examples:
   rowcall run my-work
@@ -327,7 +329,8 @@ const openHelpText = `Usage:
 
 Folders resolve to graph.py inside the folder. The path must already exist.
 Open prefers an existing project .venv, then an active environment. If neither
-exists, it creates the project's .venv and installs requirements.txt once.
+exists, it creates the project's .venv and installs requirements.txt. A
+Rowcall-created environment refreshes dependencies when that file changes.
 
 Examples:
   rowcall open my-work
@@ -955,8 +958,9 @@ export async function resolveProjectPython(
   if (await pathExists(venvDirectory)) {
     if (
       options.bootstrap &&
-      (await readOptionalTextFile(projectEnvironmentSetupPath(venvDirectory)))
-          ?.trim() === "creating"
+      (await readProjectEnvironmentSetupState(
+          projectEnvironmentSetupPath(venvDirectory),
+        ))?.status === "creating"
     ) {
       return await ensureProjectEnvironment(documentPath);
     }
@@ -1017,21 +1021,35 @@ async function completeProjectEnvironmentSetup(
   venvDirectory: string,
 ): Promise<void> {
   const setupPath = projectEnvironmentSetupPath(venvDirectory);
-  const setupState = await readOptionalTextFile(setupPath);
-  if (setupState === null || setupState.trim() === "complete") return;
-  if (setupState.trim() === "creating") {
+  let setupState = await readProjectEnvironmentSetupState(setupPath);
+  // A missing marker means the environment belongs to the user. Rowcall only
+  // installs into project environments that it created and marked itself.
+  if (setupState === null) return;
+  if (setupState.status === "creating") {
     await finishProjectEnvironmentCreation(venvDirectory);
     await Deno.writeTextFile(setupPath, "incomplete\n");
+    setupState = { status: "incomplete" };
   }
 
   const requirementsPath = `${projectDirectory}/requirements.txt`;
-  if (await pathExists(requirementsPath)) {
+  const requirementsFingerprint = await projectRequirementsFingerprint(
+    requirementsPath,
+  );
+  if (
+    setupState.status === "complete" &&
+    setupState.requirementsFingerprint === requirementsFingerprint
+  ) {
+    return;
+  }
+
+  const hasRequirements = requirementsFingerprint !== "absent";
+  if (hasRequirements) {
     const absoluteProjectDirectory = await Deno.realPath(projectDirectory);
     const absoluteRequirementsPath = await Deno.realPath(requirementsPath);
     const absoluteVenvDirectory = await Deno.realPath(venvDirectory);
     const absoluteVenvPython = getVenvPythonPath(absoluteVenvDirectory);
     reportEnvironment(
-      `Installing project dependencies from ${absoluteRequirementsPath} (one-time setup; this may take a minute)...`,
+      `Installing changed project dependencies from ${absoluteRequirementsPath} (this may take a minute)...`,
     );
     try {
       await runChecked(absoluteVenvPython, [
@@ -1045,12 +1063,15 @@ async function completeProjectEnvironmentSetup(
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
         `Could not install project dependencies from ${absoluteRequirementsPath}.\n` +
-          `Rowcall will retry this one-time setup on the next open or run.\n\n${detail}`,
+          `Rowcall will retry dependency setup on the next open or run.\n\n${detail}`,
       );
     }
   }
 
-  await Deno.writeTextFile(setupPath, "complete\n");
+  await writeCompleteProjectEnvironmentSetup(
+    setupPath,
+    requirementsFingerprint,
+  );
   reportEnvironment("Project Python environment is ready.");
 }
 
@@ -1079,6 +1100,56 @@ async function finishProjectEnvironmentCreation(
 
 function projectEnvironmentSetupPath(venvDirectory: string): string {
   return `${venvDirectory}/.rowcall-setup`;
+}
+
+type ProjectEnvironmentSetupState = {
+  status: "creating" | "incomplete" | "complete";
+  requirementsFingerprint?: string;
+};
+
+async function readProjectEnvironmentSetupState(
+  path: string,
+): Promise<ProjectEnvironmentSetupState | null> {
+  const text = await readOptionalTextFile(path);
+  if (text === null) return null;
+  const lines = text.trim().split("\n");
+  const status = lines[0];
+  const requirementsLine = lines.find((line) =>
+    line.startsWith("requirements-sha256=")
+  );
+  const requirementsFingerprint = requirementsLine?.slice(
+    "requirements-sha256=".length,
+  );
+  return {
+    status: status === "creating" || status === "complete"
+      ? status
+      : "incomplete",
+    ...(requirementsFingerprint ? { requirementsFingerprint } : {}),
+  };
+}
+
+async function writeCompleteProjectEnvironmentSetup(
+  path: string,
+  requirementsFingerprint: string,
+): Promise<void> {
+  await Deno.writeTextFile(
+    path,
+    `complete\nrequirements-sha256=${requirementsFingerprint}\n`,
+  );
+}
+
+async function projectRequirementsFingerprint(path: string): Promise<string> {
+  let contents: Uint8Array<ArrayBuffer>;
+  try {
+    contents = await Deno.readFile(path);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return "absent";
+    throw error;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", contents);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function readOptionalTextFile(path: string): Promise<string | null> {

@@ -48,8 +48,13 @@ Deno.test("command help explains project environment setup boundaries", () => {
   assertStringIncludes(helpTextForTopic("run"), "installs requirements.txt");
   assertStringIncludes(
     helpTextForTopic("run"),
-    "Existing environments are never modified automatically",
+    "Pre-existing and active",
   );
+  assertStringIncludes(
+    helpTextForTopic("run"),
+    "environments are never modified automatically",
+  );
+  assertStringIncludes(helpTextForTopic("run"), "when that file changes");
   assertStringIncludes(
     helpTextForTopic("validate"),
     "never creates .venv or installs requirements.txt",
@@ -622,7 +627,7 @@ Deno.test({
     assertEquals((await Deno.stat(first)).isFile, true);
     assertEquals(
       await Deno.readTextFile(`${folder}/.venv/.rowcall-setup`),
-      "complete\n",
+      "complete\nrequirements-sha256=absent\n",
     );
   },
 });
@@ -748,7 +753,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "ensureProjectEnvironment retries incomplete dependency setup only",
+  name: "ensureProjectEnvironment retries incomplete and changed requirements",
   permissions: { read: true, write: true, run: true, env: true },
   async fn() {
     const folder = await Deno.makeTempDir();
@@ -768,7 +773,7 @@ Deno.test({
     await assertRejects(
       () => ensureProjectEnvironment(documentPath),
       Error,
-      "will retry this one-time setup",
+      "will retry dependency setup",
     );
     assertEquals(
       await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
@@ -777,18 +782,63 @@ Deno.test({
 
     await Deno.writeTextFile(`${folder}/requirements.txt`, "");
     await ensureProjectEnvironment(documentPath);
-    assertEquals(
-      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
-      "complete\n",
+    const completedSetup = await Deno.readTextFile(
+      `${venvDirectory}/.rowcall-setup`,
     );
+    assertStringIncludes(completedSetup, "complete\nrequirements-sha256=");
 
     await Deno.writeTextFile(
       `${folder}/requirements.txt`,
       `missing-package @ file://${folder}/still-missing\n`,
     );
+    await assertRejects(
+      () => ensureProjectEnvironment(documentPath),
+      Error,
+      "will retry dependency setup",
+    );
     assertEquals(
-      await ensureProjectEnvironment(documentPath),
-      getVenvPythonPath(venvDirectory),
+      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
+      completedSetup,
+    );
+  },
+});
+
+Deno.test({
+  name: "ensureProjectEnvironment installs requirements changed after setup",
+  permissions: { read: true, write: true, run: true, env: true },
+  async fn() {
+    const folder = await Deno.makeTempDir();
+    const documentPath = `${folder}/graph.py`;
+    const venvDirectory = `${folder}/.venv`;
+    const venvPython = getVenvPythonPath(venvDirectory);
+    const wheelName = "relative_probe-0.0.0-py3-none-any.whl";
+    await Deno.writeTextFile(documentPath, "print('graph')\n");
+    await createPythonVenv(venvDirectory);
+    // Legacy Rowcall environments did not record the requirements hash.
+    await Deno.writeTextFile(
+      `${venvDirectory}/.rowcall-setup`,
+      "complete\n",
+    );
+    await createTestWheel(folder, wheelName);
+    await Deno.writeTextFile(
+      `${folder}/requirements.txt`,
+      `./${wheelName}\n`,
+    );
+
+    await ensureProjectEnvironment(documentPath);
+    assertEquals(await pythonModuleWorks(venvPython, "relative_probe"), true);
+    const completedSetup = await Deno.readTextFile(
+      `${venvDirectory}/.rowcall-setup`,
+    );
+    assertStringIncludes(completedSetup, "complete\nrequirements-sha256=");
+
+    // An unchanged hash skips pip; removing the local wheel would make a
+    // repeated install fail if Rowcall attempted one.
+    await Deno.remove(`${folder}/${wheelName}`);
+    assertEquals(await ensureProjectEnvironment(documentPath), venvPython);
+    assertEquals(
+      await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
+      completedSetup,
     );
   },
 });
@@ -815,7 +865,7 @@ Deno.test({
     assertEquals(await pythonModuleWorks(venvPython, "pip"), true);
     assertEquals(
       await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
-      "complete\n",
+      "complete\nrequirements-sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
     );
   },
 });
