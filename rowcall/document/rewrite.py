@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import DocumentNode, ExecutableDocument, ParseResult, ValidationIssue
-from .parser import _parse_source_for_rewrite, parse_source
+from .parser import _node_local_bindings, _parse_source_for_rewrite, parse_source
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,12 @@ def apply_document_operations(
         )
 
     coalesced_operations = _coalesce_document_operations(validated_operations)
+    body_updated_node_ids = {
+        node_id
+        for _, operation in coalesced_operations
+        if operation.get("type") == "update_node_body"
+        and (node_id := _text_field(operation, "nodeId", "node_id")) is not None
+    }
 
     for original_index, operation in coalesced_operations:
         operation_type = operation["type"]
@@ -110,10 +116,113 @@ def apply_document_operations(
             return _operation_failure(source, document_path, result, original_index, operation_type)
         current_source, current_metadata = result
 
+    reconciled = _remove_stale_declared_values(
+        current_source,
+        document_path,
+        body_updated_node_ids,
+    )
+    if isinstance(reconciled, ValidationIssue):
+        return _operation_failure(source, document_path, reconciled)
+    current_source = reconciled
+
     parsed = parse_source(current_source, document_path)
     if not parsed.ok:
         return OperationRewriteResult(ok=False, source=None, parse_result=parsed, sidecar_metadata=None)
     return OperationRewriteResult(ok=True, source=current_source, parse_result=parsed, sidecar_metadata=current_metadata)
+
+
+def _remove_stale_declared_values(
+    source: str,
+    document_path: str | Path,
+    body_updated_node_ids: set[str],
+) -> str | ValidationIssue:
+    """Drop declared outputs/views that a saved body no longer binds locally.
+
+    Reconciliation happens after the complete operation batch so code edits and
+    their generated contracts are persisted atomically. Downstream nodes are
+    revisited when an output removal changes their generated parameters.
+    """
+    current_source = source
+    pending_node_ids = set(body_updated_node_ids)
+
+    while pending_node_ids:
+        parsed = _parse_source_for_rewrite(current_source, document_path)
+        if not parsed.ok or parsed.document is None:
+            return _first_issue(parsed, "Document could not be parsed while reconciling declared values.")
+
+        node_id = min(pending_node_ids)
+        pending_node_ids.remove(node_id)
+        node = _find_node(parsed.document.nodes, node_id)
+        if node is None:
+            continue
+        if node.custom_return or not node.editable:
+            continue
+
+        try:
+            module = ast.parse(current_source, filename=str(document_path))
+        except SyntaxError as error:
+            return ValidationIssue(
+                kind="invalid_python",
+                message=error.msg,
+                path=f"{error.lineno}:{error.offset}",
+            )
+        function_def = next(
+            (
+                statement
+                for statement in module.body
+                if isinstance(statement, ast.FunctionDef)
+                and statement.name == node.function_name
+            ),
+            None,
+        )
+        if function_def is None:
+            return ValidationIssue(
+                kind="missing_node_reference",
+                message=f"Node function '{node.function_name}' was not found while reconciling declared values.",
+                node_id=node.id,
+            )
+
+        local_bindings = _node_local_bindings(function_def)
+        next_outputs = tuple(name for name in node.outputs if name in local_bindings)
+        next_views = tuple(name for name in node.views if name in local_bindings)
+
+        if next_outputs != node.outputs:
+            downstream_ids = {
+                edge.to_node
+                for edge in parsed.document.edges
+                if edge.from_node == node.id
+            }
+            result = _update_node_outputs(
+                current_source,
+                document_path,
+                node.id,
+                next_outputs,
+                validate_output_bindings=False,
+            )
+            if not result.ok:
+                return result.issues[-1] if result.issues else _invalid_operation(
+                    f"Failed to remove stale outputs from node '{node.id}'."
+                )
+            current_source = result.source
+            pending_node_ids.add(node.id)
+            pending_node_ids.update(downstream_ids)
+            continue
+
+        if next_views != node.views:
+            result = _update_node_views(
+                current_source,
+                document_path,
+                node.id,
+                next_views,
+                validate_output_bindings=False,
+            )
+            if not result.ok:
+                return result.issues[-1] if result.issues else _invalid_operation(
+                    f"Failed to remove stale views from node '{node.id}'."
+                )
+            current_source = result.source
+
+    return current_source
 
 
 def update_node_body(

@@ -153,6 +153,57 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
 });
 
+Deno.test("saving a body edit removes declarations that are no longer locally bound", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/stale_output.py`;
+
+  await Deno.writeTextFile(
+    documentPath,
+    [
+      "from rowcall import node",
+      "",
+      '@node(id="n_start", outputs=["message"])',
+      "def start():",
+      '    message = "hello"',
+      '    return {"message": message}',
+      "",
+    ].join("\n"),
+  );
+
+  const decoded = await loadPythonDocument(documentPath);
+  if (!decoded.ok) {
+    throw new Error(decoded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const edited = await applyPythonDocumentOperations(
+    documentPath,
+    decoded.document.revision ?? "",
+    [{
+      type: "update_node_body",
+      nodeId: "n_start",
+      code: "answer = 42",
+    }],
+  );
+  if (!edited.ok) {
+    throw new Error(edited.issues.map((issue) => issue.message).join("; "));
+  }
+
+  assertEquals(edited.document.nodes[0].outputs, []);
+  assertEquals(edited.document.nodes[0].code, "answer = 42");
+  assertEquals(
+    await Deno.readTextFile(documentPath),
+    [
+      "from rowcall import node",
+      "",
+      '@node(id="n_start", outputs=[])',
+      "def start():",
+      "    answer = 42",
+      "    return {}",
+      "",
+    ].join("\n"),
+  );
+});
+
 Deno.test("Python document runtime inputs follow direct upstream outputs", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/renamed_input.py`;

@@ -356,7 +356,7 @@ double.depends_on(load)
         self.assertIn("def double(value):", result.source)
         self.assertIn('    return {"value": value}', result.source)
 
-    def test_apply_operations_rejects_missing_output_binding_in_final_source(self) -> None:
+    def test_apply_operations_removes_output_deleted_from_updated_body(self) -> None:
         source = """
 from rowcall import node
 
@@ -372,10 +372,84 @@ def load():
             [{"type": "update_node_body", "nodeId": "load", "code": "pass"}],
         )
 
-        self.assertFalse(result.ok)
-        self.assertIsNone(result.source)
-        self.assertEqual(result.issues[0].kind, "invalid_node_return")
-        self.assertIn("must be a local variable or parameter", result.issues[0].message)
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="load", outputs=[])', result.source)
+        self.assertIn("    pass\n    return {}", result.source)
+
+    def test_apply_operations_does_not_auto_export_new_body_bindings(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="load", outputs=["message"])
+def load():
+    message = "hello"
+    return {"message": message}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "load", "code": "answer = 42"}],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="load", outputs=[])', result.source)
+        self.assertIn("    answer = 42\n    return {}", result.source)
+        self.assertNotIn('outputs=["answer"]', result.source)
+
+    def test_apply_operations_removes_view_deleted_from_updated_body(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="show", outputs=["value"], views=["chart"])
+def show():
+    value = 1
+    chart = {"kind": "bar"}
+    return {"value": value, "chart": chart}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "show", "code": "value = 2"}],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="show", outputs=["value"])', result.source)
+        self.assertNotIn("views=", result.source)
+        self.assertIn('    return {"value": value}', result.source)
+
+    def test_apply_operations_reconciles_downstream_parameter_outputs(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="source", outputs=["value"])
+def source():
+    value = 1
+    return {"value": value}
+
+@node(id="passthrough", outputs=["value"])
+def passthrough(value):
+    return {"value": value}
+
+passthrough.depends_on(source)
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "source", "code": "pass"}],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="source", outputs=[])', result.source)
+        self.assertIn('@node(id="passthrough", outputs=[])', result.source)
+        self.assertIn("def passthrough():", result.source)
+        self.assertEqual(result.source.count("return {}"), 2)
 
     def test_apply_operations_add_edge_normalizes_downstream_signature(self) -> None:
         source = """

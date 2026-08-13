@@ -59,6 +59,7 @@ import {
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RunNotification } from "./query/executionPresentation.ts";
 import { classifySaveFailure } from "./saveOutcome.ts";
+import { formatSaveReconciliationNotice } from "./saveReconciliation.ts";
 import {
   canApplyLoadedDocument,
   canEditDocument,
@@ -74,6 +75,7 @@ const documentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
 const successfulRunNoticeMs = 3_000;
+const saveReconciliationNoticeMs = 4_000;
 
 export type ThemeMode = "light" | "dark";
 
@@ -151,6 +153,9 @@ export default function App() {
     "idle" | "saving" | "saved" | "error" | "outcome_unknown"
   >("idle");
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
+  const [saveReconciliationNotice, setSaveReconciliationNotice] = useState<
+    string | null
+  >(null);
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
@@ -287,6 +292,7 @@ export default function App() {
       setSaveStatus("idle");
       saveOutcomeUnknownRef.current = false;
       setSaveError(null);
+      setSaveReconciliationNotice(null);
       editGenerationRef.current = 0;
       syncDocumentSourceValue();
     },
@@ -333,6 +339,7 @@ export default function App() {
     }
 
     const operations = pendingOperationsRef.current;
+    const documentBeforeSave = editableDocumentRef.current;
     const baseRevision = baseRevisionRef.current;
     const editGeneration = editGenerationRef.current;
 
@@ -340,12 +347,21 @@ export default function App() {
     saveAttemptGenerationRef.current += 1;
     setSaveStatus("saving");
     setSaveError(null);
+    setSaveReconciliationNotice(null);
 
     const promise = applyDocumentOperations(
       baseRevision,
       operations,
     )
       .then((result) => {
+        setSaveReconciliationNotice(
+          documentBeforeSave
+            ? formatSaveReconciliationNotice(
+              documentBeforeSave,
+              result.document,
+            )
+            : null,
+        );
         setDocumentPath(result.path);
         baseRevisionRef.current = result.document.revision ?? "";
         syncDocumentSourceValue();
@@ -393,6 +409,15 @@ export default function App() {
     flushPromiseRef.current = promise;
     return await promise;
   }, [documentStatusQuery]);
+
+  useEffect(() => {
+    if (!saveReconciliationNotice) return;
+    const timeoutId = setTimeout(
+      () => setSaveReconciliationNotice(null),
+      saveReconciliationNoticeMs,
+    );
+    return () => clearTimeout(timeoutId);
+  }, [saveReconciliationNotice]);
 
   useEffect(() => {
     if (
@@ -1561,6 +1586,22 @@ export default function App() {
             onClick={() => setConnectionWarning(null)}
           >
             <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+          </button>
+        </div>
+      )}
+      {saveReconciliationNotice && (
+        <div className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">Output contract updated.</span>
+            <span className="ml-2">{saveReconciliationNotice}</span>
+          </p>
+          <button
+            type="button"
+            aria-label="Dismiss output contract update"
+            className="shrink-0 rounded p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900"
+            onClick={() => setSaveReconciliationNotice(null)}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
       )}

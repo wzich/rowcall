@@ -45,10 +45,10 @@ const executionStreamHeartbeatIntervalMs = 750;
 const defaultNewDocumentSource = `from rowcall import node
 
 
-@node(id="n_start", outputs=["message"])
+@node(id="n_start", outputs=[])
 def start():
-    message = "hello"
-    return {"message": message}
+    pass
+    return {}
 `;
 
 export function setActiveDocumentPathForTests(path: string): void {
