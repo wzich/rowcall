@@ -1,4 +1,5 @@
 import { parseStartupOptions } from "../startup_args.ts";
+import { resolveProjectPython } from "../beta_launcher.ts";
 
 const viteHostname = "127.0.0.1";
 const defaultVitePort = 5173;
@@ -6,7 +7,7 @@ const defaultVitePort = 5173;
 type DevOptions = ReturnType<typeof parseDevOptions>;
 
 async function main(): Promise<void> {
-  const options = parseDevOptions(Deno.args);
+  const options = await resolveDevRuntime(parseDevOptions(Deno.args));
   const authToken = crypto.randomUUID();
   const apiOrigin = buildOrigin(options.hostname, options.port);
   const viteOrigin = buildOrigin(viteHostname, options.uiPort);
@@ -85,6 +86,24 @@ async function main(): Promise<void> {
   } finally {
     unregisterSignalHandlers(signalHandlers);
   }
+}
+
+type ProjectPythonResolver = (
+  documentPath: string,
+  options: { bootstrap: boolean },
+) => Promise<string>;
+
+export async function resolveDevRuntime(
+  options: DevOptions,
+  resolvePython: ProjectPythonResolver = resolveProjectPython,
+): Promise<DevOptions> {
+  if (options.pythonCommand) return options;
+  return {
+    ...options,
+    pythonCommand: await resolvePython(options.documentPath, {
+      bootstrap: true,
+    }),
+  };
 }
 
 export function parseDevOptions(args: string[]) {
