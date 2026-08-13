@@ -140,7 +140,7 @@ def find_full_launcher_invocation() -> list[str] | None:
         return [override]
 
     source_root = Path(__file__).resolve().parents[1]
-    source_launcher = source_root / "beta_launcher.ts"
+    source_launcher = source_root / "launcher.ts"
     deno = shutil.which("deno")
     if source_launcher.is_file() and deno:
         return [

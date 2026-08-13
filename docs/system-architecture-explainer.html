@@ -1325,8 +1325,8 @@
               <div class="detail-cell">
                 <h4>Main parts</h4>
                 <ul>
-                  <li><code>beta_launcher.ts</code></li>
-                  <li><code>beta_paths.ts</code></li>
+                  <li><code>launcher.ts</code></li>
+                  <li><code>launcher_paths.ts</code></li>
                   <li><code>startup_args.ts</code></li>
                   <li><code>runtime_config.ts</code></li>
                 </ul>
@@ -1351,7 +1351,7 @@
                   <li>Wait for readiness, then open the tokenized local URL.</li>
                 </ol>
                 <span
-                  class="source">Source trail: <a href="../beta_launcher.ts#L698">beta_launcher.ts:698</a>, <a href="../beta_launcher.ts#L849">:849</a>, <a href="../beta_launcher.ts#L1165">:1165</a>, <a href="../beta_launcher.ts#L1347">:1347</a></span>
+                  class="source">Source trail: <a href="../launcher.ts#L698">launcher.ts:698</a>, <a href="../launcher.ts#L849">:849</a>, <a href="../launcher.ts#L1165">:1165</a>, <a href="../launcher.ts#L1347">:1347</a></span>
               </div>
             </details>
           </article>
@@ -1564,7 +1564,7 @@
                 class="journey-step"><strong>Open browser</strong><span>Wait for readiness, then launch a tokenized local URL.</span></div>
             </div>
             <p
-              class="journey-evidence">Evidence: <code>beta_launcher.ts:698–735, 909–979, 1165–1179, 1347–1401</code>.</p>
+              class="journey-evidence">Evidence: <code>launcher.ts:698–735, 909–979, 1165–1179, 1347–1401</code>.</p>
           </section>
 
           <section class="tab-panel" role="tabpanel" id="journey-load"
@@ -1694,7 +1694,7 @@
                 class="journey-step"><strong>Print result</strong><span>Human text or bounded JSON, with a meaningful exit code.</span></div>
             </div>
             <p
-              class="journey-evidence">Evidence: <code>beta_launcher.ts:601–640</code>, <code>rowcall/cli.py:260–379</code>.</p>
+              class="journey-evidence">Evidence: <code>launcher.ts:601–640</code>, <code>rowcall/cli.py:260–379</code>.</p>
           </section>
         </div>
       </section>
@@ -1929,12 +1929,12 @@ def summarize_orders(orders):
             <tbody>
               <tr>
                 <td><strong>How does a command start?</strong></td>
-                <td><a href="../beta_launcher.ts#L530">beta_launcher.ts</a></td>
+                <td><a href="../launcher.ts#L530">launcher.ts</a></td>
                 <td><code>startup_args.ts</code> → <code>main.ts</code></td>
               </tr>
               <tr>
                 <td><strong>Which Python is used?</strong></td>
-                <td><a href="../beta_launcher.ts#L849">beta_launcher.ts:849</a></td>
+                <td><a href="../launcher.ts#L849">launcher.ts:849</a></td>
                 <td><code>runtime_config.ts</code> for development wrappers</td>
               </tr>
               <tr>
@@ -1980,7 +1980,7 @@ def summarize_orders(orders):
               <tr>
                 <td><strong>How does the CLI differ?</strong></td>
                 <td><a href="../rowcall/cli.py#L260">rowcall/cli.py:260</a></td>
-                <td><code>beta_launcher.ts:601</code> and <code>docs/03-headless-cli.md</code></td>
+                <td><code>launcher.ts:601</code> and <code>docs/03-headless-cli.md</code></td>
               </tr>
               <tr>
                 <td><strong>How is a release built?</strong></td>

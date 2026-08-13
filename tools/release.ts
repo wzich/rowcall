@@ -109,7 +109,7 @@ async function buildReleaseBinaries() {
       ...compileIncludes.flatMap((include) => ["--include", include]),
       "--output",
       outputPath,
-      "beta_launcher.ts",
+      "launcher.ts",
     ];
     await run("deno", args);
     if (Deno.build.os !== "windows") {

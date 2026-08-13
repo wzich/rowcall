@@ -1,5 +1,5 @@
 import { parseStartupOptions } from "../startup_args.ts";
-import { resolveProjectPython } from "../beta_launcher.ts";
+import { resolveProjectPython } from "../launcher.ts";
 
 const viteHostname = "127.0.0.1";
 const defaultVitePort = 5173;

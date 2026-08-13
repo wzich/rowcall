@@ -1,15 +1,15 @@
 import { parseArgs } from "@std/cli/parse-args";
 import { buildRowcallUrl, startRowcallServer } from "./main.ts";
 import {
-  type BetaPaths,
-  getBetaPaths,
+  getLauncherPaths,
   getVenvPythonPath,
-} from "./beta_paths.ts";
+  type LauncherPaths,
+} from "./launcher_paths.ts";
 import { getActiveEnvironmentPythonCandidates } from "./runtime_config.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { rowcallVersion } from "./version.ts";
 
-export type BetaCommand =
+export type LauncherCommand =
   | { kind: "help"; topic?: string }
   | { kind: "version" }
   | {
@@ -58,7 +58,7 @@ export type BetaCommand =
   };
 
 type RunCommandOptions = {
-  paths?: BetaPaths;
+  paths?: LauncherPaths;
 };
 
 type RuntimeSelection = {
@@ -368,7 +368,7 @@ Checks for launcher updates. Update checks are not implemented yet; rerun the
 beta installer to upgrade Rowcall.
 `;
 
-export function parseBetaCommand(args: string[]): BetaCommand {
+export function parseLauncherCommand(args: string[]): LauncherCommand {
   if (args.length === 0) return { kind: "help" };
 
   if (args[0] === "__server") {
@@ -534,11 +534,11 @@ export function parseBetaCommand(args: string[]): BetaCommand {
   };
 }
 
-export async function runBetaCommand(
-  command: BetaCommand,
+export async function runLauncherCommand(
+  command: LauncherCommand,
   options: RunCommandOptions = {},
 ): Promise<CommandResult> {
-  const paths = options.paths ?? getBetaPaths();
+  const paths = options.paths ?? getLauncherPaths();
   switch (command.kind) {
     case "help":
       console.info(helpTextForTopic(command.topic));
@@ -854,7 +854,7 @@ async function writeTextFileIfMissing(
 }
 
 export async function ensureManagedEnvironment(
-  paths: BetaPaths,
+  paths: LauncherPaths,
   pythonOverride?: string,
 ): Promise<string> {
   await Deno.mkdir(paths.logsDir, { recursive: true });
@@ -877,7 +877,7 @@ export async function ensureManagedEnvironment(
 }
 
 async function resolveRuntimeSelection(
-  paths: BetaPaths,
+  paths: LauncherPaths,
   selection: RuntimeSelection,
 ): Promise<RuntimeSelection & { pythonCommand: string }> {
   if (selection.mode === "managed") {
@@ -914,7 +914,7 @@ async function resolveRuntimeSelection(
 }
 
 async function resolveLaunchRuntime(
-  paths: BetaPaths,
+  paths: LauncherPaths,
   documentPath: string,
   selection: { managedEnv: boolean; pythonCommand?: string },
 ): Promise<RuntimeSelection & { pythonCommand: string }> {
@@ -931,7 +931,7 @@ async function resolveLaunchRuntime(
 }
 
 async function resolveDocumentRuntime(
-  paths: BetaPaths,
+  paths: LauncherPaths,
   documentPath: string,
   options: { bootstrap: boolean },
 ): Promise<RuntimeSelection & { pythonCommand: string }> {
@@ -1176,14 +1176,16 @@ function reportEnvironment(message: string): void {
   console.error(message);
 }
 
-export async function resetManagedEnvironment(paths: BetaPaths): Promise<void> {
+export async function resetManagedEnvironment(
+  paths: LauncherPaths,
+): Promise<void> {
   await Deno.remove(paths.venvDir, { recursive: true }).catch((error) => {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   });
 }
 
 async function installBundledPythonRuntime(
-  paths: BetaPaths,
+  paths: LauncherPaths,
   venvPython: string,
 ): Promise<void> {
   await ensureBundledAssets(paths);
@@ -1211,7 +1213,7 @@ async function installBundledPythonRuntime(
 }
 
 async function readManagedEnvironmentStamp(
-  paths: BetaPaths,
+  paths: LauncherPaths,
 ): Promise<string | null> {
   try {
     return (await Deno.readTextFile(managedEnvironmentStampPath(paths)))
@@ -1222,7 +1224,9 @@ async function readManagedEnvironmentStamp(
   }
 }
 
-async function writeManagedEnvironmentStamp(paths: BetaPaths): Promise<void> {
+async function writeManagedEnvironmentStamp(
+  paths: LauncherPaths,
+): Promise<void> {
   await Deno.writeTextFile(
     managedEnvironmentStampPath(paths),
     `${managedEnvironmentStamp()}\n`,
@@ -1233,11 +1237,11 @@ function managedEnvironmentStamp(): string {
   return `${rowcallVersion}:${managedEnvironmentRevision}`;
 }
 
-function managedEnvironmentStampPath(paths: BetaPaths): string {
+function managedEnvironmentStampPath(paths: LauncherPaths): string {
   return `${paths.venvDir}/.rowcall-version`;
 }
 
-async function ensureBundledAssets(paths: BetaPaths): Promise<void> {
+async function ensureBundledAssets(paths: LauncherPaths): Promise<void> {
   await Deno.mkdir(paths.bundledDir, { recursive: true });
   await copyRequirementsIfExists(
     bundledSource("requirements-alpha.txt"),
@@ -1280,8 +1284,8 @@ type DoctorReport = {
 };
 
 export async function buildDoctorReport(
-  command: Extract<BetaCommand, { kind: "doctor" }>,
-  paths: BetaPaths,
+  command: Extract<LauncherCommand, { kind: "doctor" }>,
+  paths: LauncherPaths,
 ): Promise<DoctorReport> {
   const mode = command.managedEnv ? "managed" : "user";
   let pythonCommand = "";
@@ -1358,8 +1362,8 @@ async function inspectPythonImport(
 }
 
 async function printDoctor(
-  command: Extract<BetaCommand, { kind: "doctor" }>,
-  paths: BetaPaths,
+  command: Extract<LauncherCommand, { kind: "doctor" }>,
+  paths: LauncherPaths,
 ): Promise<void> {
   const report = await buildDoctorReport(command, paths);
   if (command.json) {
@@ -1406,7 +1410,7 @@ async function printDoctor(
 }
 
 async function inspectManagedRuntime(
-  paths: BetaPaths,
+  paths: LauncherPaths,
 ): Promise<{ mode: "managed"; pythonCommand: string; error?: string }> {
   const venvPython = getVenvPythonPath(paths.venvDir);
   if (await commandWorks(venvPython, ["--version"])) {
@@ -1420,8 +1424,8 @@ async function inspectManagedRuntime(
 }
 
 async function launchServer(
-  command: Extract<BetaCommand, { kind: "launch" }>,
-  paths: BetaPaths,
+  command: Extract<LauncherCommand, { kind: "launch" }>,
+  paths: LauncherPaths,
 ): Promise<CommandResult> {
   const authToken = crypto.randomUUID();
   const serverArgs = [
@@ -1614,7 +1618,7 @@ export function preflightHeadlessCommand(
 }
 
 function printHeadlessEnvironmentError(
-  command: Extract<BetaCommand, { kind: "headless" }>,
+  command: Extract<LauncherCommand, { kind: "headless" }>,
   documentInput: string | undefined,
   error: unknown,
 ): void {
@@ -1713,7 +1717,7 @@ async function commandWorks(
   }
 }
 
-function pythonRuntimeEnv(paths: BetaPaths): Record<string, string> {
+function pythonRuntimeEnv(paths: LauncherPaths): Record<string, string> {
   const existingPythonPath = Deno.env.get("PYTHONPATH");
   return {
     PYTHONPATH: [
@@ -1830,7 +1834,7 @@ function delay(ms: number): Promise<void> {
 async function teeProcessOutput(
   stream: ReadableStream<Uint8Array>,
   output: { write(chunk: Uint8Array): Promise<number> },
-  paths: BetaPaths,
+  paths: LauncherPaths,
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -1842,7 +1846,7 @@ async function teeProcessOutput(
   }
 }
 
-async function appendLog(paths: BetaPaths, message: string): Promise<void> {
+async function appendLog(paths: LauncherPaths, message: string): Promise<void> {
   await Deno.mkdir(paths.logsDir, { recursive: true });
   const timestamp = new Date().toISOString();
   await Deno.writeTextFile(paths.logFile, `[${timestamp}] ${message}\n`, {
@@ -1948,7 +1952,7 @@ function pathContainsLocalBin(home: string): boolean {
 
 if (import.meta.main) {
   try {
-    const command = parseBetaCommand(Deno.args);
+    const command = parseLauncherCommand(Deno.args);
     if (command.kind === "server") {
       const parsed = parseArgs(command.args, {
         string: ["ui-dist"],
@@ -1960,7 +1964,7 @@ if (import.meta.main) {
         if (index > 0 && command.args[index - 1] === "--ui-dist") return false;
         return true;
       });
-      const result = await runBetaCommand({
+      const result = await runLauncherCommand({
         kind: "server",
         args: forwardedArgs,
         ...(typeof parsed["ui-dist"] === "string"
@@ -1969,7 +1973,7 @@ if (import.meta.main) {
       });
       Deno.exit(result.code);
     }
-    const result = await runBetaCommand(command);
+    const result = await runLauncherCommand(command);
     Deno.exit(result.code);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

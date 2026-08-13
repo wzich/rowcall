@@ -1229,7 +1229,7 @@
               </div>
             </div>
             <p
-              class="finding-evidence">Evidence: <a href="../document.ts#L451">document.ts:451</a> · <a href="../main.ts#L834">main.ts:834</a> · <a href="../main.ts#L1066">main.ts:1066</a> · <a href="../beta_launcher.ts#L357">beta_launcher.ts:357</a> · <a href="../python_worker_client.ts#L12">python_worker_client.ts:12</a> · browser calls only <a href="../app/ui/src/api/execution.ts#L200">execution.ts:200</a></p>
+              class="finding-evidence">Evidence: <a href="../document.ts#L451">document.ts:451</a> · <a href="../main.ts#L834">main.ts:834</a> · <a href="../main.ts#L1066">main.ts:1066</a> · <a href="../launcher.ts#L357">launcher.ts:357</a> · <a href="../python_worker_client.ts#L12">python_worker_client.ts:12</a> · browser calls only <a href="../app/ui/src/api/execution.ts#L200">execution.ts:200</a></p>
             <details>
               <summary>Agent brief: inventory and remove the compatibility surface</summary>
               <div class="details-body">
@@ -1482,7 +1482,7 @@
                 <li>The server prints its token-bearing URL; the launcher tees that output into <code>~/.rowcall/logs/rowcall.log</code>.</li>
               </ul>
               <p class="finding-evidence"
-                style="border:0;padding:10px 0 0">Evidence: <a href="../main.ts#L231">main.ts:231</a>, <a href="../main.ts#L834">:834</a>, <a href="../main.ts#L899">:899</a>, <a href="../main.ts#L961">:961</a>, <a href="../main.ts#L101">:101</a>, <a href="../beta_launcher.ts#L1755">beta_launcher.ts:1755</a></p>
+                style="border:0;padding:10px 0 0">Evidence: <a href="../main.ts#L231">main.ts:231</a>, <a href="../main.ts#L834">:834</a>, <a href="../main.ts#L899">:899</a>, <a href="../main.ts#L961">:961</a>, <a href="../main.ts#L101">:101</a>, <a href="../launcher.ts#L1755">launcher.ts:1755</a></p>
             </div>
             <div
               class="quality-action"><strong>Recommendation</strong><p>Add one shared run-request decoder, require auth for everything except explicit public static GET paths, and redact the token from persisted logs. Keep Host and Origin checks.</p></div>
@@ -1495,7 +1495,7 @@
               <p>Rowcall slices node function text and removes excluded globals lines before compiling them with the original filename. That restarts line numbering at 1. A reproduced exception on source line 13 reported line 2; a globals exception on line 9 reported line 1.</p>
               <p>Also, generated projects ignore <code>.venv</code> and Python caches but not Rowcall’s persistent lock and transaction/temp patterns. Opening a new project can immediately create an unexplained untracked lock file.</p>
               <p class="finding-evidence"
-                style="border:0;padding:10px 0 0">Evidence: <a href="../rowcall/document/parser.py#L957">parser.py:957</a>, <a href="../rowcall/document/parser.py#L988">:988</a>, <a href="../rowcall/runtime/executor.py#L521">executor.py:521</a>, <a href="../rowcall/runtime/executor.py#L587">:587</a>, <a href="../beta_launcher.ts#L119">beta_launcher.ts:119</a>, <a href="../python_document.ts#L1216">python_document.ts:1216</a></p>
+                style="border:0;padding:10px 0 0">Evidence: <a href="../rowcall/document/parser.py#L957">parser.py:957</a>, <a href="../rowcall/document/parser.py#L988">:988</a>, <a href="../rowcall/runtime/executor.py#L521">executor.py:521</a>, <a href="../rowcall/runtime/executor.py#L587">:587</a>, <a href="../launcher.ts#L119">launcher.ts:119</a>, <a href="../python_document.ts#L1216">python_document.ts:1216</a></p>
             </div>
             <div
               class="quality-action"><strong>Recommendation</strong><p>Preserve line offsets with blank padding or adjusted AST locations and add exact-line tests. Copy the repository’s Rowcall save-control patterns into the new-project <code>.gitignore</code>.</p></div>

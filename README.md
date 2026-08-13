@@ -338,7 +338,7 @@ hot reloading.
 Compile the macOS beta launcher:
 
 ```sh
-deno task beta:compile
+deno task launcher:compile
 ```
 
 The task builds the UI first. The compiled binary is written to `dist/rowcall`

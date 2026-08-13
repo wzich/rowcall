@@ -14,13 +14,13 @@ import {
   formatPortInUseError,
   helpTextForTopic,
   managedEnvironmentRevision,
-  parseBetaCommand,
+  parseLauncherCommand,
   preflightHeadlessCommand,
   resolveExistingDocumentPath,
   resolveProjectPython,
-  runBetaCommand,
-} from "./beta_launcher.ts";
-import { getBetaPaths, getVenvPythonPath } from "./beta_paths.ts";
+  runLauncherCommand,
+} from "./launcher.ts";
+import { getLauncherPaths, getVenvPythonPath } from "./launcher_paths.ts";
 import { rowcallVersion } from "./version.ts";
 
 Deno.test("format help teaches the strict generated return structure", () => {
@@ -69,20 +69,20 @@ Deno.test("occupied-port guidance prioritizes the existing window", () => {
   assertStringIncludes(message, "--port 8001");
 });
 
-Deno.test("parseBetaCommand maps help and version utility commands", () => {
-  assertEquals(parseBetaCommand([]), { kind: "help" });
-  assertEquals(parseBetaCommand(["--help"]), { kind: "help" });
-  assertEquals(parseBetaCommand(["-h"]), { kind: "help" });
-  assertEquals(parseBetaCommand(["help", "format"]), {
+Deno.test("parseLauncherCommand maps help and version utility commands", () => {
+  assertEquals(parseLauncherCommand([]), { kind: "help" });
+  assertEquals(parseLauncherCommand(["--help"]), { kind: "help" });
+  assertEquals(parseLauncherCommand(["-h"]), { kind: "help" });
+  assertEquals(parseLauncherCommand(["help", "format"]), {
     kind: "help",
     topic: "format",
   });
-  assertEquals(parseBetaCommand(["--version"]), { kind: "version" });
+  assertEquals(parseLauncherCommand(["--version"]), { kind: "version" });
 });
 
-Deno.test("parseBetaCommand maps launch args", () => {
+Deno.test("parseLauncherCommand maps launch args", () => {
   assertEquals(
-    parseBetaCommand([
+    parseLauncherCommand([
       "--python",
       "/env/bin/python",
       "--port",
@@ -102,7 +102,7 @@ Deno.test("parseBetaCommand maps launch args", () => {
       hostname: "localhost",
     },
   );
-  assertEquals(parseBetaCommand(["open", "analysis.py"]), {
+  assertEquals(parseLauncherCommand(["open", "analysis.py"]), {
     kind: "launch",
     documentPath: "analysis.py",
     openBrowser: true,
@@ -110,7 +110,7 @@ Deno.test("parseBetaCommand maps launch args", () => {
     port: 8000,
     hostname: "127.0.0.1",
   });
-  assertEquals(parseBetaCommand(["open", "--managed-env", "analysis.py"]), {
+  assertEquals(parseLauncherCommand(["open", "--managed-env", "analysis.py"]), {
     kind: "launch",
     documentPath: "analysis.py",
     openBrowser: true,
@@ -120,9 +120,9 @@ Deno.test("parseBetaCommand maps launch args", () => {
   });
 });
 
-Deno.test("parseBetaCommand maps headless run and validate commands", () => {
+Deno.test("parseLauncherCommand maps headless run and validate commands", () => {
   assertEquals(
-    parseBetaCommand(["run", "--python", "/env/bin/python", "analysis.py"]),
+    parseLauncherCommand(["run", "--python", "/env/bin/python", "analysis.py"]),
     {
       kind: "headless",
       cliCommand: "run",
@@ -131,13 +131,13 @@ Deno.test("parseBetaCommand maps headless run and validate commands", () => {
       managedEnv: false,
     },
   );
-  assertEquals(parseBetaCommand(["run", "--managed-env", "analysis.py"]), {
+  assertEquals(parseLauncherCommand(["run", "--managed-env", "analysis.py"]), {
     kind: "headless",
     cliCommand: "run",
     args: ["analysis.py"],
     managedEnv: true,
   });
-  assertEquals(parseBetaCommand(["validate", "analysis.py"]), {
+  assertEquals(parseLauncherCommand(["validate", "analysis.py"]), {
     kind: "headless",
     cliCommand: "validate",
     args: ["analysis.py"],
@@ -196,11 +196,11 @@ Deno.test({
   async fn() {
     const root = await Deno.makeTempDir();
     const project = `${root}/project`;
-    const paths = getBetaPaths(`${root}/home`);
+    const paths = getLauncherPaths(`${root}/home`);
     await Deno.mkdir(project);
     await Deno.writeTextFile(`${project}/graph.py`, "print('graph')\n");
 
-    const summaryTrace = await runBetaCommand({
+    const summaryTrace = await runLauncherCommand({
       kind: "headless",
       cliCommand: "run",
       args: [project, "--trace=summary"],
@@ -208,7 +208,7 @@ Deno.test({
     }, { paths });
     assertEquals(summaryTrace.code, 2);
 
-    const outputsWithTrace = await runBetaCommand({
+    const outputsWithTrace = await runLauncherCommand({
       kind: "headless",
       cliCommand: "run",
       args: [project, "--outputs-only", "--trace"],
@@ -233,7 +233,7 @@ Deno.test({
   async fn() {
     const root = await Deno.makeTempDir();
     const project = `${root}/project`;
-    const paths = getBetaPaths(`${root}/home`);
+    const paths = getLauncherPaths(`${root}/home`);
     await Deno.mkdir(`${project}/.venv`, { recursive: true });
     await Deno.writeTextFile(`${project}/graph.py`, "print('graph')\n");
 
@@ -245,7 +245,7 @@ Deno.test({
       };
       let result;
       try {
-        result = await runBetaCommand({
+        result = await runLauncherCommand({
           kind: "headless",
           cliCommand: "run",
           args: [project, outputOption],
@@ -270,27 +270,27 @@ Deno.test({
   },
 });
 
-Deno.test("parseBetaCommand maps doctor/reset/update commands", () => {
-  assertEquals(parseBetaCommand(["doctor", "--updates"]), {
+Deno.test("parseLauncherCommand maps doctor/reset/update commands", () => {
+  assertEquals(parseLauncherCommand(["doctor", "--updates"]), {
     kind: "doctor",
     checkUpdates: true,
     json: false,
     managedEnv: false,
   });
-  assertEquals(parseBetaCommand(["doctor", "--managed-env"]), {
+  assertEquals(parseLauncherCommand(["doctor", "--managed-env"]), {
     kind: "doctor",
     checkUpdates: false,
     json: false,
     managedEnv: true,
   });
-  assertEquals(parseBetaCommand(["doctor", "--json"]), {
+  assertEquals(parseLauncherCommand(["doctor", "--json"]), {
     kind: "doctor",
     checkUpdates: false,
     json: true,
     managedEnv: false,
   });
-  assertEquals(parseBetaCommand(["reset-env"]), { kind: "reset-env" });
-  assertEquals(parseBetaCommand(["update"]), { kind: "update" });
+  assertEquals(parseLauncherCommand(["reset-env"]), { kind: "reset-env" });
+  assertEquals(parseLauncherCommand(["update"]), { kind: "update" });
 });
 
 Deno.test({
@@ -299,7 +299,7 @@ Deno.test({
   async fn() {
     const tempDir = await Deno.makeTempDir();
     const home = `${tempDir}/unused-home`;
-    const paths = getBetaPaths(home);
+    const paths = getLauncherPaths(home);
 
     const report = await buildDoctorReport({
       kind: "doctor",
@@ -321,7 +321,7 @@ Deno.test({
   permissions: { read: true, write: true, run: true, env: true },
   async fn() {
     const home = await Deno.makeTempDir();
-    const paths = getBetaPaths(home);
+    const paths = getLauncherPaths(home);
     const python = getVenvPythonPath(paths.venvDir);
     const callsPath = `${home}/python-calls.log`;
     await Deno.mkdir(python.slice(0, python.lastIndexOf("/")), {
@@ -354,21 +354,21 @@ Deno.test({
   },
 });
 
-Deno.test("parseBetaCommand maps new and example commands", () => {
-  assertEquals(parseBetaCommand(["new", "my-work"]), {
+Deno.test("parseLauncherCommand maps new and example commands", () => {
+  assertEquals(parseLauncherCommand(["new", "my-work"]), {
     kind: "new",
     targetPath: "my-work",
     openBrowser: false,
     managedEnv: false,
   });
-  assertEquals(parseBetaCommand(["new", "my-work", "--open"]), {
+  assertEquals(parseLauncherCommand(["new", "my-work", "--open"]), {
     kind: "new",
     targetPath: "my-work",
     openBrowser: true,
     managedEnv: false,
   });
   assertEquals(
-    parseBetaCommand([
+    parseLauncherCommand([
       "new",
       "my-work",
       "--open",
@@ -383,7 +383,7 @@ Deno.test("parseBetaCommand maps new and example commands", () => {
       managedEnv: false,
     },
   );
-  assertEquals(parseBetaCommand(["example", "sample"]), {
+  assertEquals(parseLauncherCommand(["example", "sample"]), {
     kind: "example",
     targetPath: "sample",
     openBrowser: false,
@@ -395,7 +395,7 @@ Deno.test("buildLauncherInvocation re-execs compiled launchers directly", () => 
   assertEquals(
     buildLauncherInvocation(["__server", "--port", "8000"], {
       execPath: "/Users/me/.local/bin/rowcall",
-      mainModule: "file:///var/folders/deno-compile-rowcall/beta_launcher.ts",
+      mainModule: "file:///var/folders/deno-compile-rowcall/launcher.ts",
     }),
     {
       command: "/Users/me/.local/bin/rowcall",
@@ -408,7 +408,7 @@ Deno.test("buildLauncherInvocation runs the launcher module in source mode", () 
   assertEquals(
     buildLauncherInvocation(["__server", "--port", "8000"], {
       execPath: "/Users/me/.deno/bin/deno",
-      mainModule: "file:///Users/me/src/rowcall/beta_launcher.ts",
+      mainModule: "file:///Users/me/src/rowcall/launcher.ts",
     }),
     {
       command: "/Users/me/.deno/bin/deno",
@@ -419,7 +419,7 @@ Deno.test("buildLauncherInvocation runs the launcher module in source mode", () 
         "--allow-net",
         "--allow-run",
         "--allow-env",
-        "file:///Users/me/src/rowcall/beta_launcher.ts",
+        "file:///Users/me/src/rowcall/launcher.ts",
         "__server",
         "--port",
         "8000",
@@ -428,15 +428,15 @@ Deno.test("buildLauncherInvocation runs the launcher module in source mode", () 
   );
 });
 
-Deno.test("parseBetaCommand rejects invalid launch args", () => {
+Deno.test("parseLauncherCommand rejects invalid launch args", () => {
   assertThrows(
-    () => parseBetaCommand(["analysis.py", "extra.py"]),
+    () => parseLauncherCommand(["analysis.py", "extra.py"]),
     Error,
     "Expected exactly one",
   );
   assertThrows(
     () =>
-      parseBetaCommand([
+      parseLauncherCommand([
         "analysis.py",
         "--python",
         "/env/bin/python",

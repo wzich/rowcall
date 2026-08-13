@@ -216,7 +216,7 @@
         </tr>
         <tr>
           <td><strong>Launcher &amp; release</strong></td>
-          <td><code>beta_launcher.ts</code>, <code>release.ts</code>, <code>packaging/</code>, <code>site/</code></td>
+          <td><code>launcher.ts</code>, <code>release.ts</code>, <code>packaging/</code>, <code>site/</code></td>
           <td>
             Single-binary launcher (<code>deno compile</code>) that manages a venv under
             <code>~/.rowcall</code>, plus Cloudflare Pages/R2 release pipeline and install site.
@@ -392,7 +392,7 @@
           There is no <code>.github/workflows</code> (or any other CI config). Tests exist in
           three suites (root Deno tests, <code>tests/</code> pytest, <code>app/ui</code> tests)
           but nothing runs them on push/PR, there is no repo-wide typecheck task
-          (<code>beta:check</code> covers two entrypoints), and no single command runs everything.
+          (<code>launcher:check</code> covers two entrypoints), and no single command runs everything.
         </p>
         <p><span class="field">Change:</span>
           Add a <code>deno task test</code> / <code>deno task check</code> umbrella and a CI
@@ -514,7 +514,7 @@
           </li>
           <li>
             <strong>Release config duplication:</strong> the <code>compileIncludes</code> list is
-            maintained in both <code>deno.json</code> (<code>beta:compile</code>) and
+            maintained in both <code>deno.json</code> (<code>launcher:compile</code>) and
             <code>release.ts</code>; they will drift. Generate one from the other.
           </li>
           <li>

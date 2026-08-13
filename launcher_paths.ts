@@ -1,4 +1,4 @@
-export type BetaPaths = {
+export type LauncherPaths = {
   home: string;
   dataDir: string;
   venvDir: string;
@@ -12,7 +12,7 @@ export type BetaPaths = {
   uiDistPath: string;
 };
 
-export function getBetaPaths(home = getHomeDirectory()): BetaPaths {
+export function getLauncherPaths(home = getHomeDirectory()): LauncherPaths {
   const dataDir = `${home}/.rowcall`;
   const bundledDir = `${dataDir}/bundled`;
   return {

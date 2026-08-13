@@ -1,8 +1,8 @@
 import { assertEquals } from "@std/assert";
-import { getBetaPaths, getVenvPythonPath } from "./beta_paths.ts";
+import { getLauncherPaths, getVenvPythonPath } from "./launcher_paths.ts";
 
-Deno.test("getBetaPaths returns the beta data layout under the home directory", () => {
-  assertEquals(getBetaPaths("/Users/test"), {
+Deno.test("getLauncherPaths returns the launcher data layout under the home directory", () => {
+  assertEquals(getLauncherPaths("/Users/test"), {
     home: "/Users/test",
     dataDir: "/Users/test/.rowcall",
     venvDir: "/Users/test/.rowcall/venvs/default",
