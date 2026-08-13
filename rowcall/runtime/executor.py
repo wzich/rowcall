@@ -180,6 +180,7 @@ def invalidate_document_local_imports(document_dir: Path) -> None:
     root = document_dir.resolve()
     previous_document_modules = dict(_DOCUMENT_LOCAL_MODULE_PATHS)
     shadowed_top_level_names = _importable_top_level_names(root)
+    runtime_roots = _runtime_installation_roots()
     for name, module in tuple(sys.modules.items()):
         if name == "rowcall" or name.startswith("rowcall."):
             continue
@@ -197,7 +198,11 @@ def invalidate_document_local_imports(document_dir: Path) -> None:
                 and not module_paths.isdisjoint(previous_paths)
             )
             loaded_from_current_document = (
-                any(path.is_relative_to(root) for path in module_paths)
+                any(
+                    path.is_relative_to(root)
+                    and not _is_within_any(path, runtime_roots)
+                    for path in module_paths
+                )
             )
             loaded_from_document = loaded_from_previous_document or loaded_from_current_document
             shadowed_by_document = top_level_name in shadowed_top_level_names
@@ -324,15 +329,43 @@ def _absolute_module_path(value: Any) -> Path | None:
 def remember_document_local_imports(document_dir: Path) -> None:
     """Remember local module names so a later run in another root evicts them."""
     root = document_dir.resolve()
+    runtime_roots = _runtime_installation_roots()
     for name, module in tuple(sys.modules.items()):
         if name == "rowcall" or name.startswith("rowcall."):
             continue
         try:
             module_paths = _module_paths(module)
-            if any(path.is_relative_to(root) for path in module_paths):
+            if any(
+                path.is_relative_to(root)
+                and not _is_within_any(path, runtime_roots)
+                for path in module_paths
+            ):
                 _DOCUMENT_LOCAL_MODULE_PATHS[name] = module_paths
         except (OSError, RuntimeError):
             continue
+
+
+def _runtime_installation_roots() -> frozenset[Path]:
+    """Return Python installation roots that must survive document refreshes.
+
+    A Rowcall-created ``.venv`` normally lives below the document directory.
+    Treating every module below that directory as document-local would evict
+    third-party packages and compiled extensions from ``sys.modules`` before a
+    run. Some extensions, including NumPy's, cannot be loaded twice in one
+    process. Python installation roots therefore form an explicit boundary
+    inside the broader document tree.
+    """
+    roots: set[Path] = set()
+    for name in ("prefix", "exec_prefix", "base_prefix", "base_exec_prefix"):
+        value = getattr(sys, name, None)
+        if not isinstance(value, str) or not value:
+            continue
+        roots.add(Path(value).resolve())
+    return frozenset(roots)
+
+
+def _is_within_any(path: Path, roots: frozenset[Path]) -> bool:
+    return any(path.is_relative_to(root) for root in roots)
 
 
 @contextlib.contextmanager

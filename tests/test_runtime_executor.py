@@ -4,14 +4,43 @@ import json
 import py_compile
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from rowcall.runtime import RuntimeSession, run_document, run_source
+from rowcall.runtime.executor import invalidate_document_local_imports
 
 
 class RuntimeExecutorTests(unittest.TestCase):
+    def test_import_freshness_preserves_packages_inside_document_venv(self) -> None:
+        module_name = "rowcall_document_venv_dependency"
+        module = types.ModuleType(module_name)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                environment = root / ".venv"
+                package_path = (
+                    environment
+                    / "lib"
+                    / "python-test"
+                    / "site-packages"
+                    / f"{module_name}.py"
+                )
+                module.__file__ = str(package_path)
+                sys.modules[module_name] = module
+
+                with (
+                    patch.object(sys, "prefix", str(environment)),
+                    patch.object(sys, "exec_prefix", str(environment)),
+                ):
+                    invalidate_document_local_imports(root)
+
+            self.assertIs(sys.modules.get(module_name), module)
+        finally:
+            sys.modules.pop(module_name, None)
+
     def test_bytecode_cleanup_failure_stops_before_stale_import_can_run(self) -> None:
         helper_name = "rowcall_unremovable_bytecode_helper"
         try:
