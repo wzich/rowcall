@@ -3,15 +3,22 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Rowcall Alpha</title>
+    <meta
+      name="description"
+      content="Rowcall is a workspace for exploring and building with data. Keep exploratory work inspectable, runnable, and ready to extend."
+    >
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="alternate" type="text/plain" href="/llms.txt"
+      title="Rowcall agent guide">
+    <title>Rowcall — Explore freely. Keep the work.</title>
     <style>
     :root {
       color-scheme: light;
-      --ink: #151515;
-      --muted: #62615d;
+      --ink: #1d1d1b;
+      --muted: #67655f;
       --line: #d8d3c6;
-      --paper: #faf8f1;
-      --panel: #ffffff;
+      --paper: #f7f4eb;
+      --panel: #fffdf7;
       --accent: #b54a22;
       --accent-dark: #7c2f1d;
       --code: #20242a;
@@ -21,6 +28,10 @@
       box-sizing: border-box;
     }
 
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       margin: 0;
       font-family:
@@ -28,41 +39,64 @@
         "Segoe UI", sans-serif;
       color: var(--ink);
       background:
-        linear-gradient(90deg, rgba(21, 21, 21, 0.035) 1px, transparent 1px),
-        linear-gradient(rgba(21, 21, 21, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(29 29 27 / 4%) 1px, transparent 1px),
+        linear-gradient(rgb(29 29 27 / 4%) 1px, transparent 1px),
         var(--paper);
       background-size: 32px 32px;
     }
 
-    main {
-      width: min(920px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 72px 0 48px;
+    a {
+      color: inherit;
+      text-decoration-color: var(--accent);
+      text-decoration-thickness: 2px;
+      text-underline-offset: 4px;
     }
 
-    .hero {
-      min-height: 72vh;
-      display: grid;
-      align-content: center;
-      gap: 28px;
+    a:hover {
+      color: var(--accent-dark);
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    .shell {
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 88px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.05rem;
+      font-weight: 750;
+      letter-spacing: -0.02em;
     }
 
     .mark {
-      width: 72px;
-      height: 72px;
-      border: 2px solid var(--ink);
-      background: var(--panel);
+      width: 30px;
+      height: 30px;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      grid-template-rows: repeat(3, 1fr);
-      gap: 5px;
-      padding: 9px;
-      box-shadow: 8px 8px 0 var(--accent);
+      gap: 2px;
+      padding: 3px;
+      border: 1.5px solid var(--ink);
+      background: var(--panel);
+      box-shadow: 3px 3px 0 var(--accent);
     }
 
     .mark span {
       border: 1px solid var(--line);
-      background: #f0ece1;
+      background: #eee9dc;
     }
 
     .mark span:nth-child(2),
@@ -71,166 +105,394 @@
       background: var(--accent);
     }
 
+    .alpha {
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.67rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    nav a {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    main {
+      padding-bottom: 64px;
+    }
+
+    .hero {
+      min-height: 650px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+      align-items: center;
+      gap: clamp(48px, 8vw, 112px);
+      padding: 96px 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 20px;
+      color: var(--accent-dark);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
     h1 {
+      max-width: 720px;
       margin: 0;
-      max-width: 760px;
-      font-size: clamp(3rem, 8vw, 6.6rem);
-      line-height: 0.9;
-      letter-spacing: 0;
+      font-size: clamp(3.8rem, 8vw, 7.7rem);
+      font-weight: 760;
+      letter-spacing: -0.075em;
+      line-height: 0.86;
     }
 
     .lede {
       max-width: 680px;
-      margin: 0;
+      margin: 32px 0 0;
       color: var(--muted);
-      font-size: 1.25rem;
+      font-size: clamp(1.15rem, 2vw, 1.4rem);
       line-height: 1.55;
     }
 
-    .install {
-      display: grid;
-      gap: 14px;
-      margin-top: 8px;
+    .install-card {
+      border: 1px solid var(--line);
+      background: rgb(255 253 247 / 88%);
+      box-shadow: 10px 10px 0 rgb(181 74 34 / 16%);
+    }
+
+    .install-card h2,
+    .install-card p {
+      margin: 0;
+    }
+
+    .install-card header {
+      min-height: auto;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .install-card h2 {
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     pre {
       margin: 0;
       overflow-x: auto;
-      border: 1px solid var(--line);
+      padding: 22px 20px;
       background: var(--code);
       color: #fff7df;
-      padding: 18px 20px;
-      font-size: 0.98rem;
-      line-height: 1.5;
+      font-size: 0.9rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
-    code {
-      font-family:
-        "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    }
-
-    .note {
-      margin: 0;
+    .requirements {
+      padding: 16px 20px;
       color: var(--muted);
-      font-size: 0.98rem;
+      font-size: 0.84rem;
       line-height: 1.5;
     }
 
-    .sections {
+    .why {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1px;
-      border: 1px solid var(--line);
-      background: var(--line);
+      grid-template-columns: 0.8fr 1.2fr;
+      gap: clamp(48px, 9vw, 120px);
+      padding: 88px 0;
+      border-top: 1px solid var(--line);
     }
 
-    section {
-      background: rgba(255, 255, 255, 0.82);
-      padding: 24px;
-      min-height: 180px;
-    }
-
-    h2 {
-      margin: 0 0 14px;
-      font-size: 1rem;
-      line-height: 1.2;
-    }
-
-    ul {
+    .section-label {
       margin: 0;
-      padding: 0;
-      list-style: none;
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .why-copy {
+      display: grid;
+      gap: 42px;
+    }
+
+    .why-copy article {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 20px;
+    }
+
+    .number {
+      color: var(--accent);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.8rem;
+      padding-top: 6px;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+      letter-spacing: -0.025em;
+    }
+
+    .why-copy p {
+      margin: 0;
       color: var(--muted);
-      line-height: 1.7;
+      line-height: 1.65;
     }
 
-    li + li {
-      margin-top: 8px;
+    .start {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--line);
+      background: var(--panel);
     }
 
-    a {
-      color: var(--accent-dark);
-      text-decoration-thickness: 2px;
+    .start > div {
+      padding: clamp(28px, 5vw, 54px);
+    }
+
+    .start > div + div {
+      border-left: 1px solid var(--line);
+    }
+
+    .start h2 {
+      margin: 0 0 14px;
+      font-size: clamp(1.65rem, 3vw, 2.5rem);
+      letter-spacing: -0.04em;
+    }
+
+    .start p {
+      margin: 0 0 24px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .steps {
+      display: grid;
+      gap: 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 10px;
+      align-items: baseline;
+      font-size: 0.91rem;
+    }
+
+    .step span {
+      color: var(--accent);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.72rem;
+    }
+
+    .step code {
+      overflow-wrap: anywhere;
+    }
+
+    .agent-link {
+      display: inline-block;
+      font-weight: 700;
     }
 
     footer {
-      margin-top: 40px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-top: 28px;
       color: var(--muted);
-      font-size: 0.92rem;
+      font-size: 0.79rem;
+      line-height: 1.55;
     }
 
-    @media (max-width: 760px) {
-      main {
-        width: min(100% - 24px, 920px);
-        padding-top: 42px;
+    footer p {
+      margin: 0;
+    }
+
+    footer p:last-child {
+      text-align: right;
+    }
+
+    @media (max-width: 800px) {
+      .shell {
+        width: min(100% - 28px, 680px);
+      }
+
+      header {
+        min-height: 72px;
       }
 
       .hero {
         min-height: auto;
-        padding-bottom: 40px;
+        grid-template-columns: 1fr;
+        gap: 52px;
+        padding: 72px 0 80px;
       }
 
-      .sections {
+      h1 {
+        font-size: clamp(3.4rem, 17vw, 6rem);
+      }
+
+      .why,
+      .start {
         grid-template-columns: 1fr;
       }
 
-      section {
-        min-height: auto;
+      .why {
+        gap: 48px;
+        padding: 68px 0;
+      }
+
+      .start > div + div {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+    }
+
+    @media (max-width: 480px) {
+      nav {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 58px;
+      }
+
+      .why-copy article {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      footer {
+        grid-template-columns: 1fr;
+      }
+
+      footer p:last-child {
+        text-align: left;
       }
     }
     </style>
   </head>
   <body>
-    <main>
-      <div class="hero">
-        <div class="mark" aria-hidden="true">
-          <span></span><span></span><span></span>
-          <span></span><span></span><span></span>
-          <span></span><span></span><span></span>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+            <span></span><span></span><span></span>
+            <span></span><span></span><span></span>
+          </span>
+          <span>Rowcall</span>
+          <span class="alpha">Alpha</span>
         </div>
-        <h1>Rowcall Alpha</h1>
-        <p class="lede">
-          A local, Python-file-first notebook for graph-shaped data work. The
-          alpha build is macOS-only and intended for early testers.
-        </p>
-        <div class="install">
-          <pre><code>curl -fsSL https://rowcall.io/install.sh | sh</code></pre>
-          <p class="note">
-            Requires macOS and Python 3.10 or newer. To upgrade, run the same
-            install command again.
+        <nav aria-label="Primary navigation">
+          <a href="/llms.txt">For agents</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div>
+            <p
+              class="eyebrow">A workspace for exploring and building with data</p>
+            <h1>Explore freely.<br>Keep the work.</h1>
+            <p class="lede">
+              Rowcall turns an analysis into an inspectable, runnable graph in an
+              ordinary Python file—so when the work matters later, you can keep
+              going instead of starting over.
+            </p>
+          </div>
+
+          <aside class="install-card" aria-labelledby="install-heading">
+            <header>
+              <h2 id="install-heading">Install Rowcall</h2>
+            </header>
+            <pre><code>curl -fsSL \
+  https://rowcall.io/install.sh | sh</code></pre>
+            <p class="requirements">
+              Invited alpha for macOS. Requires Python 3.10 or newer.
+            </p>
+          </aside>
+        </section>
+
+        <section class="why" aria-labelledby="why-heading">
+          <h2 class="section-label" id="why-heading">Why Rowcall</h2>
+          <div class="why-copy">
+            <article>
+              <span class="number">01</span>
+              <div>
+                <h3>See how the work fits together</h3>
+                <p>
+                  Explore each step, its code, and the data flowing through it in
+                  a visual workspace.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span class="number">02</span>
+              <div>
+                <h3>Move without a rewrite</h3>
+                <p>
+                  Your exploration is already a runnable Python graph. Reopen it,
+                  extend it, or run it again from the command line.
+                </p>
+              </div>
+            </article>
+            <article>
+              <span class="number">03</span>
+              <div>
+                <h3>Work directly or delegate</h3>
+                <p>
+                  You and your coding agent work on the same ordinary files, while
+                  Rowcall keeps the computation easy to inspect.
+                </p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="start" aria-label="Getting started">
+          <div>
+            <h2>Start with a project</h2>
+            <p>Create a starter analysis and open it in the Rowcall workspace.</p>
+            <div class="steps" aria-label="Quick start commands">
+              <div
+                class="step"><span>1</span><code>rowcall new my-work --open</code></div>
+              <div
+                class="step"><span>2</span><code>rowcall validate my-work</code></div>
+              <div
+                class="step"><span>3</span><code>rowcall run my-work --json</code></div>
+            </div>
+          </div>
+          <div>
+            <h2>Hand it to an agent</h2>
+            <p>
+              Give your coding agent one short guide to what Rowcall is, how to
+              install it, and how to work with a project.
+            </p>
+            <a class="agent-link" href="/llms.txt">rowcall.io/llms.txt →</a>
+          </div>
+        </section>
+
+        <footer>
+          <p>
+            Rowcall is an early alpha. It supports the beginning of the path from
+            exploration to production; it is not yet a complete orchestration or
+            hosting system.
           </p>
-        </div>
-      </div>
-
-      <div class="sections" aria-label="Rowcall quick reference">
-        <section>
-          <h2>Create</h2>
-          <ul>
-            <li><code>rowcall new my-work --open</code></li>
-            <li>Creates <code>my-work/graph.py</code> and opens it.</li>
-          </ul>
-        </section>
-        <section>
-          <h2>Automate</h2>
-          <ul>
-            <li><code>rowcall validate my-work</code></li>
-            <li><code>rowcall run my-work --json</code></li>
-          </ul>
-        </section>
-        <section>
-          <h2>Try</h2>
-          <ul>
-            <li><code>rowcall example sample-work</code></li>
-            <li><code>rowcall doctor</code></li>
-          </ul>
-        </section>
-      </div>
-
-      <footer>
-        Rowcall is an invited beta distributed as an unsigned, unnotarized
-        binary. It executes Python with your user permissions, so open only code
-        you trust. macOS may ask you to approve it the first time it runs.
-      </footer>
-    </main>
+          <p>
+            The macOS binary is unsigned and unnotarized. Rowcall executes Python
+            with your user permissions, so open only code you trust.
+          </p>
+        </footer>
+      </main>
+    </div>
   </body>
 </html>

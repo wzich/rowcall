@@ -1,0 +1,102 @@
+# Rowcall
+
+> Rowcall is a workspace for exploring and building with data. It turns an analysis into an inspectable, runnable graph in an ordinary Python file, so the work can be extended and rerun instead of rebuilt when it becomes important.
+
+Website: https://rowcall.io
+Status: Invited alpha for macOS
+
+## What Rowcall is
+
+- A local visual workspace for graph-shaped Python analyses.
+- A Rowcall project is an ordinary folder. Its computation lives in `graph.py`.
+- Python functions are steps, and declared dependencies determine execution order.
+- A human can inspect and edit the graph in the workspace. An agent can edit the same files and use the CLI.
+- Data may come from local files, SQL, APIs, or Python code. It does not have to be copied into the project.
+
+Rowcall currently helps people create, inspect, validate, extend, and rerun technical analyses. It is not yet a complete production orchestration, scheduling, or hosting system.
+
+## Install
+
+Requirements:
+
+- macOS
+- Python 3.10 or newer
+
+With the user's approval, install or upgrade Rowcall with:
+
+```sh
+curl -fsSL https://rowcall.io/install.sh | sh
+```
+
+Close any running Rowcall process before installing or upgrading. The installer puts `rowcall` in `~/.local/bin`. If that directory is not on `PATH`, follow the export instruction printed by the installer.
+
+The alpha binary is unsigned and unnotarized. Rowcall executes Python with the user's permissions. Only open and run code the user trusts.
+
+## Get started
+
+Check the installation:
+
+```sh
+rowcall doctor
+```
+
+Create a project for a person to open in the visual workspace:
+
+```sh
+rowcall new my-work --open
+```
+
+Create a project without opening the browser:
+
+```sh
+rowcall new my-work
+```
+
+The generated project contains:
+
+```text
+my-work/
+  .gitignore
+  AGENTS.md
+  graph.py
+  requirements.txt
+```
+
+Read the generated `AGENTS.md` before editing. It contains the project-specific agent workflow.
+
+## Agent workflow
+
+1. Edit `graph.py` directly. Use stable node IDs and follow the format described by `rowcall help format`.
+2. Put Python dependencies in `requirements.txt`. Do not commit `.venv`.
+3. Validate after edits:
+
+   ```sh
+   rowcall validate my-work
+   ```
+
+4. When execution is useful, run the graph and request concise structured output:
+
+   ```sh
+   rowcall run my-work --json=summary
+   ```
+
+5. To run fresh through one step, use its exact node ID or Python function name:
+
+   ```sh
+   rowcall run my-work --to node_id --json=summary
+   ```
+
+6. Do not relaunch Rowcall after every file edit. An open workspace reloads changes from disk.
+7. If `graph.rowcall.json` exists, treat it as optional canvas presentation metadata tied to stable node IDs. The computation remains in `graph.py`.
+
+## Useful commands
+
+```sh
+rowcall --help
+rowcall help format
+rowcall doctor
+rowcall example sample-work
+rowcall open my-work
+rowcall validate my-work
+rowcall run my-work --json=summary
+```

@@ -398,9 +398,12 @@ This writes:
 
 ```text
 dist/site/
+  _headers
+  favicon.svg
   index.html
   install.sh
   latest.json
+  llms.txt
 
 dist/r2/
   latest/rowcall-darwin-arm64
