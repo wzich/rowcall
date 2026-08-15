@@ -865,6 +865,87 @@ def make_x():
             [issue.to_dict() for issue in result.issues],
         )
 
+    def test_apply_operations_reports_node_body_syntax_location_in_editor_coordinates(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "n_test", "code": "x = 1\nresult = )"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            {
+                "kind": "invalid_python",
+                "message": "unmatched ')'",
+                "path": "2:10",
+                "nodeId": "n_test",
+                "field": "code",
+                "operationIndex": 0,
+                "operationType": "update_node_body",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_reports_globals_syntax_location_in_editor_coordinates(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_globals", "code": "import math\nvalue = )"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            {
+                "kind": "invalid_python",
+                "message": "unmatched ')'",
+                "path": "2:9",
+                "field": "globalsCode",
+                "operationIndex": 0,
+                "operationType": "update_globals",
+            },
+            [issue.to_dict() for issue in result.issues],
+        )
+
+    def test_apply_operations_points_incomplete_suite_at_end_of_editor_code(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="n_test", outputs=["x"])
+def make_x():
+    x = 1
+    return {"x": x}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "update_node_body", "nodeId": "n_test", "code": "if ready:"}],
+        )
+
+        self.assertFalse(result.ok)
+        syntax_issue = next(issue for issue in result.issues if issue.kind == "invalid_python")
+        self.assertEqual(syntax_issue.path, "1:10")
+        self.assertEqual(syntax_issue.node_id, "n_test")
+        self.assertEqual(syntax_issue.field, "code")
+
 
 if __name__ == "__main__":
     unittest.main()

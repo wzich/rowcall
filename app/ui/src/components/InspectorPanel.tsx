@@ -8,12 +8,16 @@ import type {
   ValuePreview,
 } from "../../../../types.ts";
 import { python } from "@codemirror/lang-python";
-import { keymap } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { AlertTriangle, Check, Play, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
+import type {
+  NodeNameChangeResult,
+  PythonEditorErrorTarget,
+  ThemeMode,
+} from "../App.tsx";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
@@ -144,7 +148,7 @@ export type InspectorNavigationRequest =
     requestId: number;
   }
   | {
-    target: "node_results";
+    target: "node_code" | "node_results";
     nodeId: string;
     requestId: number;
   };
@@ -178,8 +182,29 @@ type InspectorPanelProps = {
   onSelectionClear: () => void;
   actionsBlocked?: boolean;
   navigationRequest?: InspectorNavigationRequest | null;
+  pythonEditorError?: PythonEditorErrorTarget;
   onShowDocumentGlobals?: () => void;
 };
+
+function focusEditorLocation(
+  view: EditorView,
+  location: { line: number; column: number },
+) {
+  const lineNumber = Math.min(
+    Math.max(location.line, 1),
+    view.state.doc.lines,
+  );
+  const line = view.state.doc.line(lineNumber);
+  const position = Math.min(
+    line.to,
+    line.from + Math.max(location.column - 1, 0),
+  );
+  view.dispatch({
+    selection: { anchor: position },
+    effects: EditorView.scrollIntoView(position, { y: "center" }),
+  });
+  view.focus();
+}
 
 function LabelList(
   { items, emptyLabel }: { items: string[]; emptyLabel: string },
@@ -958,6 +983,8 @@ function GraphInspector({
   onModeChange,
   selectedOutputKey,
   onSelectedOutputKeyChange,
+  pythonEditorError,
+  errorFocusRequestId,
 }: {
   themeMode: ThemeMode;
   graph: GraphInspectorModel;
@@ -969,12 +996,24 @@ function GraphInspector({
   onModeChange: (mode: GraphInspectorMode) => void;
   selectedOutputKey: string;
   onSelectedOutputKeyChange: (key: string) => void;
+  pythonEditorError?: PythonEditorErrorTarget;
+  errorFocusRequestId?: number;
 }) {
+  const globalsEditorRef = useRef<EditorView | null>(null);
   const globalsError = graphExecutionState?.status === "completed" &&
       !graphExecutionState.response.ok &&
       graphExecutionState.response.error?.phase === "document_globals"
     ? graphExecutionState.response.error
     : null;
+
+  useEffect(() => {
+    if (
+      mode === "overview" && pythonEditorError?.editor === "globals" &&
+      errorFocusRequestId !== undefined && globalsEditorRef.current
+    ) {
+      focusEditorLocation(globalsEditorRef.current, pythonEditorError);
+    }
+  }, [errorFocusRequestId, mode, pythonEditorError]);
 
   if (mode === "results") {
     return (
@@ -1023,6 +1062,9 @@ function GraphInspector({
           height="100%"
           extensions={[python()]}
           readOnly={readOnly}
+          onCreateEditor={(view) => {
+            globalsEditorRef.current = view;
+          }}
           onChange={onGlobalsCodeChange}
           basicSetup={{
             autocompletion: false,
@@ -1035,6 +1077,12 @@ function GraphInspector({
           theme={themeMode}
         />
       </div>
+      {pythonEditorError?.editor === "globals" && (
+        <p className="mt-2 text-sm font-medium text-red-800 dark:text-red-200">
+          Line {pythonEditorError.line}, column {pythonEditorError.column}:
+          {"  "}{pythonEditorError.message}
+        </p>
+      )}
       {globalsError && (
         <div className="mt-2 text-sm text-red-800 dark:text-red-200">
           <p className="font-medium">
@@ -1552,6 +1600,8 @@ function NodeInspector({
   onTraceEnabledChange,
   onDeleteNode,
   onShowDocumentGlobals,
+  pythonEditorError,
+  errorFocusRequestId,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
@@ -1574,6 +1624,8 @@ function NodeInspector({
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
   onShowDocumentGlobals?: () => void;
+  pythonEditorError?: PythonEditorErrorTarget;
+  errorFocusRequestId?: number;
 }) {
   const outputsReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
@@ -1800,6 +1852,8 @@ function NodeInspector({
         ? onShowDocumentGlobals
         : undefined}
       onShowResults={() => onModeChange("results")}
+      pythonEditorError={pythonEditorError}
+      errorFocusRequestId={errorFocusRequestId}
     />
   );
 }
@@ -1859,6 +1913,8 @@ function NodeDevelop({
   onOutputReplacement,
   onShowDocumentGlobals,
   onShowResults,
+  pythonEditorError,
+  errorFocusRequestId,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
@@ -1886,7 +1942,10 @@ function NodeDevelop({
   onOutputReplacement: () => void;
   onShowDocumentGlobals?: () => void;
   onShowResults: () => void;
+  pythonEditorError?: PythonEditorErrorTarget;
+  errorFocusRequestId?: number;
 }) {
+  const codeEditorRef = useRef<EditorView | null>(null);
   const selectedInput =
     inputOptions.find((option) => option.name === selectedInputName) ?? null;
   const selectedOutput =
@@ -1898,6 +1957,16 @@ function NodeDevelop({
     runSummary,
     preflightIssues,
   );
+
+  useEffect(() => {
+    if (
+      pythonEditorError?.editor === "node" &&
+      pythonEditorError.nodeId === selectedNode.id &&
+      errorFocusRequestId !== undefined && codeEditorRef.current
+    ) {
+      focusEditorLocation(codeEditorRef.current, pythonEditorError);
+    }
+  }, [errorFocusRequestId, pythonEditorError, selectedNode.id]);
 
   return (
     <div className="h-full min-h-[500px] overflow-hidden bg-white dark:bg-zinc-900">
@@ -1922,6 +1991,13 @@ function NodeDevelop({
             <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
               Shift ↵ run
             </span>
+            {pythonEditorError?.editor === "node" &&
+              pythonEditorError.nodeId === selectedNode.id && (
+              <span className="ml-auto font-mono text-[10px] font-medium text-red-700 dark:text-red-300">
+                Line {pythonEditorError.line}, column{" "}
+                {pythonEditorError.column}:{"  "}{pythonEditorError.message}
+              </span>
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
             <div data-shortcut-scope="editor" className="h-full">
@@ -1931,6 +2007,9 @@ function NodeDevelop({
                 height="100%"
                 extensions={extensions}
                 readOnly={codeReadOnly}
+                onCreateEditor={(view) => {
+                  codeEditorRef.current = view;
+                }}
                 onChange={(value) => onCodeChange(selectedNode.id, value)}
                 basicSetup={{
                   autocompletion: false,
@@ -3391,6 +3470,7 @@ export function InspectorPanel({
   onSelectionClear,
   actionsBlocked = false,
   navigationRequest,
+  pythonEditorError,
   onShowDocumentGlobals,
 }: InspectorPanelProps) {
   const isSelectedNodeRunning = selectedNodeExecutionState?.status ===
@@ -3431,12 +3511,17 @@ export function InspectorPanel({
       return;
     }
 
-    if (navigationRequest.target === "node_results") {
+    if (
+      navigationRequest.target === "node_results" ||
+      navigationRequest.target === "node_code"
+    ) {
       if (selectedNode?.id !== navigationRequest.nodeId) {
         return;
       }
       handledNavigationRequestIdRef.current = navigationRequest.requestId;
-      setInspectorMode("results");
+      setInspectorMode(
+        navigationRequest.target === "node_results" ? "results" : "develop",
+      );
       scrollContainerRef.current?.scrollTo({ top: 0 });
       return;
     }
@@ -3635,6 +3720,10 @@ export function InspectorPanel({
                 onTraceEnabledChange={onTraceEnabledChange}
                 onDeleteNode={onDeleteNode}
                 onShowDocumentGlobals={onShowDocumentGlobals}
+                pythonEditorError={pythonEditorError}
+                errorFocusRequestId={navigationRequest?.target === "node_code"
+                  ? navigationRequest.requestId
+                  : undefined}
               />
             </div>
           </>
@@ -3660,6 +3749,11 @@ export function InspectorPanel({
                 onModeChange={setGraphInspectorMode}
                 selectedOutputKey={selectedGraphOutputKey}
                 onSelectedOutputKeyChange={setSelectedGraphOutputKey}
+                pythonEditorError={pythonEditorError}
+                errorFocusRequestId={navigationRequest?.target ===
+                    "document_globals"
+                  ? navigationRequest.requestId
+                  : undefined}
               />
               {graphInspectorMode === "results" && (
                 <div className="mt-4">

@@ -15,6 +15,7 @@ import {
   applyDocumentOperations,
   DocumentApiRequestError,
   type DocumentOperation,
+  type DocumentValidationIssue,
   loadDocument,
   loadDocumentStatus,
   type LoadDocumentSuccess,
@@ -58,6 +59,10 @@ import {
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
 import type { RunNotification } from "./query/executionPresentation.ts";
+import {
+  type PythonSyntaxLocation,
+  pythonSyntaxLocationFromOffset,
+} from "./pythonSyntaxError.ts";
 import { classifySaveFailure } from "./saveOutcome.ts";
 import { formatSaveReconciliationNotice } from "./saveReconciliation.ts";
 import {
@@ -91,6 +96,13 @@ export type NodeNameChangeResult =
 type SaveErrorMessage = {
   title: string;
   detail: string;
+  target?: PythonEditorErrorTarget;
+};
+
+export type PythonEditorErrorTarget = PythonSyntaxLocation & {
+  editor: "globals" | "node";
+  nodeId?: string;
+  message: string;
 };
 
 type ConnectionWarning = {
@@ -397,8 +409,12 @@ export default function App() {
               "Rowcall lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
           });
         } else {
+          const formattedError = formatSaveError(error, operations);
           setSaveStatus("error");
-          setSaveError(formatSaveError(error));
+          setSaveError(formattedError);
+          if (formattedError.target) {
+            navigateToPythonError(formattedError.target);
+          }
         }
         return false;
       })
@@ -1238,6 +1254,24 @@ export default function App() {
     await flushPendingOperations();
   }
 
+  function navigateToPythonError(target: PythonEditorErrorTarget) {
+    if (target.editor === "node" && target.nodeId) {
+      setSelectedNodeId(target.nodeId);
+      setInspectorNavigationRequest((current) => ({
+        target: "node_code",
+        nodeId: target.nodeId!,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      return;
+    }
+
+    setSelectedNodeId(null);
+    setInspectorNavigationRequest((current) => ({
+      target: "document_globals",
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+  }
+
   async function reloadDocumentFromDisk(
     options: { allowDiscardLocalEdits?: boolean; showUpdatedNotice?: boolean } =
       {},
@@ -1659,14 +1693,26 @@ export default function App() {
             <span className="font-medium">{saveError.title}</span>
             <span className="ml-2">{saveError.detail}</span>
           </p>
-          <button
-            type="button"
-            className="shrink-0 rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={documentQuery.isFetching}
-            onClick={() => void handleReloadDocumentFromDisk()}
-          >
-            {documentQuery.isFetching ? "Reloading..." : "Reload from disk"}
-          </button>
+          {saveError.target
+            ? (
+              <button
+                type="button"
+                className="shrink-0 rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100"
+                onClick={() => navigateToPythonError(saveError.target!)}
+              >
+                Go to error
+              </button>
+            )
+            : (
+              <button
+                type="button"
+                className="shrink-0 rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={documentQuery.isFetching}
+                onClick={() => void handleReloadDocumentFromDisk()}
+              >
+                {documentQuery.isFetching ? "Reloading..." : "Reload from disk"}
+              </button>
+            )}
         </div>
       )}
       {saveStatus === "outcome_unknown" && saveError && (
@@ -1809,6 +1855,7 @@ export default function App() {
               onSelectionClear={() => setSelectedNodeId(null)}
               actionsBlocked={saveStatus === "outcome_unknown"}
               navigationRequest={inspectorNavigationRequest}
+              pythonEditorError={saveError?.target}
               onShowDocumentGlobals={() =>
                 showInspectorTarget("document_globals")}
             />
@@ -2254,16 +2301,22 @@ function toAddNodeOperationNode(node: RuntimeNode): Extract<
   };
 }
 
-function formatSaveError(error: unknown): SaveErrorMessage {
+function formatSaveError(
+  error: unknown,
+  operations: DocumentOperation[] = [],
+): SaveErrorMessage {
   if (error instanceof DocumentApiRequestError && error.issues.length > 0) {
     const issue = error.issues[0];
     const location = formatIssueLocation(issue.path);
 
     if (issue.kind === "invalid_python") {
+      const target = getPythonEditorErrorTarget(issue, operations);
       return {
         title: "Save failed: unsaved Python has a syntax error",
-        detail:
-          `${issue.message}${location}. The saved file was not changed. Fix the editor contents or reload from disk to discard unsaved edits.`,
+        detail: `${issue.message}${
+          target ? formatEditorLocation(target) : location
+        }. The saved file was not changed and your edits are still in the editor.`,
+        ...(target ? { target } : {}),
       };
     }
 
@@ -2277,6 +2330,95 @@ function formatSaveError(error: unknown): SaveErrorMessage {
     title: "Save failed",
     detail: error instanceof Error ? error.message : String(error),
   };
+}
+
+function getPythonEditorErrorTarget(
+  issue: DocumentValidationIssue,
+  operations: DocumentOperation[],
+): PythonEditorErrorTarget | undefined {
+  if (issue.operationIndex === undefined) {
+    return undefined;
+  }
+
+  const operation = operations[issue.operationIndex];
+  if (!operation) {
+    return undefined;
+  }
+
+  if (operation.type === "update_globals") {
+    const location = (issue.field === "globalsCode"
+      ? parsePythonIssueLocation(issue.path)
+      : null) ?? findPythonSyntaxError(operation.code);
+    return location
+      ? { ...location, editor: "globals", message: issue.message }
+      : undefined;
+  }
+
+  if (operation.type === "update_node_body") {
+    const location =
+      (issue.field === "code" ? parsePythonIssueLocation(issue.path) : null) ??
+        findPythonSyntaxError(operation.code);
+    return location
+      ? {
+        ...location,
+        editor: "node",
+        nodeId: operation.nodeId,
+        message: issue.message,
+      }
+      : undefined;
+  }
+
+  if (operation.type === "add_node") {
+    const location = findPythonSyntaxError(operation.node.code);
+    return location
+      ? {
+        ...location,
+        editor: "node",
+        nodeId: operation.node.id,
+        message: issue.message,
+      }
+      : undefined;
+  }
+
+  return undefined;
+}
+
+function parsePythonIssueLocation(
+  path: string | undefined,
+): PythonSyntaxLocation | null {
+  if (!path) {
+    return null;
+  }
+  const [lineText, columnText] = path.split(":", 2);
+  const line = Number(lineText);
+  const column = Number(columnText);
+  return Number.isInteger(line) && line > 0 && Number.isInteger(column) &&
+      column > 0
+    ? { line, column }
+    : null;
+}
+
+function findPythonSyntaxError(code: string): PythonSyntaxLocation | null {
+  const tree = pythonParser.parse(code);
+  let errorOffset: number | null = null;
+
+  tree.iterate({
+    enter(node) {
+      if (errorOffset === null && node.type.isError) {
+        errorOffset = node.from;
+      }
+    },
+  });
+
+  return errorOffset === null
+    ? null
+    : pythonSyntaxLocationFromOffset(code, errorOffset);
+}
+
+function formatEditorLocation(target: PythonEditorErrorTarget): string {
+  return ` at line ${target.line}, column ${target.column} in ${
+    target.editor === "globals" ? "Document Globals" : "this step"
+  }`;
 }
 
 function formatIssueLocation(path: string | undefined): string {

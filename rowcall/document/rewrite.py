@@ -7,7 +7,7 @@ import copy
 import json
 import keyword
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -274,12 +274,66 @@ def _update_node_body(
         node.source_range.return_end_line,
         [*body_lines, return_line],
     )
-    return _finish_rewrite(
+    result = _finish_rewrite(
         lines,
         newline,
         final_newline,
         document_path,
         validate_output_bindings=validate_output_bindings,
+    )
+    return _localize_node_body_syntax_issues(
+        result,
+        node_id=node_id,
+        body_start_line=node.source_range.body_start_line or node.source_range.return_line,
+        indent=node.source_range.indent or "    ",
+        body_lines=body_lines,
+    )
+
+
+def _localize_node_body_syntax_issues(
+    result: RewriteResult,
+    *,
+    node_id: str,
+    body_start_line: int,
+    indent: str,
+    body_lines: list[str],
+) -> RewriteResult:
+    if result.ok:
+        return result
+
+    localized_issues: list[ValidationIssue] = []
+    for issue in result.issues:
+        if issue.kind != "invalid_python" or issue.path is None:
+            localized_issues.append(issue)
+            continue
+        try:
+            line_text, column_text = issue.path.split(":", maxsplit=1)
+            document_line = int(line_text)
+            document_column = int(column_text)
+        except (ValueError, TypeError):
+            localized_issues.append(issue)
+            continue
+        local_line = max(document_line - body_start_line + 1, 1)
+        local_column = max(document_column - len(indent), 1)
+        if local_line > len(body_lines):
+            local_line = len(body_lines)
+            local_column = max(len(body_lines[-1]) - len(indent) + 1, 1)
+        localized_issues.append(
+            replace(
+                issue,
+                path=f"{local_line}:{local_column}",
+                node_id=node_id,
+                field="code",
+            )
+        )
+
+    return RewriteResult(
+        source=result.source,
+        parse_result=ParseResult(
+            ok=result.parse_result.ok,
+            document=result.parse_result.document,
+            issues=tuple(localized_issues),
+        ),
     )
 
 
@@ -730,9 +784,20 @@ def _replace_globals(
     if not parsed.document:
         return _first_issue(parsed, "Document could not be parsed.")
 
+    normalized_globals = textwrap.dedent(globals_code).strip("\n")
+    try:
+        ast.parse(normalized_globals, filename=str(document_path))
+    except SyntaxError as error:
+        return ValidationIssue(
+            kind="invalid_python",
+            message=error.msg,
+            path=f"{error.lineno}:{error.offset}",
+            field="globalsCode",
+        )
+
     lines, newline, final_newline = _split_source(source)
     excluded = _protected_line_numbers(source, parsed.document.nodes)
-    replacement = textwrap.dedent(globals_code).strip("\n").splitlines()
+    replacement = normalized_globals.splitlines()
     kept_lines = [line for index, line in enumerate(lines, start=1) if index in excluded]
     if replacement:
         next_lines = [*replacement, ""]
