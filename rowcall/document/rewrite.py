@@ -897,6 +897,12 @@ def _delete_node(
         document_path,
         validate_output_bindings=False,
     )
+    # A batch may replace every node by deleting the existing nodes before an
+    # add_node operation.  Let that temporary empty document continue through
+    # the transaction; apply_document_operations performs a strict parse after
+    # the complete batch and will still reject a document that ends empty.
+    if result.issues and all(issue.kind == "missing_node" for issue in result.issues):
+        return result.source, next_metadata
     return _source_result_or_issue(result, next_metadata)
 
 

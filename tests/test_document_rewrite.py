@@ -293,6 +293,66 @@ double.depends_on(load)
         self.assertEqual([node.id for node in deleted.parse_result.document.nodes], ["load", "format"])
         self.assertEqual(deleted.parse_result.document.edges, ())
 
+    def test_apply_operations_can_replace_every_node_after_deleting_them_first(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="first", outputs=["x"])
+def first():
+    x = 1
+    return {"x": x}
+
+@node(id="second", outputs=["y"])
+def second():
+    y = 2
+    return {"y": y}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "delete_node", "nodeId": "first"},
+                {"type": "delete_node", "nodeId": "second"},
+                {
+                    "type": "add_node",
+                    "node": {
+                        "id": "replacement",
+                        "functionName": "replacement",
+                        "outputs": [],
+                        "code": "pass",
+                    },
+                },
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertNotIn("def first", result.source)
+        self.assertNotIn("def second", result.source)
+        self.assertIn('node(id="replacement", outputs=[])', result.source)
+        self.assertIn("def replacement():", result.source)
+
+    def test_apply_operations_still_rejects_a_document_that_ends_with_no_nodes(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="only", outputs=[])
+def only():
+    pass
+    return {}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "delete_node", "nodeId": "only"}],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.source)
+        self.assertIn("missing_node", [issue.kind for issue in result.issues])
+
     def test_apply_operations_remove_edge_normalizes_downstream_signature(self) -> None:
         source = """
 from rowcall import node
