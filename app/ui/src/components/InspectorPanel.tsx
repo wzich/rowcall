@@ -1044,7 +1044,7 @@ function GraphInspector({
 
   if (mode === "results") {
     return (
-      <div data-inspector-target="run_result">
+      <div className="h-full" data-inspector-target="run_result">
         <GraphRunResult
           executionState={graphExecutionState}
           nodeLabelsById={graph.nodeLabelsById}
@@ -1061,6 +1061,7 @@ function GraphInspector({
     <section
       data-inspector-target="document_globals"
       className={[
+        "flex h-full min-h-0 flex-col",
         globalsError
           ? "rounded border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40"
           : "",
@@ -1079,7 +1080,7 @@ function GraphInspector({
       </p>
       <div
         className={[
-          "mt-3 h-52 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:h-full [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
+          "mt-3 min-h-52 flex-1 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:h-full [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
           globalsError ? "border-red-300" : "border-zinc-200",
         ].join(" ")}
       >
@@ -1159,7 +1160,7 @@ function GraphRunResult({
 }) {
   if (!executionState) {
     return (
-      <div className="flex min-h-72 flex-col items-center justify-center rounded border border-dashed border-zinc-300 px-8 text-center dark:border-zinc-700">
+      <div className="flex h-full min-h-72 flex-col items-center justify-center rounded border border-dashed border-zinc-300 px-8 text-center dark:border-zinc-700">
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
           No graph results yet
         </p>
@@ -3528,25 +3529,27 @@ export function InspectorPanel({
             />
             <div
               ref={scrollContainerRef}
-              className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4"
             >
-              <GraphInspector
-                themeMode={themeMode}
-                graph={graph}
-                graphExecutionState={graphExecutionState}
-                mode={graphInspectorMode}
-                readOnly={readOnly}
-                onNodeSelect={onNodeSelect}
-                onGlobalsCodeChange={onGlobalsCodeChange}
-                onModeChange={setGraphInspectorMode}
-                selectedOutputKey={selectedGraphOutputKey}
-                onSelectedOutputKeyChange={setSelectedGraphOutputKey}
-                pythonEditorError={pythonEditorError}
-                errorFocusRequestId={navigationRequest?.target ===
-                    "document_globals"
-                  ? navigationRequest.requestId
-                  : undefined}
-              />
+              <div className="min-h-0 flex-1">
+                <GraphInspector
+                  themeMode={themeMode}
+                  graph={graph}
+                  graphExecutionState={graphExecutionState}
+                  mode={graphInspectorMode}
+                  readOnly={readOnly}
+                  onNodeSelect={onNodeSelect}
+                  onGlobalsCodeChange={onGlobalsCodeChange}
+                  onModeChange={setGraphInspectorMode}
+                  selectedOutputKey={selectedGraphOutputKey}
+                  onSelectedOutputKeyChange={setSelectedGraphOutputKey}
+                  pythonEditorError={pythonEditorError}
+                  errorFocusRequestId={navigationRequest?.target ===
+                      "document_globals"
+                    ? navigationRequest.requestId
+                    : undefined}
+                />
+              </div>
               {graphInspectorMode === "results" && (
                 <div className="mt-4">
                   <TraceToggle
