@@ -342,15 +342,15 @@ def large_value():
         )
         self.assertLess(len(stdout.getvalue()), 5_000)
 
-    def test_run_json_omits_png_data_but_keeps_view_metadata(self) -> None:
+    def test_run_json_omits_png_data_but_keeps_display_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "view.py"
+            path = Path(directory) / "display.py"
             path.write_text(
                 """
 import base64
 from rowcall import node
 
-@node(id="plot", outputs=["metadata"], views=["chart"])
+@node(id="plot", outputs=["metadata"])
 def plot():
     metadata = {
         "mimeType": "image/png",
@@ -362,7 +362,8 @@ def plot():
     chart = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     )
-    return {"metadata": metadata, "chart": chart}
+    display(chart, label="Chart")
+    return {"metadata": metadata}
 """.lstrip()
             )
             stdout = io.StringIO()
@@ -377,7 +378,7 @@ def plot():
         self.assertEqual(exit_code, 0, stderr.getvalue())
         self.assertNotIn("iVBOR", stdout.getvalue())
         payload = json.loads(stdout.getvalue())
-        image = payload["response"]["resultsByNode"]["plot"]["views"]["chart"]["image"]
+        image = payload["response"]["resultsByNode"]["plot"]["displays"][0]["image"]
         self.assertEqual(image["mimeType"], "image/png")
         self.assertEqual(image["width"], 1)
         self.assertEqual(image["height"], 1)

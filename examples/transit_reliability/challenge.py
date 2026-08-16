@@ -126,7 +126,6 @@ def build_trip_facts(trips, routes, vehicle_maintenance):
 @node(
     id="n_challenge_questions",
     outputs=["challenge_questions"],
-    views=["challenge_questions"],
 )
 def challenge_questions():
     challenge_questions = pd.DataFrame(
@@ -163,13 +162,13 @@ def challenge_questions():
             },
         ]
     )
+    display(challenge_questions, label="Challenge questions")
     return {"challenge_questions": challenge_questions}
 
 
 @node(
     id="n_preview_joined_data",
     outputs=["joined_data_preview"],
-    views=["joined_data_preview"],
 )
 def preview_joined_data(trip_facts):
     columns = [
@@ -186,13 +185,13 @@ def preview_joined_data(trip_facts):
         "high_severity_events",
     ]
     joined_data_preview = trip_facts[columns].head(10)
+    display(joined_data_preview, label="Joined data preview")
     return {"joined_data_preview": joined_data_preview}
 
 
 @node(
     id="n_basic_reliability_starter",
     outputs=["basic_reliability"],
-    views=["basic_reliability"],
 )
 def basic_reliability_starter(trips):
     # TODO: fill in the values for scheduled_trips, completed_trips,
@@ -204,13 +203,13 @@ def basic_reliability_starter(trips):
             {"metric": "late_trip_rate", "value": None},
         ]
     )
+    display(basic_reliability, label="Basic reliability")
     return {"basic_reliability": basic_reliability}
 
 
 @node(
     id="n_peak_route_starter",
     outputs=["peak_route_reliability"],
-    views=["peak_route_reliability"],
 )
 def peak_route_starter(trip_facts):
     peak_route_reliability = pd.DataFrame(
@@ -222,13 +221,13 @@ def peak_route_starter(trip_facts):
             "avg_arrival_delay_min",
         ]
     )
+    display(peak_route_reliability, label="Peak route reliability")
     return {"peak_route_reliability": peak_route_reliability}
 
 
 @node(
     id="n_maintenance_risk_starter",
     outputs=["maintenance_risk"],
-    views=["maintenance_risk"],
 )
 def maintenance_risk_starter(trip_facts):
     # TODO: summarize trip performance by vehicle_id, then compare it to
@@ -243,13 +242,13 @@ def maintenance_risk_starter(trip_facts):
             "high_severity_events",
         ]
     )
+    display(maintenance_risk, label="Maintenance risk")
     return {"maintenance_risk": maintenance_risk}
 
 
 @node(
     id="n_priority_routes_starter",
     outputs=["priority_routes"],
-    views=["priority_routes"],
 )
 def priority_routes_starter(trip_facts):
     # TODO: build a route-region score using late rate, cancellation rate,
@@ -264,6 +263,7 @@ def priority_routes_starter(trip_facts):
             "priority_score",
         ]
     )
+    display(priority_routes, label="Priority routes")
     return {"priority_routes": priority_routes}
 
 

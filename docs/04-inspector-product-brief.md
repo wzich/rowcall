@@ -16,9 +16,9 @@ Its primary job is to make the transformation loop fast:
 
 > observe inputs -> edit code -> run -> inspect outputs -> repeat
 
-That loop should be possible without repeatedly changing views, scrolling a long
-document, or reaching for the mouse. Other inspector features should not compete
-with this loop for permanent space.
+That loop should be possible without scrolling a long document, or reaching for
+the mouse. Other inspector features should not compete with this loop for
+permanent space.
 
 The inspector has three user modes:
 
@@ -129,17 +129,17 @@ are useful parts of the analysis rather than hidden runtime details.
 **Core user stories**
 
 - As an author, I can inspect all declared outputs from the latest run.
-- As an author, I can inspect ordered declared views and stdout/stderr.
+- As an author, I can inspect ordered displays and stdout/stderr.
 - As an author, I can give a table or visualization most of the available panel
   space when I need to examine it closely.
 - As an author, I can distinguish declared data-flow outputs from human-facing
-  views.
+  displays.
 - As an author, I can tell which run produced an artifact and whether it is
   stale.
 
-The runtime exposes output/view previews, stdout, stderr, warnings, and errors.
-Declared views can render static PNGs from raw bytes or `_repr_png_()`. Rich
-interactive plots remain outside this inspector iteration.
+The runtime exposes output previews, ordered displays, stdout, stderr, warnings,
+and errors. Displays can render static PNGs from raw bytes or `_repr_png_()`.
+Rich interactive plots remain outside this inspector iteration.
 
 ### P2: Configure and manage a node
 
@@ -225,7 +225,7 @@ second graph overview or reproduce every run detail.
 Show the complete latest run record:
 
 - declared outputs
-- ordered declared views
+- ordered displays
 - stdout and stderr
 - warnings and errors
 - optional execution trace under an advanced disclosure
@@ -260,9 +260,9 @@ relevant.
    and switch previewed values without requiring the mouse.
 5. **One representative value beats every value at once.** Selectors and
    expansion are preferable to long stacks of cards.
-6. **Differentiate contracts from views.** Declared outputs flow to other nodes;
-   declared views exist for the human. The interface should use those terms
-   consistently.
+6. **Differentiate contracts from displays.** Declared outputs flow to other
+   nodes; `display()` results exist for the human. The interface should use
+   those terms consistently.
 7. **The graph owns topology.** The inspector provides compact neighbor context
    and navigation, not a miniature duplicate of the canvas.
 
@@ -275,8 +275,7 @@ already legible and navigable on the canvas.
 It has two tabs:
 
 1. **Overview** -- edit Document Globals and see graph-level setup errors.
-2. **Results** -- inspect the latest full-graph run, declared views, and sink
-   outputs.
+2. **Results** -- inspect the latest full-graph run, displays, and sink outputs.
 
 The Overview tab begins with the Document Globals editor. Node, edge, source,
 and sink counts are omitted, as are source/sink navigation lists and declared
@@ -287,11 +286,10 @@ Starting **Run graph** automatically opens Results. Graph Results represent only
 a full `run_graph` execution. A `run_to_node` execution updates the relevant
 node inspectors and notification state, but never replaces graph Results.
 
-Successful graph Results show declared views from executed nodes followed by
-sink outputs not already represented by the same node/name pair. They use flat
-result tabs and the richest preview currently available. The selected preview
-identifies and links to its originating node. Duplicate names are disambiguated
-with their node names.
+Successful graph Results show displays from executed nodes followed by sink
+outputs. They use flat result tabs and the richest preview currently available.
+The selected preview identifies and links to its originating node. Duplicate
+names are disambiguated with their node names.
 
 Any graph or Document Globals edit makes the latest completed graph result
 stale. Keep that result visible but faded and clearly labeled until the next
@@ -299,8 +297,8 @@ full graph run. Partial node runs do not make a stale graph result fresh.
 
 Failures take priority in Results. A node failure links directly to the failed
 node; a Document Globals failure links directly back to Overview. Trace and
-other diagnostics remain secondary to status, failure location, views, and sink
-outputs.
+other diagnostics remain secondary to status, failure location, displays, and
+sink outputs.
 
 ## MVP recommendation
 
@@ -333,7 +331,7 @@ friend testing demonstrates demand.
 - Do users primarily expand outputs, or do they go directly to Results?
 - Is a human-authored description enough for graph comprehension, or is a
   generated summary materially better?
-- Does "views" clearly communicate human-facing values distinct from outputs?
+- Do users understand that `display()` affects presentation but not data flow?
 - How often do users edit declared outputs compared with code?
 - Which plotting libraries already provide reliable `_repr_png_()` output in the
   environments beta testers use?

@@ -273,25 +273,27 @@ def read_message():
     return {"message": message}
 ```
 
-Nodes can also declare ordered human-facing `views`, separately from values that
-flow downstream:
+Nodes can record ordered human-facing displays separately from values that flow
+downstream. `display()` is available bare inside node code:
 
 ```python
-@node(id="n_plot", outputs=["summary"], views=["summary", "chart"])
+@node(id="n_plot", outputs=["summary"])
 def make_plot(data):
     summary = data.describe()
     chart = build_plot(summary)
-    return {"summary": summary, "chart": chart}
+    display(summary, label="Summary")
+    display(chart, label="Chart")
+    return {"summary": summary}
 ```
 
-Views use Rowcall's existing dataframe/value previews. Static image views accept
-PNG `bytes`/`bytearray`, objects with a callable `_repr_png_()` method, and
-common plotting objects from Matplotlib, Seaborn, and Pillow. Plotly figures are
-also supported when Plotly's optional Kaleido and Chrome/Chromium static export
-dependencies are installed. Assign the plotting object to a named value and
-declare that value as a view; do not call `plt.show()` or export the image
-yourself. Interactive JavaScript plots are not supported yet. See
-[ADR 0005](docs/adr/0005-declared-human-facing-views.md) for the full contract.
+Displays use Rowcall's existing dataframe/value previews. Static image displays
+accept PNG `bytes`/`bytearray`, objects with a callable `_repr_png_()` method,
+and common plotting objects from Matplotlib, Seaborn, and Pillow. Plotly figures
+are also supported when Plotly's optional Kaleido and Chrome/Chromium static
+export dependencies are installed. Pass the plotting object to `display()`; do
+not call `plt.show()` or export the image yourself. Interactive JavaScript plots
+are not supported yet. See [ADR 0006](docs/adr/0006-execution-scoped-display.md)
+for the full contract.
 
 The decorator records node metadata and returns the original function unchanged.
 `deno task setup` installs the local Python package into `.venv`. For local

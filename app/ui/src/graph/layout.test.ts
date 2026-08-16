@@ -91,7 +91,6 @@ function graph(
       id,
       code: "",
       outputs: [],
-      views: [],
     })),
     edges: edges.map(([fromNode, toNode]) => ({ fromNode, toNode })),
   };

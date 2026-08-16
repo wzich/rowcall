@@ -198,11 +198,11 @@ class RuntimePreviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "JSON preview too large"):
             previews.make_json_preview_value(value)
 
-    def test_declared_view_accepts_raw_png_bytes(self) -> None:
-        preview, used_bytes = previews.preview_view(
+    def test_display_accepts_raw_png_bytes(self) -> None:
+        preview, used_bytes = previews.preview_display(
             "chart",
             PNG_1X1,
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, len(PNG_1X1))
@@ -211,14 +211,14 @@ class RuntimePreviewTests(unittest.TestCase):
         self.assertEqual(preview["image"]["height"], 1)
         self.assertEqual(base64.b64decode(preview["image"]["dataBase64"]), PNG_1X1)
 
-    def test_png_hook_is_only_called_for_view_preview(self) -> None:
+    def test_png_hook_is_only_called_for_display_preview(self) -> None:
         figure = PngFigure()
 
         ordinary = previews.preview_value("figure", figure)
-        rendered, used_bytes = previews.preview_view(
+        rendered, used_bytes = previews.preview_display(
             "figure",
             figure,
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertNotIn("image", ordinary)
@@ -227,10 +227,10 @@ class RuntimePreviewTests(unittest.TestCase):
         self.assertIn("image", rendered)
 
     def test_png_hook_accepts_ipython_data_and_metadata_tuple(self) -> None:
-        rendered, used_bytes = previews.preview_view(
+        rendered, used_bytes = previews.preview_display(
             "figure",
             MetadataPngFigure(),
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, len(PNG_1X1))
@@ -239,7 +239,7 @@ class RuntimePreviewTests(unittest.TestCase):
             PNG_1X1,
         )
 
-    def test_matplotlib_figure_and_axes_views_render_without_user_export_code(self) -> None:
+    def test_matplotlib_figure_and_axes_displays_render_without_user_export_code(self) -> None:
         class Figure:
             def savefig(self, buffer: object, *, format: str, bbox_inches: str) -> None:
                 self.saved_with = (format, bbox_inches)
@@ -266,15 +266,15 @@ class RuntimePreviewTests(unittest.TestCase):
             },
         ):
             for value in (Figure(), Axes(Figure())):
-                rendered, used_bytes = previews.preview_view(
+                rendered, used_bytes = previews.preview_display(
                     "chart",
                     value,
-                    remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+                    remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
                 )
                 self.assertEqual(used_bytes, len(PNG_1X1))
                 self.assertIn("image", rendered)
 
-    def test_seaborn_grid_view_renders_its_matplotlib_figure(self) -> None:
+    def test_seaborn_grid_display_renders_its_matplotlib_figure(self) -> None:
         class Figure:
             def savefig(self, buffer: object, *, format: str, bbox_inches: str) -> None:
                 buffer.write(PNG_1X1)
@@ -300,16 +300,16 @@ class RuntimePreviewTests(unittest.TestCase):
                 "matplotlib.figure": fake_figure,
             },
         ):
-            rendered, used_bytes = previews.preview_view(
+            rendered, used_bytes = previews.preview_display(
                 "chart",
                 FacetGrid(),
-                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+                remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
             )
 
         self.assertEqual(used_bytes, len(PNG_1X1))
         self.assertIn("image", rendered)
 
-    def test_plotly_figure_view_uses_static_image_export(self) -> None:
+    def test_plotly_figure_display_uses_static_image_export(self) -> None:
         class BaseFigure:
             def to_image(self, *, format: str) -> bytes:
                 self.format = format
@@ -328,10 +328,10 @@ class RuntimePreviewTests(unittest.TestCase):
             },
         ):
             figure = BaseFigure()
-            rendered, used_bytes = previews.preview_view(
+            rendered, used_bytes = previews.preview_display(
                 "chart",
                 figure,
-                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+                remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
             )
 
         self.assertEqual(figure.format, "png")
@@ -356,10 +356,10 @@ class RuntimePreviewTests(unittest.TestCase):
                 "plotly.basedatatypes": fake_basedatatypes,
             },
         ):
-            rendered, used_bytes = previews.preview_view(
+            rendered, used_bytes = previews.preview_display(
                 "chart",
                 BaseFigure(),
-                remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+                remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
             )
 
         self.assertEqual(used_bytes, 0)
@@ -367,39 +367,39 @@ class RuntimePreviewTests(unittest.TestCase):
         self.assertIn("Kaleido and Chrome or Chromium", rendered["warning"])
 
     def test_png_render_failure_becomes_a_warning(self) -> None:
-        preview, used_bytes = previews.preview_view(
+        preview, used_bytes = previews.preview_display(
             "chart",
             BrokenPngFigure(),
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, 0)
         self.assertNotIn("image", preview)
-        self.assertIn("Could not render view", preview["warning"])
+        self.assertIn("Could not render display", preview["warning"])
 
-    def test_unsupported_rich_view_falls_back_to_repr_with_warning(self) -> None:
-        preview, used_bytes = previews.preview_view(
+    def test_unsupported_rich_display_falls_back_to_repr_with_warning(self) -> None:
+        preview, used_bytes = previews.preview_display(
             "chart",
             object(),
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, 0)
         self.assertNotIn("image", preview)
         self.assertIn("showing its repr only", preview["warning"])
 
-    def test_png_view_limits_omit_image_without_failing_preview(self) -> None:
-        oversized = PNG_1X1 + b"x" * previews.VIEW_PNG_MAX_BYTES
+    def test_png_display_limits_omit_image_without_failing_preview(self) -> None:
+        oversized = PNG_1X1 + b"x" * previews.DISPLAY_PNG_MAX_BYTES
 
-        preview, used_bytes = previews.preview_view(
+        preview, used_bytes = previews.preview_display(
             "chart",
             oversized,
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, 0)
         self.assertNotIn("image", preview)
-        self.assertIn("per-view limit", preview["warning"])
+        self.assertIn("per-display limit", preview["warning"])
 
     def test_truncated_png_header_is_rejected(self) -> None:
         truncated = (
@@ -410,10 +410,10 @@ class RuntimePreviewTests(unittest.TestCase):
             + (1).to_bytes(4, "big")
         )
 
-        preview, used_bytes = previews.preview_view(
+        preview, used_bytes = previews.preview_display(
             "chart",
             truncated,
-            remaining_image_bytes=previews.VIEW_PNG_RUN_MAX_BYTES,
+            remaining_image_bytes=previews.DISPLAY_PNG_RUN_MAX_BYTES,
         )
 
         self.assertEqual(used_bytes, 0)

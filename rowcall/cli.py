@@ -549,12 +549,12 @@ def summary_payload(payload: dict[str, Any], *, trace_mode: str) -> dict[str, An
                 ]
             if result.get("error") is not None:
                 node_summary["error"] = compact_error(result["error"])
-            views = result.get("views")
-            if isinstance(views, dict) and views:
-                node_summary["views"] = {
-                    str(name): compact_preview(preview)
-                    for name, preview in views.items()
-                }
+            displays = result.get("displays")
+            if isinstance(displays, list) and displays:
+                node_summary["displays"] = [
+                    compact_preview(preview)
+                    for preview in displays
+                ]
             node_summaries.append(node_summary)
 
     compact_response: dict[str, Any] = {
@@ -613,7 +613,6 @@ def document_summary(result: ParseResult) -> dict[str, Any]:
                 "id": node.id,
                 "functionName": node.function_name,
                 "outputs": list(node.outputs),
-                "views": list(node.views),
             }
             for node in result.document.nodes
         ],
@@ -651,17 +650,18 @@ def write_run_summary(payload: dict[str, Any], *, stdout: TextIO, stderr: TextIO
                 stdout.write(f"  {name}: {format_preview(preview)}\n")
 
     results_by_node = response.get("resultsByNode") or {}
-    rendered_views: list[tuple[str, dict[str, Any]]] = []
+    rendered_displays: list[tuple[str, list[Any]]] = []
     for node_id in executed_node_ids:
         result = results_by_node.get(node_id)
-        views = result.get("views") if isinstance(result, dict) else None
-        if isinstance(views, dict) and views:
-            rendered_views.append((node_id, views))
-    if rendered_views:
-        stdout.write("Views:\n")
-        for node_id, views in rendered_views:
+        displays = result.get("displays") if isinstance(result, dict) else None
+        if isinstance(displays, list) and displays:
+            rendered_displays.append((node_id, displays))
+    if rendered_displays:
+        stdout.write("Displays:\n")
+        for node_id, displays in rendered_displays:
             stdout.write(f"- {node_id}:\n")
-            for name, preview in views.items():
+            for preview in displays:
+                name = preview.get("name", "Display") if isinstance(preview, dict) else "Display"
                 stdout.write(f"  {name}: {format_preview(preview)}\n")
 
     error = response.get("error")

@@ -66,29 +66,30 @@ not return those Python objects directly. They return JSON-serializable
 `repr`, and optionally `jsonValue` when the value is a small plain
 JSON-compatible primitive or container.
 
-### Declared Views
+### Displays
 
-Declared Views are ordered variable names intended for human consumption. They
-are part of the Python document contract but are never provided to downstream
-Nodes. A value may be both an output and a view without being duplicated in the
-function's return dictionary.
+Bare `display(value, label="...")` calls record ordered, human-facing results
+for the currently executing Node. Displays are snapshot previews created at call
+time. They are never added to the Node's returned outputs or provided to
+downstream Nodes. Each execution replaces that Node's previous display list, and
+displays recorded before a later execution error remain in the failed result.
 
-Views use the same dataframe, JSON, text, and `repr` preview machinery as
-outputs. A declared view containing `bytes`/`bytearray`, an object with a
-callable `_repr_png_()` method, or a supported plotting object can additionally
-produce a static PNG preview. Supported plotting objects include Matplotlib
-figures and axes, Seaborn objects backed by Matplotlib, Pillow images, and
-Plotly figures when Plotly's optional Kaleido and Chrome/Chromium static export
-stack is available. Rowcall does not invoke rich rendering for ordinary outputs.
+Displays use the same dataframe, JSON, text, and `repr` preview machinery as
+outputs. A displayed `bytes`/`bytearray` value, an object with a callable
+`_repr_png_()` method, or a supported plotting object can additionally produce a
+static PNG preview. Supported plotting objects include Matplotlib figures and
+axes, Seaborn objects backed by Matplotlib, Pillow images, and Plotly figures
+when Plotly's optional Kaleido and Chrome/Chromium static export stack is
+available. Rowcall does not invoke rich rendering for ordinary outputs.
 Rendering failures become preview warnings rather than node failures.
 
 Rowcall workers force Matplotlib's non-interactive `Agg` backend. Consequently,
-`plt.show()` cannot open a native GUI or block the worker; authors should assign
-the figure or axes to a declared view instead.
+`plt.show()` cannot open a native GUI or block the worker; authors should pass
+the figure or axes to `display()` instead.
 
-Each Node may declare at most 10 views. PNG data is limited to 5 MiB per view
-and 20 MiB per Run. The app response carries accepted image bytes as base64; the
-public CLI omits those bytes and exposes only image metadata.
+Each Node execution records at most 10 displays. PNG data is limited to 5 MiB
+per display and 20 MiB per Run. The app response carries accepted image bytes as
+base64; the public CLI omits those bytes and exposes only image metadata.
 
 ### Edge
 

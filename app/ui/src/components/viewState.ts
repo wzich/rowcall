@@ -1,6 +1,6 @@
 export type PreviewCollections = {
   outputs: Record<string, unknown>;
-  views: Record<string, unknown>;
+  displays: unknown[];
 };
 
 export function hasResultPreviews(
@@ -9,27 +9,6 @@ export function hasResultPreviews(
   return Boolean(
     result &&
       (Object.keys(result.outputs).length > 0 ||
-        Object.keys(result.views).length > 0),
+        result.displays.length > 0),
   );
-}
-
-export function toggleOrderedName(
-  names: string[],
-  name: string,
-  maximum: number,
-): string[] {
-  if (names.includes(name)) {
-    return names.filter((existing) => existing !== name);
-  }
-  if (names.length >= maximum) {
-    return names;
-  }
-  return [...names, name];
-}
-
-export function orderDevelopResultNames(
-  outputs: string[],
-  views: string[],
-): string[] {
-  return [...views, ...outputs.filter((name) => !views.includes(name))];
 }

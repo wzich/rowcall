@@ -116,7 +116,7 @@ def build_customer_facts(orders, customers, support_by_customer):
     return {"customer_facts": customer_facts}
 
 
-@node(id="n_campaign_roi", outputs=["campaign_roi"], views=["campaign_roi"])
+@node(id="n_campaign_roi", outputs=["campaign_roi"])
 def campaign_roi(customer_facts, campaigns):
     attributed_revenue = (
         customer_facts
@@ -135,10 +135,11 @@ def campaign_roi(customer_facts, campaigns):
     )
     campaign_roi["roas"] = (campaign_roi["revenue"] / campaign_roi["spend"]).round(2)
     campaign_roi = campaign_roi.sort_values("roas", ascending=False)
+    display(campaign_roi, label="Campaign ROI")
     return {"campaign_roi": campaign_roi}
 
 
-@node(id="n_segment_revenue", outputs=["segment_revenue"], views=["segment_revenue"])
+@node(id="n_segment_revenue", outputs=["segment_revenue"])
 def segment_revenue(customer_facts):
     segment_revenue = (
         customer_facts
@@ -152,10 +153,11 @@ def segment_revenue(customer_facts):
         .sort_values("revenue", ascending=False)
     )
     segment_revenue["avg_order_value"] = segment_revenue["avg_order_value"].round(2)
+    display(segment_revenue, label="Segment revenue")
     return {"segment_revenue": segment_revenue}
 
 
-@node(id="n_retention_risk", outputs=["retention_risk"], views=["retention_risk"])
+@node(id="n_retention_risk", outputs=["retention_risk"])
 def retention_risk(customer_facts):
     retention_risk = (
         customer_facts
@@ -181,6 +183,7 @@ def retention_risk(customer_facts):
         ]]
         .head(8)
     )
+    display(retention_risk, label="Retention risk")
     return {"retention_risk": retention_risk}
 
 

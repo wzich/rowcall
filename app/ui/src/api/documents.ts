@@ -56,7 +56,6 @@ export type DocumentOperation =
   | { type: "update_globals"; code: string }
   | { type: "update_node_body"; nodeId: string; code: string }
   | { type: "update_node_outputs"; nodeId: string; outputs: string[] }
-  | { type: "update_node_views"; nodeId: string; views: string[] }
   | { type: "rename_node_function"; nodeId: string; functionName: string }
   | {
     type: "add_node";
@@ -65,7 +64,6 @@ export type DocumentOperation =
       functionName: string;
       code: string;
       outputs: string[];
-      views?: string[];
       position?: { x: number; y: number };
       title?: string;
       description?: string;

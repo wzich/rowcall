@@ -1,7 +1,7 @@
 import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 
 type RemovedDeclaredValue = {
-  kind: "output" | "view";
+  kind: "output";
   name: string;
   nodeLabel: string;
 };
@@ -21,11 +21,6 @@ export function formatSaveReconciliationNotice(
     for (const name of previousNode.outputs) {
       if (!savedNode.outputs.includes(name)) {
         removed.push({ kind: "output", name, nodeLabel });
-      }
-    }
-    for (const name of previousNode.views) {
-      if (!savedNode.views.includes(name)) {
-        removed.push({ kind: "view", name, nodeLabel });
       }
     }
   }

@@ -120,7 +120,7 @@ const defaultAgentInstructions = `# Rowcall
 - Edit \`graph.py\` directly. Node functions must follow \`rowcall help format\`.
 - After edits, run \`rowcall validate .\`; run \`rowcall run . --json=summary\` when execution is needed.
 - Do not relaunch Rowcall after every edit. The open UI reloads changes from disk.
-- For charts, assign the plotting object to a named value and include it in \`views\`; do not call \`plt.show()\` or manually export image bytes.
+- Use bare \`display(value)\` for human-facing results; add \`label="..."\` when useful; do not call \`plt.show()\` or manually export image bytes.
 - Keep dependencies in \`requirements.txt\` and the project environment.
 - Canvas metadata, when present, is in \`graph.rowcall.json\`; match it to stable node IDs in \`graph.py\`.
 `;
@@ -142,7 +142,7 @@ def load_orders():
     return {"orders": orders}
 
 
-@node(id="n_summarize_orders", outputs=["summary"], views=["summary"])
+@node(id="n_summarize_orders", outputs=["summary"])
 def summarize_orders(orders):
     summary = (
         orders
@@ -153,6 +153,7 @@ def summarize_orders(orders):
         )
         .sort("revenue", descending=True)
     )
+    display(summary, label="Orders by category")
     return {"summary": summary}
 
 
@@ -221,10 +222,11 @@ specific interpreter or --managed-env to use Rowcall's shared starter environmen
 const formatHelpText = `Rowcall Python Document Format
 
 Rowcall documents are normal Python files. A node is a Python function
-decorated with @node. The decorator declares stable output names and optional
-human-facing view names. Every declared value must exist as a same-named local
-variable (parameters already count). Assign computed values in the function
-body, then end with one generated return dictionary.
+decorated with @node. The decorator declares stable output names. Human-facing
+results use bare display(value, label="...") calls. Every declared
+output must exist as a same-named local variable (parameters already count).
+Assign computed values in the function body, then end with one generated return
+dictionary.
 
 Example:
   from rowcall import node
@@ -234,9 +236,10 @@ Example:
       numbers = [1, 2, 3]
       return {"numbers": numbers}
 
-  @node(id="n_total", outputs=["total"], views=["total"])
+  @node(id="n_total", outputs=["total"])
   def total_numbers(numbers):
       total = sum(numbers)
+      display(total, label="Total")
       return {"total": total}
 
   total_numbers.depends_on(load_numbers)
@@ -244,17 +247,16 @@ Example:
 Return requirements:
   - Use exactly one return statement, last in the node function.
   - Return a dictionary literal.
-  - Return outputs first, then views not already present, in declared order.
-  - A name may be both an output and a view and is returned only once.
   - Map each returned name directly to its same-named variable.
-  - Use return {} when outputs=[] and views=[]; do not return expressions inline.
+  - Use return {} when outputs=[]; do not return expressions inline.
 
-Outputs flow to downstream nodes. Views are only for human inspection. Views
-support normal table/value previews and static PNGs from PNG bytes, objects with
+Outputs flow to downstream nodes. Displays are only for human inspection and
+never flow downstream. Displays support normal table/value previews and static
+PNGs from PNG bytes, objects with
 a _repr_png_() method, Matplotlib figures or axes, Seaborn plots, Pillow images,
-and Plotly figures when Kaleido and Chrome or Chromium are available. Assign and
-return the plotting object; do not call plt.show() or export image bytes
-yourself. Interactive JavaScript views are not supported.
+and Plotly figures when Kaleido and Chrome or Chromium are available. Call
+display() with the plotting object; do not call plt.show() or export image bytes
+yourself. Interactive JavaScript displays are not supported.
 
 Invalid:
   return {"total": sum(numbers)}
@@ -265,7 +267,7 @@ Valid:
 
 Edges are explicit: depends_on says which upstream nodes may provide inputs.
 Function parameters consume upstream outputs by name. Run rowcall validate
-<path> after every edit to check returns, IDs, outputs, views, edges, and
+<path> after every edit to check returns, IDs, outputs, edges, and
 parameter binding.
 `;
 

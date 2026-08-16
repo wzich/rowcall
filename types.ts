@@ -93,7 +93,7 @@ export type NodeRunResult = {
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
-  views: Record<string, ValuePreview>;
+  displays: ValuePreview[];
   warnings: string[];
   error?: string;
 };
@@ -111,8 +111,6 @@ export type ValidationIssue = {
     | "invalid_node_id"
     | "invalid_output"
     | "duplicate_output"
-    | "invalid_view"
-    | "duplicate_view"
     | "duplicate_edge"
     | "missing_node_reference"
     | "cycle"
@@ -166,7 +164,7 @@ export type ExecutionStepTrace = {
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
-  views: Record<string, ValuePreview>;
+  displays: ValuePreview[];
   warnings: string[];
   error: string | null;
 };

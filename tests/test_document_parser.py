@@ -556,43 +556,6 @@ def show_value():
             "from rowcall imports may only include node",
         )
 
-    def test_views_are_ordered_and_may_overlap_outputs(self) -> None:
-        source = """
-from rowcall import node
-
-@node(id="show", outputs=["data"], views=["chart", "data"])
-def show_value():
-    data = [1, 2]
-    chart = {"kind": "bar"}
-    return {"data": data, "chart": chart}
-""".lstrip()
-
-        result = parse_source(source, Path("/tmp/views.py"))
-
-        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
-        assert result.document is not None
-        parsed = result.document.nodes[0]
-        self.assertEqual(parsed.outputs, ("data",))
-        self.assertEqual(parsed.views, ("chart", "data"))
-        self.assertEqual(parsed.return_names, ("data", "chart"))
-
-    def test_rejects_more_than_ten_views(self) -> None:
-        names = [f"view_{index}" for index in range(11)]
-        declarations = "\n".join(f"    {name} = {index}" for index, name in enumerate(names))
-        returned = ", ".join(f'"{name}": {name}' for name in names)
-        source = (
-            "from rowcall import node\n\n"
-            f"@node(id=\"show\", outputs=[], views={names!r})\n"
-            "def show_value():\n"
-            f"{declarations}\n"
-            f"    return {{{returned}}}\n"
-        )
-
-        result = parse_source(source, Path("/tmp/too_many_views.py"))
-
-        self.assertFalse(result.ok)
-        self.assertTrue(any(issue.kind == "invalid_view" for issue in result.issues))
-
     def test_reports_shape_and_graph_validation_issues(self) -> None:
         source = """
 from rowcall import node

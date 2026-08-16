@@ -71,26 +71,25 @@ matching values into the downstream function. For standard editor-authored
 nodes, UI graph/output edits may normalize downstream function signatures to
 match direct upstream outputs.
 
-Declared outputs and human-facing views are represented in the decorator and
-returned as a dictionary. Outputs participate in data flow; views do not. A name
-may be declared as both. The return shape is deliberately strict: a node has
+Declared outputs are represented in the decorator and returned as a dictionary.
+Human-facing results are recorded with bare `display()` calls and do not
+participate in data flow. The return shape is deliberately strict: a node has
 exactly one return statement as its final statement; it returns a dictionary
-literal; and its keys and values match the ordered union of outputs followed by
-views not already present, with every value referencing a same-named local
-variable. Parameters already count as locals. Nodes with neither outputs nor
-views end with `return {}`. This constrained grammar keeps CLI execution and
-source rewrites aligned with the visual editor. See
-[ADR 0005](0005-declared-human-facing-views.md) for the rendering contract.
+literal; and its keys and values match the ordered outputs, with every value
+referencing a same-named local variable. Parameters already count as locals.
+Nodes with no outputs end with `return {}`. This constrained grammar keeps CLI
+execution and source rewrites aligned with the visual editor. See
+[ADR 0006](0006-execution-scoped-display.md) for the rendering contract.
 
 ```python
 @node(
     id="n_ab12cd",
     outputs=["clean_df", "row_count"],
-    views=["clean_df"],
 )
 def clean_data(df):
     clean_df = df.dropna()
     row_count = len(clean_df)
+    display(clean_df, label="Clean data")
     return {"clean_df": clean_df, "row_count": row_count}
 ```
 

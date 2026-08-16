@@ -47,9 +47,10 @@ def summarize_by_region(orders):
     return {"summary": summary}
 
 
-@node(id="n_orders_render", outputs=[], views=["summary"])
+@node(id="n_orders_render", outputs=[])
 def render_summary(summary):
-    return {"summary": summary}
+    display(summary, label="Orders by region")
+    return {}
 
 
 # Rowcall graph

@@ -140,17 +140,17 @@ JSON output is wrapped with command and document context:
 ```
 
 For `run`, `response` uses the runtime execution shape: executed node IDs,
-per-node results, final outputs, declared views, optional trace details, stdout,
-stderr, warnings, and value previews. Dataframe previews include column names,
-dtypes, rows, row counts, column counts, and truncation state.
+per-node results, final outputs, ordered displays, optional trace details,
+stdout, stderr, warnings, and value previews. Dataframe previews include column
+names, dtypes, rows, row counts, column counts, and truncation state.
 
 The CLI never emits PNG base64, including with full `--json` and `--trace`.
 Image previews instead contain MIME type, width, height, byte size, and
 `dataOmitted: true`. The CLI does not write image files in this version.
 
 `--trace` can produce large JSON because it includes previews for intermediate
-inputs, outputs, and views. Prefer untraced `--json` for normal automation and
-add `--trace` when debugging data flow into a specific node.
+inputs, outputs, and displays. Prefer untraced `--json` for normal automation
+and add `--trace` when debugging data flow into a specific node.
 
 Summary and outputs-only responses cap embedded plain JSON values at 16 KB,
 table previews at 5 rows by 10 columns, and diagnostic text fields at bounded

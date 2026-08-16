@@ -76,7 +76,6 @@ class DocumentNode:
     id: str
     function_name: str
     outputs: tuple[str, ...]
-    views: tuple[str, ...]
     parameters: tuple[str, ...]
     source_range: SourceRange
     function_source: str
@@ -87,16 +86,14 @@ class DocumentNode:
 
     @property
     def return_names(self) -> tuple[str, ...]:
-        """Names returned by the function, with shared output/views included once."""
-        output_names = set(self.outputs)
-        return (*self.outputs, *(name for name in self.views if name not in output_names))
+        """Names returned by the generated node function."""
+        return self.outputs
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "functionName": self.function_name,
             "outputs": list(self.outputs),
-            "views": list(self.views),
             "parameters": list(self.parameters),
             "sourceRange": self.source_range.to_dict(),
             "functionSource": self.function_source,
@@ -118,7 +115,6 @@ class DocumentNode:
             "code": self.display_code,
             "runtimeCode": runtime_code,
             "outputs": list(self.outputs),
-            "views": list(self.views),
             "parameters": list(self.parameters),
             "customReturn": self.custom_return,
             "editable": self.editable,
@@ -157,7 +153,6 @@ class ExecutableDocument:
                     "id": node.id,
                     "code": node.display_code,
                     "outputs": list(node.outputs),
-                    "views": list(node.views),
                 }
                 for node in self.nodes
             ],

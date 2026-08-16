@@ -155,19 +155,17 @@ Deno.test("hasCustomManagedDownstream detects non-editable downstream nodes", ()
   const document: RowcallDocumentV1 = {
     version: 1,
     nodes: [
-      { id: "n_source", code: "x = 1", outputs: ["x"], views: [] },
+      { id: "n_source", code: "x = 1", outputs: ["x"] },
       {
         id: "n_editable",
         code: "y = x",
         outputs: ["y"],
-        views: [],
         editable: true,
       },
       {
         id: "n_custom",
         code: "z = x",
         outputs: ["z"],
-        views: [],
         editable: false,
       },
     ],
