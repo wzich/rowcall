@@ -28,6 +28,7 @@ import {
 } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
+import type { NodeDimensionsById } from "../graph/layout.ts";
 import type { ThemeMode } from "../App.tsx";
 import {
   type NodeCanvasPreview,
@@ -66,7 +67,7 @@ type CanvasProps = {
   nodeInputPreviews: Record<string, Array<{ name: string; type?: string }>>;
   nodeOutputOptions: Record<string, PythonNodeOutputOption[]>;
   onAddNode?: (position: GraphPosition) => void;
-  onAutoLayout?: () => void;
+  onAutoLayout?: (dimensions: NodeDimensionsById) => void;
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onConnectNodes?: (
@@ -209,6 +210,16 @@ export function Canvas({
   ) => {
     onNodePositionChange?.(node.id, node.position);
   }, [onNodePositionChange]);
+  const handleAutoLayoutRequest = useCallback(() => {
+    if (!onAutoLayout) return;
+
+    const dimensions = Object.fromEntries(nodes.flatMap((node) => {
+      const width = node.measured?.width ?? node.width;
+      const height = node.measured?.height ?? node.height;
+      return width && height ? [[node.id, { width, height }] as const] : [];
+    }));
+    onAutoLayout(dimensions);
+  }, [nodes, onAutoLayout]);
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     const removedEdgeIds = changes
       .filter((change) => change.type === "remove")
@@ -381,7 +392,7 @@ export function Canvas({
         {(onAddNode || onAutoLayout) && (
           <CanvasToolsPanel
             onAddNode={onAddNode}
-            onAutoLayout={onAutoLayout}
+            onAutoLayout={onAutoLayout ? handleAutoLayoutRequest : undefined}
           />
         )}
       </ReactFlow>

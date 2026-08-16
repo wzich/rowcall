@@ -45,7 +45,7 @@ import {
   toRuntimeGraph,
 } from "./graph/documentTypes.ts";
 import { getConnectionConflict } from "./graph/connectionValidation.ts";
-import { createSimpleLayout } from "./graph/layout.ts";
+import { createSimpleLayout, type NodeDimensionsById } from "./graph/layout.ts";
 import { detectPureOutputRename } from "./graph/outputRename.ts";
 import {
   functionNameFromDisplayName,
@@ -1262,10 +1262,12 @@ export default function App() {
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
-  const handleAutoLayout = useCallback(() => {
+  const handleAutoLayout = useCallback((
+    dimensions: NodeDimensionsById,
+  ) => {
     const current = editableDocumentRef.current;
     if (!current || saveOutcomeUnknownRef.current) return;
-    const positions = createSimpleLayout(toRuntimeGraph(current));
+    const positions = createSimpleLayout(toRuntimeGraph(current), dimensions);
     const changedPositions = current.nodes.flatMap((node) => {
       const position = positions[node.id];
       return position && !arePositionsEqual(node.position, position)
