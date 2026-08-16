@@ -491,6 +491,8 @@ Deno.test({
     assertEquals(path, `${folder}/graph.py`);
     const source = await Deno.readTextFile(path);
     assertEquals(source.includes("from rowcall import node"), true);
+    assertEquals(source.includes("# Rowcall documents"), false);
+    assertEquals(source.includes("# Help: rowcall help format"), false);
     assertEquals(
       source.includes("shout_message.depends_on(load_message)"),
       true,
@@ -597,6 +599,8 @@ Deno.test({
     );
     const source = await Deno.readTextFile(path);
     assertEquals(source.includes("pl.read_csv"), true);
+    assertEquals(source.includes("# Rowcall documents"), false);
+    assertEquals(source.includes("# Help: rowcall help format"), false);
     assertEquals(
       await Deno.readTextFile(`${folder}/.gitignore`),
       ".venv/\n__pycache__/\n*.py[cod]\n",

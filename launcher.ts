@@ -95,12 +95,6 @@ const sourceModePermissionArgs = [
 const defaultDocumentSource = `from rowcall import node
 
 
-# Rowcall documents are normal Python files.
-# Nodes declare outputs; depends_on declares graph edges.
-# Run: rowcall validate . && rowcall run . --json
-# Help: rowcall help format
-
-
 @node(id="n_load", outputs=["message"])
 def load_message():
     message = "hello from Rowcall"
@@ -140,12 +134,6 @@ const exampleDocumentSource = `from pathlib import Path
 
 import polars as pl
 from rowcall import node
-
-
-# Rowcall documents are normal Python files.
-# Nodes declare outputs; depends_on declares graph edges.
-# Run: rowcall validate . && rowcall run . --json
-# Help: rowcall help format
 
 
 @node(id="n_load_orders", outputs=["orders"])
