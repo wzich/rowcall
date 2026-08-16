@@ -12,7 +12,6 @@ export type RuntimeNode = {
   customReturn?: boolean;
   editable?: boolean;
   outputs: string[];
-  views: string[];
   position?: GraphPosition;
 };
 

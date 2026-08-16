@@ -42,7 +42,7 @@ export type NodeCanvasPreview = {
     type: string;
     table?: TablePreview;
   }>;
-  views: Array<{ name: string; type: string }>;
+  displays: Array<{ name: string; type: string }>;
   stdout: string;
   stderr: string;
   error: string | null;

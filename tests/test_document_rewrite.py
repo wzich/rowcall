@@ -9,7 +9,6 @@ from rowcall.document import (
     remove_edge,
     update_node_body,
     update_node_outputs,
-    update_node_views,
 )
 
 
@@ -90,35 +89,6 @@ def make_x():
         self.assertIn('@node(id="n\\"quote", outputs=["x", "y"])', result.source)
         assert result.parse_result.document is not None
         self.assertEqual(result.parse_result.document.nodes[0].id, 'n"quote')
-
-    def test_update_views_rewrites_decorator_and_union_return(self) -> None:
-        source = """
-from rowcall import node
-
-@node(id="n_test", outputs=["x"])
-def make_x():
-    x = 1
-    chart = {"kind": "bar"}
-    return {"x": x}
-""".lstrip()
-
-        result = update_node_views(
-            source,
-            DOCUMENT_PATH,
-            "n_test",
-            ("chart", "x"),
-        )
-
-        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
-        self.assertIn(
-            '@node(id="n_test", outputs=["x"], views=["chart", "x"])',
-            result.source,
-        )
-        self.assertIn('    return {"x": x, "chart": chart}', result.source)
-        assert result.parse_result.document is not None
-        node = result.parse_result.document.nodes[0]
-        self.assertEqual(node.outputs, ("x",))
-        self.assertEqual(node.views, ("chart", "x"))
 
     def test_add_and_remove_edge_rewrite_depends_on_block(self) -> None:
         source = """
@@ -458,29 +428,6 @@ def load():
         self.assertIn('@node(id="load", outputs=[])', result.source)
         self.assertIn("    answer = 42\n    return {}", result.source)
         self.assertNotIn('outputs=["answer"]', result.source)
-
-    def test_apply_operations_removes_view_deleted_from_updated_body(self) -> None:
-        source = """
-from rowcall import node
-
-@node(id="show", outputs=["value"], views=["chart"])
-def show():
-    value = 1
-    chart = {"kind": "bar"}
-    return {"value": value, "chart": chart}
-""".lstrip()
-
-        result = apply_document_operations(
-            source,
-            DOCUMENT_PATH,
-            [{"type": "update_node_body", "nodeId": "show", "code": "value = 2"}],
-        )
-
-        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
-        assert result.source is not None
-        self.assertIn('@node(id="show", outputs=["value"])', result.source)
-        self.assertNotIn("views=", result.source)
-        self.assertIn('    return {"value": value}', result.source)
 
     def test_apply_operations_reconciles_downstream_parameter_outputs(self) -> None:
         source = """

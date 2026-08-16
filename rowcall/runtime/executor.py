@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import io
 import importlib
@@ -26,17 +27,18 @@ from rowcall.document import (
 )
 
 from .previews import (
-    VIEW_PNG_RUN_MAX_BYTES,
+    DISPLAY_PNG_RUN_MAX_BYTES,
     copy_for_node_input,
     install_default_copy_handlers,
+    preview_display,
     preview_value,
-    preview_view,
 )
 
 
 NodeEventCallback = Callable[[dict[str, Any]], None]
 DEFAULT_CAPTURE_LIMIT_BYTES = 1024 * 1024
 DEFAULT_ERROR_MESSAGE_LIMIT_BYTES = 16 * 1024
+DEFAULT_DISPLAY_LIMIT = 10
 _TRUNCATED_ERROR_SUFFIX = "\n[error message truncated]"
 _DOCUMENT_LOCAL_MODULE_PATHS: dict[str, frozenset[Path]] = {}
 
@@ -51,6 +53,63 @@ class RunRequest:
 
 class ImportFreshnessError(RuntimeError):
     """Raised when a fresh import state cannot be established safely."""
+
+
+@dataclass
+class DisplayCollector:
+    displays: list[dict[str, Any]]
+    warnings: list[str]
+    remaining_image_bytes: int
+    image_bytes: int = 0
+
+    def record(self, value: Any, *, label: str | None = None) -> None:
+        if label is not None and not isinstance(label, str):
+            raise TypeError("display label must be a string or None")
+        if len(self.displays) >= DEFAULT_DISPLAY_LIMIT:
+            warning = (
+                f"display results were truncated after {DEFAULT_DISPLAY_LIMIT} values"
+            )
+            if warning not in self.warnings:
+                self.warnings.append(warning)
+            return
+
+        display_index = len(self.displays) + 1
+        display_name = label.strip() if label is not None else ""
+        if not display_name:
+            display_name = f"Display {display_index}"
+        preview, used_bytes = preview_display(
+            display_name,
+            value,
+            remaining_image_bytes=max(
+                0,
+                self.remaining_image_bytes - self.image_bytes,
+            ),
+        )
+        self.displays.append(preview)
+        self.image_bytes += used_bytes
+
+
+class DisplayIntrinsic:
+    """Bare display callable routed to the currently executing node."""
+
+    def __init__(self) -> None:
+        self._active: contextvars.ContextVar[DisplayCollector | None] = (
+            contextvars.ContextVar("rowcall_active_display", default=None)
+        )
+
+    def __call__(self, value: Any, *, label: str | None = None) -> None:
+        collector = self._active.get()
+        if collector is None:
+            raise RuntimeError("display() is only available while a Rowcall node is running")
+        collector.record(value, label=label)
+
+    @contextlib.contextmanager
+    def activate(self, collector: DisplayCollector) -> Iterator[None]:
+        token = self._active.set(collector)
+        try:
+            yield
+        finally:
+            self._active.reset(token)
 
 
 def run_document(path: str | Path, target: str | None = None, trace: bool = False) -> dict[str, Any]:
@@ -401,10 +460,11 @@ def execute_plan(
     results_by_node: dict[str, dict[str, Any]] = {}
     outputs_by_node: dict[str, dict[str, Any]] = {}
     executed_node_ids: list[str] = []
-    view_image_bytes = 0
+    display_image_bytes = 0
     root_inputs = {} if root_inputs is None else dict(root_inputs)
+    display_intrinsic = DisplayIntrinsic()
 
-    globals_result = build_document_globals(document)
+    globals_result = build_document_globals(document, display_intrinsic)
     if not globals_result["ok"]:
         error = {
             **globals_result["errorDetails"],
@@ -445,12 +505,13 @@ def execute_plan(
             inputs,
             input_warnings,
             str(document.path),
-            remaining_view_image_bytes=max(
+            display_intrinsic=display_intrinsic,
+            remaining_display_image_bytes=max(
                 0,
-                VIEW_PNG_RUN_MAX_BYTES - view_image_bytes,
+                DISPLAY_PNG_RUN_MAX_BYTES - display_image_bytes,
             ),
         )
-        view_image_bytes += result.pop("_viewImageBytes", 0)
+        display_image_bytes += result.pop("_displayImageBytes", 0)
         results_by_node[node_id] = result
         executed_node_ids.append(node_id)
 
@@ -541,8 +602,15 @@ def execute_plan(
     return response
 
 
-def build_document_globals(document: ExecutableDocument) -> dict[str, Any]:
-    scope: dict[str, Any] = {"__file__": str(document.path)}
+def build_document_globals(
+    document: ExecutableDocument,
+    display_intrinsic: DisplayIntrinsic | None = None,
+) -> dict[str, Any]:
+    intrinsic = display_intrinsic or DisplayIntrinsic()
+    scope: dict[str, Any] = {
+        "__file__": str(document.path),
+        "display": intrinsic,
+    }
     if not document.globals_code:
         return {"ok": True, "scope": scope}
 
@@ -566,6 +634,7 @@ def build_document_globals(document: ExecutableDocument) -> dict[str, Any]:
             "warnings": _capture_warnings(stdout_buffer, stderr_buffer),
         }
 
+    scope["display"] = intrinsic
     return {
         "ok": True,
         "scope": scope,
@@ -605,20 +674,30 @@ def execute_node(
     input_warnings: list[str],
     filename: str,
     *,
-    remaining_view_image_bytes: int,
+    display_intrinsic: DisplayIntrinsic | None = None,
+    remaining_display_image_bytes: int,
 ) -> dict[str, Any]:
+    intrinsic = display_intrinsic or DisplayIntrinsic()
     scope: dict[str, Any] = dict(globals_scope)
     scope.update(inputs)
     scope["__file__"] = filename
+    scope["display"] = intrinsic
     stdout_buffer = BoundedTextBuffer(DEFAULT_CAPTURE_LIMIT_BYTES)
     stderr_buffer = BoundedTextBuffer(DEFAULT_CAPTURE_LIMIT_BYTES)
     result_warnings = list(input_warnings)
+    displays: list[dict[str, Any]] = []
+    display_collector = DisplayCollector(
+        displays=displays,
+        warnings=result_warnings,
+        remaining_image_bytes=remaining_display_image_bytes,
+    )
 
     try:
-        with contextlib.redirect_stdout(stdout_buffer):
-            with contextlib.redirect_stderr(stderr_buffer):
-                code = compile(node.runtime_code, filename, "exec")
-                exec(code, scope, scope)
+        with intrinsic.activate(display_collector):
+            with contextlib.redirect_stdout(stdout_buffer):
+                with contextlib.redirect_stderr(stderr_buffer):
+                    code = compile(node.runtime_code, filename, "exec")
+                    exec(code, scope, scope)
     except Exception as exc:
         stderr_buffer.write(traceback.format_exc())
         error_details = classify_exception(exc, phase="node_execution", node_id=node.id)
@@ -628,6 +707,8 @@ def execute_node(
             stderr_buffer.getvalue(),
             error_details=error_details,
         )
+        result["displays"] = displays
+        result["_displayImageBytes"] = display_collector.image_bytes
         result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
         return result
 
@@ -640,44 +721,23 @@ def execute_node(
                 stdout_buffer.getvalue(),
                 stderr_buffer.getvalue(),
             )
+            result["displays"] = displays
+            result["_displayImageBytes"] = display_collector.image_bytes
             result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
             return result
 
         node_outputs[name] = scope[name]
         output_previews[name] = preview_value(name, scope[name])
 
-    view_previews: dict[str, Any] = {}
-    image_bytes = 0
-    for name in node.views:
-        if name not in scope:
-            result = make_error_result(
-                f"Declared view '{name}' was not defined by node code",
-                stdout_buffer.getvalue(),
-                stderr_buffer.getvalue(),
-            )
-            result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
-            return result
-        view_preview, used_bytes = preview_view(
-            name,
-            scope[name],
-            remaining_image_bytes=max(
-                0,
-                remaining_view_image_bytes - image_bytes,
-            ),
-            base_preview=output_previews.get(name),
-        )
-        view_previews[name] = view_preview
-        image_bytes += used_bytes
-
     return {
         "ok": True,
         "stdout": stdout_buffer.getvalue(),
         "stderr": stderr_buffer.getvalue(),
         "outputs": output_previews,
-        "views": view_previews,
+        "displays": displays,
         "warnings": [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)],
         "_rawOutputs": node_outputs,
-        "_viewImageBytes": image_bytes,
+        "_displayImageBytes": display_collector.image_bytes,
     }
 
 
@@ -693,7 +753,7 @@ def make_error_result(
         "stdout": stdout,
         "stderr": stderr,
         "outputs": {},
-        "views": {},
+        "displays": [],
         "warnings": [],
         "error": bound_diagnostic_text(message),
     }
@@ -819,7 +879,7 @@ def append_trace(
             "stdout": result["stdout"],
             "stderr": result["stderr"],
             "outputs": result["outputs"],
-            "views": result["views"],
+            "displays": result["displays"],
             "warnings": result["warnings"],
             "error": result.get("error"),
         }

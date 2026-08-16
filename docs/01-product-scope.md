@@ -74,12 +74,12 @@ such as name, Python type, `repr`, and an optional small `jsonValue` for plain
 JSON-compatible values, rather than attempting to send arbitrary Python objects
 to the browser. The contract between nodes remains explicit and inspectable.
 
-### Human-Facing Views
+### Human-Facing Displays
 
-A node may separately declare ordered **views**: values intended for a person to
-inspect rather than for downstream computation. Views can use the existing
-table, JSON, text, and value previews. Static PNGs are supported when the
-declared value is PNG bytes, supplies `_repr_png_()`, or is a supported
+A node may call bare `display(value, label="...")` to record ordered values for
+a person to inspect rather than for downstream computation. Displays can use the
+existing table, JSON, text, and value previews. Static PNGs are supported when
+the displayed value is PNG bytes, supplies `_repr_png_()`, or is a supported
 Matplotlib, Seaborn, Pillow, or Plotly object. Plotly rendering requires its
 optional Kaleido and Chrome/Chromium export stack. Interactive JavaScript
 visualizations and broader library adapters are intentionally deferred.

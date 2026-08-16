@@ -30,8 +30,8 @@ TABLE_PREVIEW_MAX_COLUMNS = 30
 TABLE_PREVIEW_CELL_TEXT_BYTE_LIMIT = 512
 TABLE_PREVIEW_METADATA_TEXT_BYTE_LIMIT = 512
 TABLE_PREVIEW_MAX_INTEGER_BITS = 1_024
-VIEW_PNG_MAX_BYTES = 5 * 1024 * 1024
-VIEW_PNG_RUN_MAX_BYTES = 20 * 1024 * 1024
+DISPLAY_PNG_MAX_BYTES = 5 * 1024 * 1024
+DISPLAY_PNG_RUN_MAX_BYTES = 20 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -88,7 +88,7 @@ def render_plotly_png(value: Any) -> bytes | None:
         rendered = value.to_image(format="png")
     except Exception as exc:
         raise RuntimeError(
-            "Plotly could not export this figure as PNG. Static Plotly views "
+            "Plotly could not export this figure as PNG. Static Plotly displays "
             f"require Kaleido and Chrome or Chromium: {exc}"
         ) from exc
 
@@ -97,7 +97,7 @@ def render_plotly_png(value: Any) -> bytes | None:
     return bytes(rendered)
 
 
-PNG_VIEW_RENDERERS: tuple[tuple[str, Callable[[Any], bytes | None]], ...] = (
+PNG_DISPLAY_RENDERERS: tuple[tuple[str, Callable[[Any], bytes | None]], ...] = (
     ("Matplotlib", render_matplotlib_png),
     ("Plotly", render_plotly_png),
 )
@@ -652,14 +652,14 @@ def preview_value(name: str, value: Any, warning: str | None = None) -> dict[str
     return preview
 
 
-def preview_view(
+def preview_display(
     name: str,
     value: Any,
     *,
     remaining_image_bytes: int,
     base_preview: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], int]:
-    """Preview a human-facing value and add a bounded PNG representation when available."""
+    """Preview a displayed value and add a bounded PNG representation when available."""
     preview = dict(base_preview) if base_preview is not None else preview_value(name, value)
     png_bytes: bytes | None = None
     png_warning: str | None = None
@@ -672,13 +672,13 @@ def preview_view(
                 lambda: getattr(value, "_repr_png_", None)
             )
             png_warning = captured_stdio_warning(
-                f"PNG renderer lookup for view '{name}'",
+                f"PNG renderer lookup for display '{name}'",
                 stdout_text,
                 stderr_text,
             )
         except Exception as exc:
             renderer = None
-            png_warning = f"Could not inspect PNG renderer for view '{name}': {exc}"
+            png_warning = f"Could not inspect PNG renderer for display '{name}': {exc}"
 
         if callable(renderer):
             try:
@@ -686,7 +686,7 @@ def preview_view(
                 png_warning = combine_warnings(
                     png_warning,
                     captured_stdio_warning(
-                        f"PNG rendering for view '{name}'",
+                        f"PNG rendering for display '{name}'",
                         stdout_text,
                         stderr_text,
                     ),
@@ -698,21 +698,21 @@ def preview_view(
                 else:
                     png_warning = combine_warnings(
                         png_warning,
-                        f"View '{name}' _repr_png_() did not return PNG bytes.",
+                        f"Display '{name}' _repr_png_() did not return PNG bytes.",
                     )
             except Exception as exc:
                 png_warning = combine_warnings(
                     png_warning,
-                    f"Could not render view '{name}' with _repr_png_(): {exc}",
+                    f"Could not render display '{name}' with _repr_png_(): {exc}",
                 )
         else:
-            for renderer_name, library_renderer in PNG_VIEW_RENDERERS:
+            for renderer_name, library_renderer in PNG_DISPLAY_RENDERERS:
                 try:
                     rendered, stdout_text, stderr_text = run_with_captured_stdio(
                         lambda renderer=library_renderer: renderer(value)
                     )
                     renderer_warning = captured_stdio_warning(
-                        f"{renderer_name} rendering for view '{name}'",
+                        f"{renderer_name} rendering for display '{name}'",
                         stdout_text,
                         stderr_text,
                     )
@@ -723,7 +723,7 @@ def preview_view(
                         png_warning = combine_warnings(
                             png_warning,
                             renderer_warning,
-                            f"{renderer_name} renderer for view '{name}' did not return PNG bytes.",
+                            f"{renderer_name} renderer for display '{name}' did not return PNG bytes.",
                         )
                         break
                     png_bytes = bytes(rendered)
@@ -732,7 +732,7 @@ def preview_view(
                 except Exception as exc:
                     png_warning = combine_warnings(
                         png_warning,
-                        f"Could not render view '{name}' with {renderer_name}: {exc}",
+                        f"Could not render display '{name}' with {renderer_name}: {exc}",
                     )
                     break
 
@@ -745,27 +745,27 @@ def preview_view(
         ):
             png_warning = combine_warnings(
                 png_warning,
-                f"View '{name}' has no supported rich renderer; showing its repr only.",
+                f"Display '{name}' has no supported rich renderer; showing its repr only.",
             )
 
     image_bytes = 0
     if png_bytes is not None:
-        if len(png_bytes) > VIEW_PNG_MAX_BYTES:
+        if len(png_bytes) > DISPLAY_PNG_MAX_BYTES:
             png_warning = combine_warnings(
                 png_warning,
-                f"View '{name}' PNG is {len(png_bytes)} bytes; the per-view limit is {VIEW_PNG_MAX_BYTES} bytes.",
+                f"Display '{name}' PNG is {len(png_bytes)} bytes; the per-display limit is {DISPLAY_PNG_MAX_BYTES} bytes.",
             )
         elif len(png_bytes) > remaining_image_bytes:
             png_warning = combine_warnings(
                 png_warning,
-                f"View '{name}' PNG exceeds the remaining {remaining_image_bytes}-byte image budget for this run.",
+                f"Display '{name}' PNG exceeds the remaining {remaining_image_bytes}-byte image budget for this run.",
             )
         else:
             dimensions = png_dimensions(png_bytes)
             if dimensions is None:
                 png_warning = combine_warnings(
                     png_warning,
-                    f"View '{name}' did not contain a valid PNG image.",
+                    f"Display '{name}' did not contain a valid PNG image.",
                 )
             else:
                 width, height = dimensions

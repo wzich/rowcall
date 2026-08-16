@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted and implemented.
+Superseded by [ADR 0006](0006-execution-scoped-display.md).
 
 ## Context
 

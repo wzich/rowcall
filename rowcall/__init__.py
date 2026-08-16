@@ -22,13 +22,11 @@ def node(
     *,
     id: str,
     outputs: Iterable[str],
-    views: Iterable[str] = (),
 ) -> Callable[[FunctionT], FunctionT]:
     """Mark a function as a Rowcall node.
 
-    ``outputs`` names values that may flow downstream. ``views`` names ordered
-    values intended for human inspection. The decorator attaches metadata and
-    returns the original function without changing call semantics.
+    ``outputs`` names values that may flow downstream. The decorator attaches
+    metadata and returns the original function without changing call semantics.
     """
 
     if not isinstance(id, str):
@@ -41,17 +39,9 @@ def node(
     if not all(isinstance(name, str) for name in output_names):
         raise RowcallNodeError("node outputs must be an iterable of strings")
 
-    if isinstance(views, (str, bytes)):
-        raise RowcallNodeError("node views must be an iterable of strings")
-
-    view_names = list(views)
-    if not all(isinstance(name, str) for name in view_names):
-        raise RowcallNodeError("node views must be an iterable of strings")
-
     def decorate(function: FunctionT) -> FunctionT:
         setattr(function, "__rowcall_id__", id)
         setattr(function, "__rowcall_outputs__", output_names)
-        setattr(function, "__rowcall_views__", view_names)
         setattr(function, "__rowcall_dependencies__", [])
         setattr(function, "depends_on", _depends_on_for(function))
         return function

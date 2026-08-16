@@ -4,7 +4,6 @@ import { formatSaveReconciliationNotice } from "./saveReconciliation.ts";
 
 function documentWithDeclarations(
   outputs: string[],
-  views: string[],
 ): RowcallDocumentV1 {
   return {
     version: 1,
@@ -13,7 +12,6 @@ function documentWithDeclarations(
       functionName: "start",
       code: "pass",
       outputs,
-      views,
     }],
     edges: [],
   };
@@ -21,18 +19,18 @@ function documentWithDeclarations(
 
 Deno.test("save reconciliation notice describes automatically removed declarations", () => {
   const notice = formatSaveReconciliationNotice(
-    documentWithDeclarations(["message", "kept"], ["chart"]),
-    documentWithDeclarations(["kept"], []),
+    documentWithDeclarations(["message", "kept"]),
+    documentWithDeclarations(["kept"]),
   );
 
   assertEquals(
     notice,
-    'Removed stale declarations while saving: output "message" from start and view "chart" from start.',
+    'Removed stale declaration while saving: output "message" from start.',
   );
 });
 
 Deno.test("save reconciliation notice ignores unchanged and deleted nodes", () => {
-  const unchanged = documentWithDeclarations(["message"], []);
+  const unchanged = documentWithDeclarations(["message"]);
   assertEquals(formatSaveReconciliationNotice(unchanged, unchanged), null);
   assertEquals(
     formatSaveReconciliationNotice(unchanged, {

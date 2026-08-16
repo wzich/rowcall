@@ -136,7 +136,7 @@ def _remove_stale_declared_values(
     document_path: str | Path,
     body_updated_node_ids: set[str],
 ) -> str | ValidationIssue:
-    """Drop declared outputs/views that a saved body no longer binds locally.
+    """Drop declared outputs that a saved body no longer binds locally.
 
     Reconciliation happens after the complete operation batch so code edits and
     their generated contracts are persisted atomically. Downstream nodes are
@@ -184,7 +184,6 @@ def _remove_stale_declared_values(
 
         local_bindings = _node_local_bindings(function_def)
         next_outputs = tuple(name for name in node.outputs if name in local_bindings)
-        next_views = tuple(name for name in node.views if name in local_bindings)
 
         if next_outputs != node.outputs:
             downstream_ids = {
@@ -207,20 +206,6 @@ def _remove_stale_declared_values(
             pending_node_ids.add(node.id)
             pending_node_ids.update(downstream_ids)
             continue
-
-        if next_views != node.views:
-            result = _update_node_views(
-                current_source,
-                document_path,
-                node.id,
-                next_views,
-                validate_output_bindings=False,
-            )
-            if not result.ok:
-                return result.issues[-1] if result.issues else _invalid_operation(
-                    f"Failed to remove stale views from node '{node.id}'."
-                )
-            current_source = result.source
 
     return current_source
 
@@ -399,7 +384,7 @@ def _update_node_outputs(
         node.source_range.return_end_line,
         [
             _render_return_line(
-                _declared_return_names(next_outputs, node.views),
+                next_outputs,
                 node.source_range.indent or "    ",
             )
         ],
@@ -408,84 +393,9 @@ def _update_node_outputs(
         lines,
         decorator_range[0],
         decorator_range[1],
-        [_render_decorator(node.id, next_outputs, node.views)],
+        [_render_decorator(node.id, next_outputs)],
     )
     return _finish_rewrite_with_normalized_signatures(
-        lines,
-        newline,
-        final_newline,
-        document_path,
-        validate_output_bindings=validate_output_bindings,
-    )
-
-
-def update_node_views(
-    source: str,
-    document_path: str | Path,
-    node_id: str,
-    views: list[str] | tuple[str, ...],
-) -> RewriteResult:
-    return _update_node_views(
-        source,
-        document_path,
-        node_id,
-        views,
-        validate_output_bindings=True,
-    )
-
-
-def _update_node_views(
-    source: str,
-    document_path: str | Path,
-    node_id: str,
-    views: list[str] | tuple[str, ...],
-    *,
-    validate_output_bindings: bool,
-) -> RewriteResult:
-    parsed = _parse_rewrite_source(
-        source,
-        document_path,
-        validate_output_bindings,
-    )
-    if not parsed.ok or not parsed.document:
-        return RewriteResult(source=source, parse_result=parsed)
-
-    node = _find_node(parsed.document.nodes, node_id)
-    rejection = _reject_uneditable_node(source, parsed, node_id, node)
-    if rejection is not None:
-        return rejection
-
-    assert node is not None
-    next_views = tuple(views)
-    view_issue = _validate_names(node_id, next_views, "View", maximum=10)
-    if view_issue is not None:
-        return _with_issue(source, parsed, view_issue)
-
-    decorator_range = _node_decorator_range(source, node)
-    if decorator_range is None:
-        return _unsupported(source, parsed, node_id, "Node decorator range could not be found.")
-    if node.source_range.return_line is None or node.source_range.return_end_line is None:
-        return _unsupported(source, parsed, node_id, "Node views cannot be rewritten without a generated return range.")
-
-    lines, newline, final_newline = _split_source(source)
-    _replace_lines(
-        lines,
-        node.source_range.return_line,
-        node.source_range.return_end_line,
-        [
-            _render_return_line(
-                _declared_return_names(node.outputs, next_views),
-                node.source_range.indent or "    ",
-            )
-        ],
-    )
-    _replace_lines(
-        lines,
-        decorator_range[0],
-        decorator_range[1],
-        [_render_decorator(node.id, node.outputs, next_views)],
-    )
-    return _finish_rewrite(
         lines,
         newline,
         final_newline,
@@ -638,20 +548,6 @@ def _apply_one_operation(
             document_path,
             node_id,
             tuple(outputs),
-            validate_output_bindings=False,
-        )
-        return _source_result_or_issue(result, metadata)
-
-    if operation_type == "update_node_views":
-        node_id = _text_field(operation, "nodeId", "node_id")
-        views = operation.get("views")
-        if node_id is None or not isinstance(views, list) or not all(isinstance(item, str) for item in views):
-            return _invalid_operation("update_node_views requires nodeId and views list.")
-        result = _update_node_views(
-            source,
-            document_path,
-            node_id,
-            tuple(views),
             validate_output_bindings=False,
         )
         return _source_result_or_issue(result, metadata)
@@ -870,17 +766,14 @@ def _add_node(
     node_id = _text_field(node_payload, "nodeId", "node_id", "id")
     function_name = _text_field(node_payload, "functionName", "function_name")
     outputs = node_payload.get("outputs", [])
-    views = node_payload.get("views", [])
     body_code = _text_field(node_payload, "bodyCode", "body_code", "code") or "pass"
     if (
         node_id is None
         or function_name is None
         or not isinstance(outputs, list)
         or not all(isinstance(item, str) for item in outputs)
-        or not isinstance(views, list)
-        or not all(isinstance(item, str) for item in views)
     ):
-        return _invalid_operation("add_node requires nodeId, functionName, outputs list, and views list.")
+        return _invalid_operation("add_node requires nodeId, functionName, and outputs list.")
     if any(node.id == node_id for node in parsed.document.nodes):
         return ValidationIssue(kind="duplicate_node_id", message=f"Node id '{node_id}' is already in use.", node_id=node_id)
     if any(node.function_name == function_name for node in parsed.document.nodes):
@@ -890,10 +783,6 @@ def _add_node(
     output_issue = _validate_names(node_id, tuple(outputs), "Output")
     if output_issue is not None:
         return output_issue
-    view_issue = _validate_names(node_id, tuple(views), "View", maximum=10)
-    if view_issue is not None:
-        return view_issue
-
     lines, newline, final_newline = _split_source(source)
     lines = _strip_graph_lines(source, lines)
     if not _has_node_import(source):
@@ -907,7 +796,6 @@ def _add_node(
             node_id,
             function_name,
             tuple(outputs),
-            tuple(views),
             body_code,
         )
     )
@@ -1016,12 +904,14 @@ def _validate_names(
             not name.isidentifier()
             or keyword.iskeyword(name)
             or name.startswith("__rowcall_")
+            or name == "display"
         ):
             return ValidationIssue(
                 kind="unsupported_python",
                 message=(
                     f"{label} '{name}' on node {node_id} must be a valid Python "
-                    "variable name without the reserved '__rowcall_' prefix."
+                    "variable name without the reserved name 'display' or "
+                    "the '__rowcall_' prefix."
                 ),
                 node_id=node_id,
             )
@@ -1045,10 +935,8 @@ def _render_body_lines(body_code: str, indent: str) -> list[str]:
 def _render_decorator(
     node_id: str,
     outputs: tuple[str, ...],
-    views: tuple[str, ...],
 ) -> str:
-    suffix = f", views={json.dumps(list(views))}" if views else ""
-    return f"@node(id={json.dumps(node_id)}, outputs={json.dumps(list(outputs))}{suffix})"
+    return f"@node(id={json.dumps(node_id)}, outputs={json.dumps(list(outputs))})"
 
 
 def _render_return_line(outputs: tuple[str, ...], indent: str) -> str:
@@ -1099,24 +987,15 @@ def _render_node_lines(
     node_id: str,
     function_name: str,
     outputs: tuple[str, ...],
-    views: tuple[str, ...],
     body_code: str,
 ) -> list[str]:
     body_lines = _render_body_lines(body_code, "    ")
     return [
-        _render_decorator(node_id, outputs, views),
+        _render_decorator(node_id, outputs),
         f"def {function_name}():",
         *body_lines,
-        _render_return_line(_declared_return_names(outputs, views), "    "),
+        _render_return_line(outputs, "    "),
     ]
-
-
-def _declared_return_names(
-    outputs: tuple[str, ...],
-    views: tuple[str, ...],
-) -> tuple[str, ...]:
-    output_names = set(outputs)
-    return (*outputs, *(name for name in views if name not in output_names))
 
 
 def _append_graph(lines: list[str], graph_lines: list[str]) -> None:

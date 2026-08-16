@@ -106,6 +106,7 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
                 not output.isidentifier()
                 or keyword.iskeyword(output)
                 or output.startswith("__rowcall_")
+                or output == "display"
             ):
                 issues.append(
                     ValidationIssue(
@@ -113,7 +114,7 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
                         message=(
                             f"Output '{output}' on node '{node.id}' must be a valid "
                             "Python variable name and must not use the reserved "
-                            "'__rowcall_' prefix"
+                            "name 'display' or the reserved '__rowcall_' prefix"
                         ),
                         node_id=node.id,
                         path=f"nodes[{index}].outputs[{output_index}]",
@@ -129,46 +130,6 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
                     )
                 )
             seen_outputs.add(output)
-
-        if len(node.views) > 10:
-            issues.append(
-                ValidationIssue(
-                    kind="invalid_view",
-                    message=f"Node '{node.id}' declares more than 10 views",
-                    node_id=node.id,
-                    path=f"nodes[{index}].views",
-                )
-            )
-        seen_views: set[str] = set()
-        for view_index, view in enumerate(node.views):
-            if (
-                not view.isidentifier()
-                or keyword.iskeyword(view)
-                or view.startswith("__rowcall_")
-            ):
-                issues.append(
-                    ValidationIssue(
-                        kind="invalid_view",
-                        message=(
-                            f"View '{view}' on node '{node.id}' must be a valid "
-                            "Python variable name and must not use the reserved "
-                            "'__rowcall_' prefix"
-                        ),
-                        node_id=node.id,
-                        path=f"nodes[{index}].views[{view_index}]",
-                    )
-                )
-            if view in seen_views:
-                issues.append(
-                    ValidationIssue(
-                        kind="duplicate_view",
-                        message=f"Node '{node.id}' declares view '{view}' more than once",
-                        node_id=node.id,
-                        path=f"nodes[{index}].views[{view_index}]",
-                    )
-                )
-            seen_views.add(view)
-
 
 def _validate_duplicate_edges(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
     seen: set[tuple[str, str]] = set()
