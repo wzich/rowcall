@@ -1,85 +1,71 @@
 import { assertEquals } from "@std/assert";
 import type { RowcallDocumentV1 } from "./documentTypes.ts";
-import { getDirectOutputConflictsForConnection } from "./connectionValidation.ts";
+import { getConnectionConflict } from "./connectionValidation.ts";
 
 function createDocument(
-  nodes: RowcallDocumentV1["nodes"],
   edges: RowcallDocumentV1["edges"] = [],
 ): RowcallDocumentV1 {
-  return { version: 1, nodes, edges };
+  return {
+    version: 1,
+    nodes: [
+      { id: "split", code: "pass", outputs: ["train", "test"] },
+      { id: "other", code: "pass", outputs: ["train"] },
+      { id: "fit", code: "pass", outputs: [] },
+    ],
+    edges,
+  };
 }
 
-Deno.test("connection conflict finds duplicate outputs from direct parents", () => {
-  const document = createDocument(
-    [
-      { id: "left", code: "pass", outputs: ["df"] },
-      { id: "right", code: "pass", outputs: ["df"] },
-      { id: "merge", code: "pass", outputs: [] },
-    ],
-    [{ fromNode: "left", toNode: "merge" }],
-  );
+Deno.test("connection validation identifies an exact duplicate route", () => {
+  const document = createDocument([
+    {
+      fromNode: "split",
+      fromOutput: "train",
+      toNode: "fit",
+      toInput: "train",
+    },
+  ]);
 
   assertEquals(
-    getDirectOutputConflictsForConnection(document, "right", "merge"),
-    [{ outputName: "df", upstreamNodeIds: ["left", "right"] }],
+    getConnectionConflict(document, "split", "train", "fit", "train"),
+    "duplicate",
   );
 });
 
-Deno.test("connection conflict reports each ambiguous output and its owners", () => {
-  const document = createDocument(
-    [
-      { id: "first", code: "pass", outputs: ["df", "count"] },
-      { id: "second", code: "pass", outputs: ["df"] },
-      { id: "third", code: "pass", outputs: ["count"] },
-      { id: "merge", code: "pass", outputs: [] },
-    ],
-    [
-      { fromNode: "first", toNode: "merge" },
-      { fromNode: "second", toNode: "merge" },
-    ],
-  );
+Deno.test("connection validation rejects a second owner for one input", () => {
+  const document = createDocument([
+    {
+      fromNode: "split",
+      fromOutput: "train",
+      toNode: "fit",
+      toInput: "training_data",
+    },
+  ]);
 
   assertEquals(
-    getDirectOutputConflictsForConnection(document, "third", "merge"),
-    [
-      { outputName: "df", upstreamNodeIds: ["first", "second"] },
-      { outputName: "count", upstreamNodeIds: ["first", "third"] },
-    ],
+    getConnectionConflict(
+      document,
+      "other",
+      "train",
+      "fit",
+      "training_data",
+    ),
+    "input_bound",
   );
 });
 
-Deno.test("connection conflict ignores matching outputs on transitive ancestors", () => {
-  const document = createDocument(
-    [
-      { id: "ancestor", code: "pass", outputs: ["df"] },
-      { id: "parent", code: "pass", outputs: ["prepared"] },
-      { id: "other", code: "pass", outputs: ["df"] },
-      { id: "merge", code: "pass", outputs: [] },
-    ],
-    [
-      { fromNode: "ancestor", toNode: "parent" },
-      { fromNode: "parent", toNode: "merge" },
-    ],
-  );
+Deno.test("connection validation allows parallel routes to different inputs", () => {
+  const document = createDocument([
+    {
+      fromNode: "split",
+      fromOutput: "train",
+      toNode: "fit",
+      toInput: "train",
+    },
+  ]);
 
   assertEquals(
-    getDirectOutputConflictsForConnection(document, "other", "merge"),
-    [],
-  );
-});
-
-Deno.test("connection conflict allows direct parents with distinct outputs", () => {
-  const document = createDocument(
-    [
-      { id: "left", code: "pass", outputs: ["customers"] },
-      { id: "right", code: "pass", outputs: ["orders"] },
-      { id: "merge", code: "pass", outputs: [] },
-    ],
-    [{ fromNode: "left", toNode: "merge" }],
-  );
-
-  assertEquals(
-    getDirectOutputConflictsForConnection(document, "right", "merge"),
-    [],
+    getConnectionConflict(document, "split", "test", "fit", "test"),
+    null,
   );
 });

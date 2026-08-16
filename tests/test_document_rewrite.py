@@ -36,7 +36,7 @@ def double(x):
     return {"y": y}
 
 # Rowcall graph
-double.depends_on(load)
+double.depends_on(load.output("x"))
 """.lstrip()
 
         result = update_node_body(source, DOCUMENT_PATH, "n_double", "y = helper(x)")
@@ -44,7 +44,7 @@ double.depends_on(load)
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         self.assertIn("GLOBAL_OFFSET = 3", result.source)
         self.assertIn("def helper(value):", result.source)
-        self.assertIn("double.depends_on(load)", result.source)
+        self.assertIn('double.depends_on(load.output("x"))', result.source)
         self.assertIn("    y = helper(x)\n    return {\"y\": y}", result.source)
         assert result.parse_result.document is not None
         self.assertEqual(result.parse_result.document.nodes[1].display_code, "y = helper(x)")
@@ -111,26 +111,26 @@ def format_text():
     text = "ready"
     return {"text": text}
 
-double.depends_on(load)
+double.depends_on(load.output("x"))
 """.lstrip()
 
-        added = add_edge(source, DOCUMENT_PATH, "n_double", "n_format")
+        added = add_edge(source, DOCUMENT_PATH, "n_double", "y", "n_format")
 
         self.assertTrue(added.ok, [issue.to_dict() for issue in added.issues])
         self.assertIn("# Rowcall graph", added.source)
-        self.assertIn("double.depends_on(load)", added.source)
-        self.assertIn("format_text.depends_on(double)", added.source)
+        self.assertIn('double.depends_on(load.output("x"))', added.source)
+        self.assertIn('format_text.depends_on(double.output("y"))', added.source)
         assert added.parse_result.document is not None
         self.assertEqual(
             [(edge.from_node, edge.to_node) for edge in added.parse_result.document.edges],
             [("n_load", "n_double"), ("n_double", "n_format")],
         )
 
-        removed = remove_edge(added.source, DOCUMENT_PATH, "n_double", "n_format")
+        removed = remove_edge(added.source, DOCUMENT_PATH, "n_double", "y", "n_format", "y")
 
         self.assertTrue(removed.ok, [issue.to_dict() for issue in removed.issues])
-        self.assertIn("double.depends_on(load)", removed.source)
-        self.assertNotIn("format_text.depends_on(double)", removed.source)
+        self.assertIn('double.depends_on(load.output("x"))', removed.source)
+        self.assertNotIn('format_text.depends_on(double.output("y"))', removed.source)
         self.assertIn("VALUE = 1", removed.source)
         assert removed.parse_result.document is not None
         self.assertEqual(
@@ -138,11 +138,11 @@ double.depends_on(load)
             [("n_load", "n_double")],
         )
 
-        detached = remove_edge(added.source, DOCUMENT_PATH, "n_load", "n_double")
+        detached = remove_edge(added.source, DOCUMENT_PATH, "n_load", "x", "n_double", "x")
 
         self.assertTrue(detached.ok, [issue.to_dict() for issue in detached.issues])
         self.assertIn("def double():", detached.source)
-        self.assertNotIn("double.depends_on(load)", detached.source)
+        self.assertNotIn('double.depends_on(load.output("x"))', detached.source)
 
     def test_reject_editing_node_with_invalid_return(self) -> None:
         source = """
@@ -224,7 +224,7 @@ def double(x):
     y = x * 2
     return {"y": y}
 
-double.depends_on(load)
+double.depends_on(load.output("x"))
 """.lstrip()
 
         added = apply_document_operations(
@@ -241,12 +241,12 @@ double.depends_on(load)
                         "position": {"x": 10, "y": 20},
                     },
                 },
-                {"type": "add_edge", "fromNode": "double", "toNode": "format"},
+                {"type": "add_edge", "fromNode": "double", "fromOutput": "y", "toNode": "format", "toInput": "y"},
             ],
         )
         self.assertTrue(added.ok, [issue.to_dict() for issue in added.issues])
         assert added.source is not None
-        self.assertIn("format_text.depends_on(double)", added.source)
+        self.assertIn('format_text.depends_on(double.output("y"))', added.source)
         self.assertEqual(added.sidecar_metadata, {"nodes": {"format": {"position": {"x": 10, "y": 20}}}})
 
         deleted = apply_document_operations(
@@ -337,14 +337,14 @@ def double(x):
     y = x * 2
     return {"y": y}
 
-double.depends_on(load)
+double.depends_on(load.output("x"))
 """.lstrip()
 
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
             [
-                {"type": "remove_edge", "fromNode": "load", "toNode": "double"},
+                {"type": "remove_edge", "fromNode": "load", "fromOutput": "x", "toNode": "double", "toInput": "x"},
                 {"type": "update_node_body", "nodeId": "double", "code": "y = 2"},
             ],
         )
@@ -368,23 +368,213 @@ def double(x):
     y = x * 2
     return {"y": y}
 
-double.depends_on(load)
+double.depends_on(load.output("x"))
 """.lstrip()
 
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
             [
+                {"type": "remove_edge", "fromNode": "load", "fromOutput": "x", "toNode": "double", "toInput": "x"},
                 {"type": "update_node_body", "nodeId": "load", "code": "value = 1"},
                 {"type": "update_node_outputs", "nodeId": "load", "outputs": ["value"]},
-                {"type": "update_node_body", "nodeId": "double", "code": "y = value * 2"},
+                {"type": "add_edge", "fromNode": "load", "fromOutput": "value", "toNode": "double", "toInput": "x"},
             ],
         )
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.source is not None
-        self.assertIn("def double(value):", result.source)
+        self.assertIn("def double(x):", result.source)
         self.assertIn('    return {"value": value}', result.source)
+        self.assertIn('double.depends_on(x=load.output("value"))', result.source)
+
+    def test_output_rename_batch_preserves_multiline_downstream_input(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="fit", outputs=["model", "training_summary"])
+def fit_model():
+    model = {"slope": 1}
+    training_summary = {"rows": 3}
+    return {"model": model, "training_summary": training_summary}
+
+@node(id="summarize", outputs=["report"])
+def summarize_run(
+    training_summary,
+):
+    report = training_summary
+    return {"report": report}
+
+summarize_run.depends_on(fit_model.output("training_summary"))
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {
+                    "type": "update_node_body",
+                    "nodeId": "fit",
+                    "code": 'model = {"slope": 1}\ntraining_summar = {"rows": 3}',
+                },
+                {
+                    "type": "remove_edge",
+                    "fromNode": "fit",
+                    "fromOutput": "training_summary",
+                    "toNode": "summarize",
+                    "toInput": "training_summary",
+                },
+                {
+                    "type": "add_edge",
+                    "fromNode": "fit",
+                    "fromOutput": "training_summar",
+                    "toNode": "summarize",
+                    "toInput": "training_summary",
+                },
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn(
+            "def summarize_run(\n    training_summary,\n):",
+            result.source,
+        )
+        self.assertIn(
+            'summarize_run.depends_on(training_summary=fit_model.output("training_summar"))',
+            result.source,
+        )
+        self.assertIn('outputs=["training_summar"]', result.source)
+        self.assertIn(
+            'return {"training_summar": training_summar}',
+            result.source,
+        )
+
+    def test_add_and_remove_edge_rewrite_multiline_downstream_signature(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="load", outputs=["x"])
+def load():
+    x = 1
+    return {"x": x}
+
+@node(id="format", outputs=["text"])
+def format_text(
+):
+    text = "ready"
+    return {"text": text}
+""".lstrip()
+
+        added = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{
+                "type": "add_edge",
+                "fromNode": "load",
+                "fromOutput": "x",
+                "toNode": "format",
+                "toInput": "x",
+            }],
+        )
+
+        self.assertTrue(added.ok, [issue.to_dict() for issue in added.issues])
+        assert added.source is not None
+        self.assertIn("def format_text(\n    x,\n):", added.source)
+
+        removed = apply_document_operations(
+            added.source,
+            DOCUMENT_PATH,
+            [{
+                "type": "remove_edge",
+                "fromNode": "load",
+                "fromOutput": "x",
+                "toNode": "format",
+                "toInput": "x",
+            }],
+        )
+
+        self.assertTrue(removed.ok, [issue.to_dict() for issue in removed.issues])
+        assert removed.source is not None
+        self.assertIn("def format_text(\n):", removed.source)
+        self.assertNotIn("depends_on", removed.source)
+        self.assertIn('@node(id="load", outputs=[])', removed.source)
+        self.assertIn("    return {}", removed.source)
+
+    def test_add_edge_promotes_an_assigned_variable_to_output(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="split", outputs=[])
+def split_dataset():
+    train = [1, 2, 3]
+    return {}
+
+@node(id="fit", outputs=[])
+def fit_model():
+    pass
+    return {}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{
+                "type": "add_edge",
+                "fromNode": "split",
+                "fromOutput": "train",
+                "toNode": "fit",
+                "toInput": "train",
+            }],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="split", outputs=["train"])', result.source)
+        self.assertIn('    return {"train": train}', result.source)
+        self.assertIn("def fit_model(train):", result.source)
+        self.assertIn('fit_model.depends_on(split_dataset.output("train"))', result.source)
+
+    def test_remove_edge_keeps_output_while_another_route_uses_it(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="split", outputs=["train"])
+def split_dataset():
+    train = [1, 2, 3]
+    return {"train": train}
+
+@node(id="fit", outputs=[])
+def fit_model(train):
+    pass
+    return {}
+
+@node(id="review", outputs=[])
+def review_train(train):
+    pass
+    return {}
+
+fit_model.depends_on(split_dataset.output("train"))
+review_train.depends_on(split_dataset.output("train"))
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{
+                "type": "remove_edge",
+                "fromNode": "split",
+                "fromOutput": "train",
+                "toNode": "fit",
+                "toInput": "train",
+            }],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn('@node(id="split", outputs=["train"])', result.source)
+        self.assertIn('review_train.depends_on(split_dataset.output("train"))', result.source)
+        self.assertNotIn("fit_model.depends_on", result.source)
 
     def test_apply_operations_removes_output_deleted_from_updated_body(self) -> None:
         source = """
@@ -404,8 +594,8 @@ def load():
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.source is not None
-        self.assertIn('@node(id="load", outputs=[])', result.source)
-        self.assertIn("    pass\n    return {}", result.source)
+        self.assertIn('@node(id="load", outputs=["x"])', result.source)
+        self.assertIn('    pass\n    return {"x": x}', result.source)
 
     def test_apply_operations_does_not_auto_export_new_body_bindings(self) -> None:
         source = """
@@ -425,8 +615,8 @@ def load():
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.source is not None
-        self.assertIn('@node(id="load", outputs=[])', result.source)
-        self.assertIn("    answer = 42\n    return {}", result.source)
+        self.assertIn('@node(id="load", outputs=["message"])', result.source)
+        self.assertIn('    answer = 42\n    return {"message": message}', result.source)
         self.assertNotIn('outputs=["answer"]', result.source)
 
     def test_apply_operations_reconciles_downstream_parameter_outputs(self) -> None:
@@ -442,7 +632,7 @@ def source():
 def passthrough(value):
     return {"value": value}
 
-passthrough.depends_on(source)
+passthrough.depends_on(source.output("value"))
 """.lstrip()
 
         result = apply_document_operations(
@@ -453,10 +643,10 @@ passthrough.depends_on(source)
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.source is not None
-        self.assertIn('@node(id="source", outputs=[])', result.source)
-        self.assertIn('@node(id="passthrough", outputs=[])', result.source)
-        self.assertIn("def passthrough():", result.source)
-        self.assertEqual(result.source.count("return {}"), 2)
+        self.assertIn('@node(id="source", outputs=["value"])', result.source)
+        self.assertIn('@node(id="passthrough", outputs=["value"])', result.source)
+        self.assertIn("def passthrough(value):", result.source)
+        self.assertIn('passthrough.depends_on(source.output("value"))', result.source)
 
     def test_apply_operations_add_edge_normalizes_downstream_signature(self) -> None:
         source = """
@@ -476,13 +666,46 @@ def format_text():
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
-            [{"type": "add_edge", "fromNode": "load", "toNode": "format"}],
+            [{"type": "add_edge", "fromNode": "load", "fromOutput": "x", "toNode": "format", "toInput": "x"}],
         )
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
         assert result.source is not None
         self.assertIn("def format_text(x):", result.source)
-        self.assertIn("format_text.depends_on(load)", result.source)
+        self.assertIn('format_text.depends_on(load.output("x"))', result.source)
+
+    def test_adds_parallel_named_routes_between_the_same_nodes(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="split", outputs=["train", "test"])
+def split_data():
+    train = [1]
+    test = [2]
+    return {"train": train, "test": test}
+
+@node(id="inspect", outputs=["summary"])
+def inspect_split():
+    summary = "ready"
+    return {"summary": summary}
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [
+                {"type": "add_edge", "fromNode": "split", "fromOutput": "train", "toNode": "inspect", "toInput": "train"},
+                {"type": "add_edge", "fromNode": "split", "fromOutput": "test", "toNode": "inspect", "toInput": "test"},
+            ],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        self.assertIn("def inspect_split(train, test):", result.source)
+        self.assertIn(
+            'inspect_split.depends_on(split_data.output("train"), split_data.output("test"))',
+            result.source,
+        )
 
     def test_apply_operations_cancels_inverse_edge_operations_before_validation(self) -> None:
         source = """
@@ -498,15 +721,15 @@ def make_y(x):
     y = x + 1
     return {"y": y}
 
-make_y.depends_on(make_x)
+make_y.depends_on(make_x.output("x"))
 """.lstrip()
 
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
             [
-                {"type": "add_edge", "fromNode": "b", "toNode": "a"},
-                {"type": "remove_edge", "fromNode": "b", "toNode": "a"},
+                {"type": "add_edge", "fromNode": "b", "fromOutput": "y", "toNode": "a", "toInput": "y"},
+                {"type": "remove_edge", "fromNode": "b", "fromOutput": "y", "toNode": "a", "toInput": "y"},
             ],
         )
 
@@ -527,15 +750,15 @@ def make_y(x):
     y = x + 1
     return {"y": y}
 
-make_y.depends_on(make_x)
+make_y.depends_on(make_x.output("x"))
 """.lstrip()
 
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
             [
-                {"type": "add_edge", "fromNode": "b", "toNode": "a"},
-                {"type": "remove_edge", "fromNode": "b", "toNode": "a"},
+                {"type": "add_edge", "fromNode": "b", "fromOutput": "y", "toNode": "a", "toInput": "y"},
+                {"type": "remove_edge", "fromNode": "b", "fromOutput": "y", "toNode": "a", "toInput": "y"},
                 {"type": "update_node_body", "nodeId": "missing", "code": "x = 2"},
             ],
         )
@@ -637,13 +860,13 @@ def use_x(x):
         return {"y": x}
     return {"y": 0}
 
-use_x.depends_on(load)
+use_x.depends_on(load.output("x"))
 """.lstrip()
 
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
-            [{"type": "remove_edge", "fromNode": "load", "toNode": "custom"}],
+            [{"type": "remove_edge", "fromNode": "load", "fromOutput": "x", "toNode": "custom", "toInput": "x"}],
         )
 
         self.assertFalse(result.ok)
@@ -673,7 +896,7 @@ def use_x(x):
         result = apply_document_operations(
             source,
             DOCUMENT_PATH,
-            [{"type": "add_edge", "fromNode": "load", "toNode": "custom"}],
+            [{"type": "add_edge", "fromNode": "load", "fromOutput": "x", "toNode": "custom", "toInput": "x"}],
         )
 
         self.assertFalse(result.ok)
@@ -697,7 +920,7 @@ def use_x(x):
         return {"y": x}
     return {"y": 0}
 
-use_x.depends_on(load)
+use_x.depends_on(load.output("x"))
 """.lstrip()
 
         changed_outputs = apply_document_operations(

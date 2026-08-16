@@ -28,10 +28,11 @@ class RowcallPackageTest(unittest.TestCase):
             y = x + 1
             return {"y": y}
 
-        result = child.depends_on(parent)
+        reference = parent.output("x")
+        result = child.depends_on(reference)
 
         self.assertIs(result, child)
-        self.assertEqual(child.__rowcall_dependencies__, [parent])
+        self.assertEqual(child.__rowcall_dependencies__, [("x", reference)])
 
     def test_node_rejects_non_string_outputs(self):
         with self.assertRaises(RowcallNodeError):
@@ -56,7 +57,7 @@ class RowcallPackageTest(unittest.TestCase):
 
         self.assertEqual(module.read_message.__rowcall_id__, "n_load")
         self.assertEqual(module.shout_message.__rowcall_dependencies__, [
-            module.read_message,
+            ("message", module.read_message.output("message")),
         ])
 
 

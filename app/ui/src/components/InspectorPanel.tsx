@@ -1757,19 +1757,6 @@ function NodeInspector({
     );
   };
 
-  const handleExposeOutput = (name: string) => {
-    if (
-      readOnly || !selectedNode.editable || selectedNode.outputs.includes(name)
-    ) {
-      return;
-    }
-    onOutputsChange(selectedNode.id, [...selectedNode.outputs, name]);
-    setSelectedOutputName(name);
-  };
-
-  const exposableOutputs = outputOptions.filter((option) =>
-    option.source !== "missing" && !selectedNode.outputs.includes(option.name)
-  );
   if (mode === "overview") {
     return (
       <NodeOverview
@@ -1817,7 +1804,6 @@ function NodeInspector({
       extensions={extensions}
       inputOptions={inputOptions}
       resultOptions={resultPreviewOptions}
-      exposableOutputs={exposableOutputs}
       selectedInputName={selectedInputName}
       selectedOutputName={selectedOutputName}
       runSummary={runSummary}
@@ -1826,7 +1812,6 @@ function NodeInspector({
       outputReplacementDisabled={readOnly || !selectedNode.editable}
       onInputSelect={setSelectedInputName}
       onOutputSelect={setSelectedOutputName}
-      onExposeOutput={handleExposeOutput}
       onCodeChange={onCodeChange}
       onOutputReplacement={handleOutputReplacement}
       onShowDocumentGlobals={isBlockedByDocumentGlobals
@@ -1878,7 +1863,6 @@ function NodeDevelop({
   extensions,
   inputOptions,
   resultOptions,
-  exposableOutputs,
   selectedInputName,
   selectedOutputName,
   runSummary,
@@ -1887,7 +1871,6 @@ function NodeDevelop({
   outputReplacementDisabled,
   onInputSelect,
   onOutputSelect,
-  onExposeOutput,
   onCodeChange,
   onOutputReplacement,
   onShowDocumentGlobals,
@@ -1905,7 +1888,6 @@ function NodeDevelop({
   >;
   inputOptions: InspectorPreviewOption[];
   resultOptions: InspectorPreviewOption[];
-  exposableOutputs: OutputOption[];
   selectedInputName: string;
   selectedOutputName: string;
   runSummary: NodeRunSummary;
@@ -1914,7 +1896,6 @@ function NodeDevelop({
   outputReplacementDisabled: boolean;
   onInputSelect: (name: string) => void;
   onOutputSelect: (name: string) => void;
-  onExposeOutput: (name: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
   onOutputReplacement: () => void;
   onShowDocumentGlobals?: () => void;
@@ -2018,13 +1999,10 @@ function NodeDevelop({
             selectedOption={selectedOutput}
             status={runStatus}
             emptyLabel="Declare an output to inspect it here."
-            exposableOutputs={exposableOutputs}
-            exposeDisabled={outputReplacementDisabled}
             issue={outputIssue}
             outputReplacement={outputReplacement}
             outputReplacementDisabled={outputReplacementDisabled}
             onOutputReplacement={onOutputReplacement}
-            onExpose={onExposeOutput}
             onShowDocumentGlobals={onShowDocumentGlobals}
             onSelect={onOutputSelect}
             onExpand={onShowResults}
@@ -2044,15 +2022,10 @@ function ValuePeek({
   selectedOption,
   status,
   emptyLabel,
-  showableValues = [],
-  exposableOutputs = [],
-  exposeDisabled = false,
   issue,
   outputReplacement,
   outputReplacementDisabled = false,
   onOutputReplacement,
-  onShow,
-  onExpose,
   onShowDocumentGlobals,
   onSelect,
   onExpand,
@@ -2065,15 +2038,10 @@ function ValuePeek({
   selectedOption: InspectorPreviewOption | null;
   status: NodeRunVisualStatus;
   emptyLabel: string;
-  showableValues?: OutputOption[];
-  exposableOutputs?: OutputOption[];
-  exposeDisabled?: boolean;
   issue?: DevelopOutputIssue | null;
   outputReplacement?: { from: string; to: string } | null;
   outputReplacementDisabled?: boolean;
   onOutputReplacement?: () => void;
-  onShow?: (name: string) => void;
-  onExpose?: (name: string) => void;
   onShowDocumentGlobals?: () => void;
   onSelect: (name: string) => void;
   onExpand?: () => void;
@@ -2121,28 +2089,6 @@ function ValuePeek({
           })}
         </div>
         <div className="flex shrink-0 items-center gap-3 pb-2.5">
-          {onShow && (
-            <AddValueMenu
-              triggerLabel="+ Show"
-              title="Show a value"
-              description="Display it in Rowcall results without passing it downstream."
-              emptyLabel="Assign a value in the code to show it."
-              candidates={showableValues}
-              disabled={exposeDisabled}
-              onSelect={onShow}
-            />
-          )}
-          {onExpose && (
-            <AddValueMenu
-              triggerLabel="+ Output"
-              title="Add an output"
-              description="Make it available to downstream steps."
-              emptyLabel="Assign a value in the code to output it."
-              candidates={exposableOutputs}
-              disabled={exposeDisabled}
-              onSelect={onExpose}
-            />
-          )}
           {state && (
             <span
               className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${state.className}`}
@@ -2197,110 +2143,6 @@ function ValuePeek({
           )}
       </div>
     </section>
-  );
-}
-
-function AddValueMenu({
-  triggerLabel,
-  title,
-  description,
-  emptyLabel,
-  candidates,
-  disabled,
-  onSelect,
-}: {
-  triggerLabel: string;
-  title: string;
-  description: string;
-  emptyLabel: string;
-  candidates: OutputOption[];
-  disabled: boolean;
-  onSelect: (name: string) => void;
-}) {
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-  const assigned = candidates.filter((candidate) =>
-    candidate.source === "assigned"
-  );
-  const inputs = candidates.filter((candidate) => candidate.source === "input");
-
-  const select = (name: string) => {
-    detailsRef.current?.removeAttribute("open");
-    onSelect(name);
-  };
-
-  return (
-    <details ref={detailsRef} className="group relative">
-      <summary
-        className={`cursor-pointer list-none text-[11px] font-medium [&::-webkit-details-marker]:hidden ${
-          disabled
-            ? "pointer-events-none text-zinc-300 dark:text-zinc-600"
-            : "text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-        }`}
-        aria-disabled={disabled}
-      >
-        {triggerLabel}
-      </summary>
-      <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded border border-zinc-200 bg-white text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-        <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-            {title}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-4 text-zinc-500 dark:text-zinc-400">
-            {description}
-          </p>
-        </div>
-        {candidates.length === 0
-          ? (
-            <p className="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400">
-              {emptyLabel}
-            </p>
-          )
-          : (
-            <div className="max-h-52 overflow-y-auto py-1">
-              <AddValueGroup
-                label="Assigned in this step"
-                candidates={assigned}
-                onSelect={select}
-              />
-              <AddValueGroup
-                label="Pass through an input"
-                candidates={inputs}
-                onSelect={select}
-              />
-            </div>
-          )}
-      </div>
-    </details>
-  );
-}
-
-function AddValueGroup({
-  label,
-  candidates,
-  onSelect,
-}: {
-  label: string;
-  candidates: OutputOption[];
-  onSelect: (name: string) => void;
-}) {
-  if (candidates.length === 0) return null;
-
-  return (
-    <div className="py-1">
-      <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-zinc-400 dark:text-zinc-500">
-        {label}
-      </p>
-      {candidates.map((candidate) => (
-        <button
-          key={candidate.name}
-          type="button"
-          className="flex w-full items-center px-3 py-2 text-left font-mono text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-          onClick={() => onSelect(candidate.name)}
-        >
-          {candidate.name}
-        </button>
-      ))}
-    </div>
   );
 }
 

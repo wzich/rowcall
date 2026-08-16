@@ -2,9 +2,11 @@ import { assertEquals } from "@std/assert";
 import type { DocumentOperation } from "./api/documents.ts";
 import {
   coalesceDocumentOperations,
+  deriveRoutedOutputs,
   hasCustomManagedDownstream,
 } from "./documentOperations.ts";
 import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
+import { detectPureOutputRename } from "./graph/outputRename.ts";
 
 Deno.test("coalesceDocumentOperations cancels a new node deleted before save", () => {
   const operations: DocumentOperation[] = [
@@ -22,7 +24,13 @@ Deno.test("coalesceDocumentOperations cancels a new node deleted before save", (
       nodeId: "n_new",
       position: { x: 10, y: 20 },
     },
-    { type: "add_edge", fromNode: "n_existing", toNode: "n_new" },
+    {
+      type: "add_edge",
+      fromNode: "n_existing",
+      fromOutput: "value",
+      toNode: "n_new",
+      toInput: "value",
+    },
     { type: "delete_node", nodeId: "n_new" },
   ];
 
@@ -37,7 +45,13 @@ Deno.test("coalesceDocumentOperations keeps only delete after existing node edit
       nodeId: "n_existing",
       position: { x: 10, y: 20 },
     },
-    { type: "remove_edge", fromNode: "n_parent", toNode: "n_existing" },
+    {
+      type: "remove_edge",
+      fromNode: "n_parent",
+      fromOutput: "value",
+      toNode: "n_existing",
+      toInput: "value",
+    },
     { type: "delete_node", nodeId: "n_existing" },
   ];
 
@@ -121,12 +135,16 @@ Deno.test("coalesceDocumentOperations deduplicates repeated edge operations", ()
   const addEdge: DocumentOperation = {
     type: "add_edge",
     fromNode: "n_parent",
+    fromOutput: "value",
     toNode: "n_child",
+    toInput: "value",
   };
   const removeEdge: DocumentOperation = {
     type: "remove_edge",
     fromNode: "n_parent",
+    fromOutput: "value",
     toNode: "n_child",
+    toInput: "value",
   };
 
   assertEquals(coalesceDocumentOperations([addEdge, addEdge]), [addEdge]);
@@ -139,12 +157,16 @@ Deno.test("coalesceDocumentOperations cancels inverse edge operations", () => {
   const addEdge: DocumentOperation = {
     type: "add_edge",
     fromNode: "n_parent",
+    fromOutput: "value",
     toNode: "n_child",
+    toInput: "value",
   };
   const removeEdge: DocumentOperation = {
     type: "remove_edge",
     fromNode: "n_parent",
+    fromOutput: "value",
     toNode: "n_child",
+    toInput: "value",
   };
 
   assertEquals(coalesceDocumentOperations([addEdge, removeEdge]), []);
@@ -170,11 +192,82 @@ Deno.test("hasCustomManagedDownstream detects non-editable downstream nodes", ()
       },
     ],
     edges: [
-      { fromNode: "n_source", toNode: "n_editable" },
-      { fromNode: "n_source", toNode: "n_custom" },
+      {
+        fromNode: "n_source",
+        fromOutput: "x",
+        toNode: "n_editable",
+        toInput: "x",
+      },
+      {
+        fromNode: "n_source",
+        fromOutput: "x",
+        toNode: "n_custom",
+        toInput: "x",
+      },
     ],
   };
 
   assertEquals(hasCustomManagedDownstream(document, "n_source"), true);
   assertEquals(hasCustomManagedDownstream(document, "n_editable"), false);
+});
+
+Deno.test("deriveRoutedOutputs keeps only uniquely routed source variables", () => {
+  const document: RowcallDocumentV1 = {
+    version: 1,
+    nodes: [
+      {
+        id: "split",
+        code: "train = []\ntest = []",
+        outputs: ["test", "train", "unused"],
+      },
+      { id: "fit", code: "pass", outputs: [] },
+      { id: "evaluate", code: "pass", outputs: [] },
+    ],
+    edges: [
+      {
+        fromNode: "split",
+        fromOutput: "train",
+        toNode: "fit",
+        toInput: "train",
+      },
+      {
+        fromNode: "split",
+        fromOutput: "test",
+        toNode: "evaluate",
+        toInput: "test",
+      },
+      {
+        fromNode: "split",
+        fromOutput: "train",
+        toNode: "evaluate",
+        toInput: "train",
+      },
+    ],
+  };
+
+  assertEquals(deriveRoutedOutputs(document, "split"), ["test", "train"]);
+  assertEquals(deriveRoutedOutputs(document, "missing"), []);
+});
+
+Deno.test("pure output renames are tracked but ambiguous edits are not", () => {
+  assertEquals(
+    detectPureOutputRename(
+      "train = rows[:8]\nmodel = fit(train)",
+      "training = rows[:8]\nmodel = fit(training)",
+      ["train"],
+      ["train", "model"],
+      ["training", "model"],
+    ),
+    { fromOutput: "train", toOutput: "training" },
+  );
+  assertEquals(
+    detectPureOutputRename(
+      "train = rows[:8]",
+      "test = rows[8:]",
+      ["train"],
+      ["train"],
+      ["test"],
+    ),
+    null,
+  );
 });

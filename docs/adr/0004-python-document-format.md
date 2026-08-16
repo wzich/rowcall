@@ -16,9 +16,11 @@ Users and agents should be able to work with the underlying Python file directly
 while still benefiting from the graph editor.
 
 The current runtime model remains valuable: nodes form an explicit directed
-acyclic graph, nodes receive copied upstream outputs as inputs, nodes publish
-declared outputs, and execution order is determined by graph structure rather
-than notebook cell order.
+acyclic graph, nodes receive copied upstream outputs as inputs, outgoing routes
+determine which stable source variables are published, and execution order is
+determined by graph structure rather than notebook cell order. The serialized
+decorator output list and generated return dictionary materialize those routes
+for execution; they are not a second user-authored graph contract.
 
 ## Decision
 
@@ -60,16 +62,15 @@ def clean_data(df):
 
 
 # Rowcall graph
-clean_data.depends_on(read_data)
+clean_data.depends_on(read_data.output("df"))
 ```
 
 Edges are explicit and should be declared in a graph block after node
-definitions. Function parameters declare which input names a node consumes;
-explicit edges declare which upstream nodes may provide values. At runtime,
-Rowcall gathers outputs from directly connected upstream nodes and passes
-matching values into the downstream function. For standard editor-authored
-nodes, UI graph/output edits may normalize downstream function signatures to
-match direct upstream outputs.
+definitions. Each edge selects one named upstream output and one target input;
+same-name bindings use a positional output reference, while keyword arguments
+provide schema-level aliases. At runtime, Rowcall copies only routed values into
+the downstream function. For standard editor-authored nodes, UI graph/output
+edits may normalize downstream function signatures to match target input names.
 
 Declared outputs are represented in the decorator and returned as a dictionary.
 Human-facing results are recorded with bare `display()` calls and do not
@@ -120,9 +121,9 @@ Node functions should not call other node functions directly. Data dependencies
 must flow through explicit graph edges so the canvas remains authoritative for
 execution flow. Helper functions remain callable from node bodies.
 
-If multiple upstream nodes connected to the same downstream node provide the
-same output name, validation fails. This preserves the current explicit-input
-contract and avoids ambiguous parameter binding.
+If multiple routes claim the same downstream input name, validation fails. A
+node pair may otherwise have multiple routes, and an output may fan out to
+multiple children.
 
 ## Consequences
 

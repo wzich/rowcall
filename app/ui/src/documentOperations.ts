@@ -83,6 +83,28 @@ export function hasCustomManagedDownstream(
   );
 }
 
+export function deriveRoutedOutputs(
+  document: RowcallDocumentV1,
+  nodeId: string,
+): string[] {
+  const node = document.nodes.find((item) => item.id === nodeId);
+  if (!node) return [];
+
+  const routedOutputs: string[] = [];
+  const seen = new Set<string>();
+  for (const edge of document.edges) {
+    if (edge.fromNode !== nodeId || seen.has(edge.fromOutput)) continue;
+    seen.add(edge.fromOutput);
+    routedOutputs.push(edge.fromOutput);
+  }
+
+  const routedSet = new Set(routedOutputs);
+  return [
+    ...node.outputs.filter((output) => routedSet.has(output)),
+    ...routedOutputs.filter((output) => !node.outputs.includes(output)),
+  ];
+}
+
 function getStructuralOperationKey(
   operation: DocumentOperation,
 ): string | null {
@@ -91,7 +113,7 @@ function getStructuralOperationKey(
       return `add_node:${operation.node.id}`;
     case "add_edge":
     case "remove_edge":
-      return `${operation.type}:${operation.fromNode}->${operation.toNode}`;
+      return `${operation.type}:${edgeKey(operation)}`;
     case "delete_node":
     case "update_globals":
     case "update_node_body":
@@ -109,9 +131,9 @@ function getInverseEdgeOperationKey(
 ): string | null {
   switch (operation.type) {
     case "add_edge":
-      return `remove_edge:${operation.fromNode}->${operation.toNode}`;
+      return `remove_edge:${edgeKey(operation)}`;
     case "remove_edge":
-      return `add_edge:${operation.fromNode}->${operation.toNode}`;
+      return `add_edge:${edgeKey(operation)}`;
     case "add_node":
     case "delete_node":
     case "update_globals":
@@ -123,6 +145,17 @@ function getInverseEdgeOperationKey(
     case "update_node_description":
       return null;
   }
+}
+
+function edgeKey(
+  edge: {
+    fromNode: string;
+    fromOutput: string;
+    toNode: string;
+    toInput: string;
+  },
+): string {
+  return `${edge.fromNode}.${edge.fromOutput}->${edge.toNode}.${edge.toInput}`;
 }
 
 function buildReplaceableOperationIndexes(

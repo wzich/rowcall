@@ -201,11 +201,13 @@ first tabular value, then the first value. Apply the same model to multiple
 declared outputs. Simultaneous side-by-side comparison of two inputs may be
 useful later, but it is not required for the first friend release.
 
-The Develop output strip includes a compact **Expose** action. It offers locals
-assigned in the node first and pass-through inputs second. Choosing a value adds
-it to the node's output contract and selects its new preview tab; it does not
-require a trip to Overview. Full contract review and removal remain in Overview
-for the MVP.
+The canvas node card lists locally assigned variables and pass-through inputs as
+full-width variable rows. Dragging from a row's output handle promotes that
+stable name into the node's generated output contract and routes it to a child
+in one gesture. Its final route being removed demotes it again. Routes are the
+authored source of truth; the hidden decorator and return plumbing are derived.
+The inspector remains focused on code and runtime previews rather than requiring
+a separate expose-then-connect workflow.
 
 ### Overview tab
 

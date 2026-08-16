@@ -92,7 +92,12 @@ function graph(
       code: "",
       outputs: [],
     })),
-    edges: edges.map(([fromNode, toNode]) => ({ fromNode, toNode })),
+    edges: edges.map(([fromNode, toNode]) => ({
+      fromNode,
+      fromOutput: "value",
+      toNode,
+      toInput: "value",
+    })),
   };
 }
 

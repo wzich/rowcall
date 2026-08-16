@@ -1,6 +1,8 @@
 export type Edge = {
   fromNode: string;
+  fromOutput: string;
   toNode: string;
+  toInput: string;
 };
 
 export type RunPlanStep = {

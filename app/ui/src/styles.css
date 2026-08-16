@@ -274,6 +274,26 @@ body {
   isolation: isolate;
 }
 
+.react-flow__handle.variable-output-handle--available {
+  background-color: #d4d4d8;
+}
+
+.react-flow__handle.variable-output-handle--exported {
+  background-color: #18181b;
+}
+
+.react-flow__handle.variable-output-handle--missing {
+  background-color: #ef4444;
+}
+
+.dark .react-flow__handle.variable-output-handle--available {
+  background-color: #52525b;
+}
+
+.dark .react-flow__handle.variable-output-handle--exported {
+  background-color: #e4e4e7;
+}
+
 .node-run-status-indicator {
   align-items: center;
   contain: layout paint style;

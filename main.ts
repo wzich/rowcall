@@ -448,7 +448,9 @@ function formatDocument(document: RowcallDocumentV1): RowcallDocumentV1 {
     })),
     edges: document.edges.map((edge) => ({
       fromNode: edge.fromNode,
+      fromOutput: edge.fromOutput,
       toNode: edge.toNode,
+      toInput: edge.toInput,
     })),
     ...(document.globalsCode ? { globalsCode: document.globalsCode } : {}),
     ...(document.readOnly !== undefined ? { readOnly: document.readOnly } : {}),

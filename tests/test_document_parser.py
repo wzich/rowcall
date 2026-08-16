@@ -241,8 +241,8 @@ def first():
 def second(x):
     return {"y": x}
 
-second.depends_on(first)
-second.depends_on(first)
+second.depends_on(first.output("x"))
+second.depends_on(first.output("x"))
 '''.lstrip()
         result = parse_source(source, Path("/tmp/metadata.py"))
 
@@ -275,8 +275,8 @@ def format_text(y):
     text = str(y)
     return {"text": text}
 
-double.depends_on(load)
-format_text.depends_on(double)
+double.depends_on(load.output("x"))
+format_text.depends_on(double.output("y"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/example.py"))
@@ -302,8 +302,8 @@ format_text.depends_on(double)
         self.assertEqual(
             app_document["edges"],
             [
-                {"fromNode": "load", "toNode": "double"},
-                {"fromNode": "double", "toNode": "format"},
+                {"fromNode": "load", "fromOutput": "x", "toNode": "double", "toInput": "x"},
+                {"fromNode": "double", "fromOutput": "y", "toNode": "format", "toInput": "y"},
             ],
         )
         self.assertNotIn("functionSource", app_document["nodes"][0])
@@ -322,6 +322,36 @@ format_text.depends_on(double)
             },
         )
         self.assertEqual(build_full_graph_plan(result.document).to_dict(), target_plan.to_dict())
+
+    def test_routes_named_outputs_and_supports_stable_input_aliases(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="split", outputs=["train", "test"])
+def split_data():
+    train = [1, 2]
+    test = [3]
+    return {"train": train, "test": test}
+
+@node(id="fit", outputs=["model"])
+def fit_model(training_data):
+    model = len(training_data)
+    return {"model": model}
+
+fit_model.depends_on(training_data=split_data.output("train"))
+""".lstrip()
+
+        result = parse_source(source, Path("/tmp/named_routes.py"))
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.document is not None
+        self.assertEqual(
+            [
+                (edge.from_node, edge.from_output, edge.to_node, edge.to_input)
+                for edge in result.document.edges
+            ],
+            [("split", "train", "fit", "training_data")],
+        )
 
     def test_preserves_rowcall_module_imports_in_globals(self) -> None:
         source = """
@@ -435,14 +465,14 @@ def source():
 def passthrough(value):
     return {"value": value}
 
-passthrough.depends_on(source)
+passthrough.depends_on(source.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/parameter_output.py"))
 
         self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
 
-    def test_rejects_module_global_returned_as_a_node_output(self) -> None:
+    def test_keeps_a_declared_output_parseable_when_no_local_binding_exists(self) -> None:
         source = """
 from rowcall import node
 
@@ -455,13 +485,7 @@ def use_global():
 
         parsed = parse_source(source, Path("/tmp/global_output.py"))
 
-        self.assertFalse(parsed.ok)
-        issue = parsed.issues[0]
-        self.assertEqual(issue.kind, "invalid_node_return")
-        self.assertEqual(issue.node_id, "global")
-        self.assertEqual(issue.path, "7:23")
-        self.assertIn("must be a local variable or parameter", issue.message)
-        self.assertIn("resolves outside the node function", issue.message)
+        self.assertTrue(parsed.ok, [issue.to_dict() for issue in parsed.issues])
 
     def test_rejects_global_declaration_as_a_node_output_binding(self) -> None:
         source = """
@@ -478,8 +502,7 @@ def update_global():
 
         parsed = parse_source(source, Path("/tmp/global_declaration_output.py"))
 
-        self.assertFalse(parsed.ok)
-        self.assertEqual(parsed.issues[0].kind, "invalid_node_return")
+        self.assertTrue(parsed.ok, [issue.to_dict() for issue in parsed.issues])
 
     def test_nested_scope_binding_does_not_define_a_node_output(self) -> None:
         source = """
@@ -496,8 +519,7 @@ def nested():
 
         parsed = parse_source(source, Path("/tmp/nested_output.py"))
 
-        self.assertFalse(parsed.ok)
-        self.assertEqual(parsed.issues[0].kind, "invalid_node_return")
+        self.assertTrue(parsed.ok, [issue.to_dict() for issue in parsed.issues])
 
     def test_rejects_multiple_or_conditional_node_returns(self) -> None:
         source = """
@@ -568,8 +590,8 @@ def first():
 def second(*args):
     return first()
 
-second.depends_on(first, missing, 1)
-first.depends_on(second)
+second.depends_on(first.output("value"), missing.output("value"), 1)
+first.depends_on(second.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/bad.py"))
@@ -593,7 +615,7 @@ def root(missing):
 def child(value, also_missing):
     return {"result": value + also_missing}
 
-child.depends_on(root)
+child.depends_on(root.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/missing_inputs.py"))
@@ -765,13 +787,13 @@ def merge(value):
     total = value
     return {"total": total}
 
-merge.depends_on(left, right)
+merge.depends_on(left.output("value"), right.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/conflict.py"))
 
         self.assertFalse(result.ok)
-        self.assertIn("conflicting_outputs", [issue.kind for issue in result.issues])
+        self.assertIn("conflicting_input", [issue.kind for issue in result.issues])
 
     def test_sequential_duplicate_output_names_are_valid(self) -> None:
         source = """
@@ -792,8 +814,8 @@ def third(value):
     total = value * 2
     return {"total": total}
 
-second.depends_on(first)
-third.depends_on(second)
+second.depends_on(first.output("value"))
+third.depends_on(second.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/sequential.py"))
@@ -844,8 +866,8 @@ def present():
     value = 1
     return {"value": value}
 
-present.depends_on(missing_upstream)
-missing_downstream.depends_on(present)
+present.depends_on(missing_upstream.output("value"))
+missing_downstream.depends_on(present.output("value"))
 """.lstrip()
 
         result = parse_source(source, Path("/tmp/missing_refs.py"))
@@ -894,7 +916,7 @@ def bad_params(__rowcall_reserved, *args, **kwargs):
     y = __rowcall_reserved
     return {"y": y}
 
-bad_params.depends_on(source, 1, extra=source)
+bad_params.depends_on(source.output("x"), 1, extra=source.output("x"))
 bad_params.depends_on()
 """.lstrip()
 
@@ -916,14 +938,7 @@ bad_params.depends_on()
         self.assertIn(
             (
                 "unsupported_python",
-                "depends_on declarations may not use keyword arguments",
-            ),
-            messages_by_kind,
-        )
-        self.assertIn(
-            (
-                "unsupported_python",
-                "depends_on arguments must be node function names",
+                'depends_on values must be node.output("name") references',
             ),
             messages_by_kind,
         )

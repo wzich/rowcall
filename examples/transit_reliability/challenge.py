@@ -268,17 +268,17 @@ def priority_routes_starter(trip_facts):
 
 
 # Rowcall graph
-prepare_trips.depends_on(load_trips)
-prepare_routes.depends_on(load_routes)
-prepare_maintenance.depends_on(load_maintenance)
-summarize_maintenance.depends_on(prepare_maintenance)
+prepare_trips.depends_on(load_trips.output("trips"))
+prepare_routes.depends_on(load_routes.output("routes"))
+prepare_maintenance.depends_on(load_maintenance.output("maintenance"))
+summarize_maintenance.depends_on(prepare_maintenance.output("maintenance"))
 build_trip_facts.depends_on(
-    prepare_trips,
-    prepare_routes,
-    summarize_maintenance,
+    prepare_trips.output("trips"),
+    prepare_routes.output("routes"),
+    summarize_maintenance.output("vehicle_maintenance"),
 )
-preview_joined_data.depends_on(build_trip_facts)
-basic_reliability_starter.depends_on(prepare_trips)
-peak_route_starter.depends_on(build_trip_facts)
-maintenance_risk_starter.depends_on(build_trip_facts)
-priority_routes_starter.depends_on(build_trip_facts)
+preview_joined_data.depends_on(build_trip_facts.output("trip_facts"))
+basic_reliability_starter.depends_on(prepare_trips.output("trips"))
+peak_route_starter.depends_on(build_trip_facts.output("trip_facts"))
+maintenance_risk_starter.depends_on(build_trip_facts.output("trip_facts"))
+priority_routes_starter.depends_on(build_trip_facts.output("trip_facts"))

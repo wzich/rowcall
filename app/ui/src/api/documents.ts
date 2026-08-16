@@ -70,8 +70,20 @@ export type DocumentOperation =
     };
   }
   | { type: "delete_node"; nodeId: string }
-  | { type: "add_edge"; fromNode: string; toNode: string }
-  | { type: "remove_edge"; fromNode: string; toNode: string }
+  | {
+    type: "add_edge";
+    fromNode: string;
+    fromOutput: string;
+    toNode: string;
+    toInput: string;
+  }
+  | {
+    type: "remove_edge";
+    fromNode: string;
+    fromOutput: string;
+    toNode: string;
+    toInput: string;
+  }
   | { type: "move_node"; nodeId: string; position: { x: number; y: number } }
   | { type: "update_node_title"; nodeId: string; title: string }
   | {

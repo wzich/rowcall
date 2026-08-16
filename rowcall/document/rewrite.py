@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import ast
 import copy
+import io
 import json
 import keyword
 import textwrap
+import tokenize
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .models import DocumentNode, ExecutableDocument, ParseResult, ValidationIssue
-from .parser import _node_local_bindings, _parse_source_for_rewrite, parse_source
+from .models import DocumentEdge, DocumentNode, ExecutableDocument, ParseResult, ValidationIssue
+from .parser import _parse_source_for_rewrite, parse_source
+
+
+EdgeSpec = tuple[str, str, str, str]
 
 
 @dataclass(frozen=True)
@@ -102,112 +107,44 @@ def apply_document_operations(
         )
 
     coalesced_operations = _coalesce_document_operations(validated_operations)
-    body_updated_node_ids = {
-        node_id
-        for _, operation in coalesced_operations
-        if operation.get("type") == "update_node_body"
-        and (node_id := _text_field(operation, "nodeId", "node_id")) is not None
-    }
-
     for original_index, operation in coalesced_operations:
         operation_type = operation["type"]
-        result = _apply_one_operation(current_source, document_path, operation, current_metadata)
+        result = _apply_one_operation(
+            current_source,
+            document_path,
+            operation,
+            current_metadata,
+            normalize_signatures=False,
+        )
         if isinstance(result, ValidationIssue):
             return _operation_failure(source, document_path, result, original_index, operation_type)
         current_source, current_metadata = result
 
-    reconciled = _remove_stale_declared_values(
-        current_source,
-        document_path,
-        body_updated_node_ids,
-    )
-    if isinstance(reconciled, ValidationIssue):
-        return _operation_failure(source, document_path, reconciled)
-    current_source = reconciled
+    if any(
+        operation["type"] in {"add_edge", "remove_edge", "delete_node"}
+        for _, operation in coalesced_operations
+    ):
+        lines, newline, final_newline = _split_source(current_source)
+        finalized = _finish_rewrite_with_normalized_signatures(
+            lines,
+            newline,
+            final_newline,
+            document_path,
+            validate_output_bindings=False,
+        )
+        if not finalized.ok:
+            return OperationRewriteResult(
+                ok=False,
+                source=None,
+                parse_result=finalized.parse_result,
+                sidecar_metadata=None,
+            )
+        current_source = finalized.source
 
     parsed = parse_source(current_source, document_path)
     if not parsed.ok:
         return OperationRewriteResult(ok=False, source=None, parse_result=parsed, sidecar_metadata=None)
     return OperationRewriteResult(ok=True, source=current_source, parse_result=parsed, sidecar_metadata=current_metadata)
-
-
-def _remove_stale_declared_values(
-    source: str,
-    document_path: str | Path,
-    body_updated_node_ids: set[str],
-) -> str | ValidationIssue:
-    """Drop declared outputs that a saved body no longer binds locally.
-
-    Reconciliation happens after the complete operation batch so code edits and
-    their generated contracts are persisted atomically. Downstream nodes are
-    revisited when an output removal changes their generated parameters.
-    """
-    current_source = source
-    pending_node_ids = set(body_updated_node_ids)
-
-    while pending_node_ids:
-        parsed = _parse_source_for_rewrite(current_source, document_path)
-        if not parsed.ok or parsed.document is None:
-            return _first_issue(parsed, "Document could not be parsed while reconciling declared values.")
-
-        node_id = min(pending_node_ids)
-        pending_node_ids.remove(node_id)
-        node = _find_node(parsed.document.nodes, node_id)
-        if node is None:
-            continue
-        if node.custom_return or not node.editable:
-            continue
-
-        try:
-            module = ast.parse(current_source, filename=str(document_path))
-        except SyntaxError as error:
-            return ValidationIssue(
-                kind="invalid_python",
-                message=error.msg,
-                path=f"{error.lineno}:{error.offset}",
-            )
-        function_def = next(
-            (
-                statement
-                for statement in module.body
-                if isinstance(statement, ast.FunctionDef)
-                and statement.name == node.function_name
-            ),
-            None,
-        )
-        if function_def is None:
-            return ValidationIssue(
-                kind="missing_node_reference",
-                message=f"Node function '{node.function_name}' was not found while reconciling declared values.",
-                node_id=node.id,
-            )
-
-        local_bindings = _node_local_bindings(function_def)
-        next_outputs = tuple(name for name in node.outputs if name in local_bindings)
-
-        if next_outputs != node.outputs:
-            downstream_ids = {
-                edge.to_node
-                for edge in parsed.document.edges
-                if edge.from_node == node.id
-            }
-            result = _update_node_outputs(
-                current_source,
-                document_path,
-                node.id,
-                next_outputs,
-                validate_output_bindings=False,
-            )
-            if not result.ok:
-                return result.issues[-1] if result.issues else _invalid_operation(
-                    f"Failed to remove stale outputs from node '{node.id}'."
-                )
-            current_source = result.source
-            pending_node_ids.add(node.id)
-            pending_node_ids.update(downstream_ids)
-            continue
-
-    return current_source
 
 
 def update_node_body(
@@ -334,6 +271,7 @@ def update_node_outputs(
         node_id,
         outputs,
         validate_output_bindings=True,
+        normalize_signatures=True,
     )
 
 
@@ -344,6 +282,7 @@ def _update_node_outputs(
     outputs: list[str] | tuple[str, ...],
     *,
     validate_output_bindings: bool,
+    normalize_signatures: bool,
 ) -> RewriteResult:
     parsed = _parse_rewrite_source(
         source,
@@ -395,7 +334,12 @@ def _update_node_outputs(
         decorator_range[1],
         [_render_decorator(node.id, next_outputs)],
     )
-    return _finish_rewrite_with_normalized_signatures(
+    finish = (
+        _finish_rewrite_with_normalized_signatures
+        if normalize_signatures
+        else _finish_rewrite
+    )
+    return finish(
         lines,
         newline,
         final_newline,
@@ -408,14 +352,19 @@ def add_edge(
     source: str,
     document_path: str | Path,
     from_node_id: str,
+    from_output: str,
     to_node_id: str,
+    to_input: str | None = None,
 ) -> RewriteResult:
     return _add_edge(
         source,
         document_path,
         from_node_id,
+        from_output,
         to_node_id,
+        to_input or from_output,
         validate_output_bindings=True,
+        normalize_signatures=True,
     )
 
 
@@ -423,16 +372,20 @@ def _add_edge(
     source: str,
     document_path: str | Path,
     from_node_id: str,
+    from_output: str,
     to_node_id: str,
+    to_input: str,
     *,
     validate_output_bindings: bool,
+    normalize_signatures: bool,
 ) -> RewriteResult:
     return _rewrite_edges(
         source,
         document_path,
-        add=(from_node_id, to_node_id),
+        add=(from_node_id, from_output, to_node_id, to_input),
         remove=None,
         validate_output_bindings=validate_output_bindings,
+        normalize_signatures=normalize_signatures,
     )
 
 
@@ -440,14 +393,19 @@ def remove_edge(
     source: str,
     document_path: str | Path,
     from_node_id: str,
+    from_output: str,
     to_node_id: str,
+    to_input: str,
 ) -> RewriteResult:
     return _remove_edge(
         source,
         document_path,
         from_node_id,
+        from_output,
         to_node_id,
+        to_input,
         validate_output_bindings=True,
+        normalize_signatures=True,
     )
 
 
@@ -455,16 +413,20 @@ def _remove_edge(
     source: str,
     document_path: str | Path,
     from_node_id: str,
+    from_output: str,
     to_node_id: str,
+    to_input: str,
     *,
     validate_output_bindings: bool,
+    normalize_signatures: bool,
 ) -> RewriteResult:
     return _rewrite_edges(
         source,
         document_path,
         add=None,
-        remove=(from_node_id, to_node_id),
+        remove=(from_node_id, from_output, to_node_id, to_input),
         validate_output_bindings=validate_output_bindings,
+        normalize_signatures=normalize_signatures,
     )
 
 
@@ -472,19 +434,18 @@ def _coalesce_document_operations(
     operations: list[tuple[int, dict[str, Any]]],
 ) -> list[tuple[int, dict[str, Any]]]:
     result: list[tuple[int, dict[str, Any]]] = []
-    edge_indexes: dict[tuple[str, str, str], int] = {}
+    edge_indexes: dict[tuple[str, str, str, str, str], int] = {}
 
     for original_index, operation in operations:
         operation_type = operation.get("type")
-        pair = _edge_pair(operation) if operation_type in {"add_edge", "remove_edge"} else None
-        if pair is None or operation_type not in {"add_edge", "remove_edge"}:
+        edge = _edge_spec(operation) if operation_type in {"add_edge", "remove_edge"} else None
+        if edge is None or operation_type not in {"add_edge", "remove_edge"}:
             result.append((original_index, operation))
             continue
 
-        from_node, to_node = pair
-        key = (operation_type, from_node, to_node)
+        key = (operation_type, *edge)
         inverse_type = "remove_edge" if operation_type == "add_edge" else "add_edge"
-        inverse_key = (inverse_type, from_node, to_node)
+        inverse_key = (inverse_type, *edge)
         inverse_index = edge_indexes.get(inverse_key)
         if inverse_index is not None:
             result.pop(inverse_index)
@@ -504,16 +465,16 @@ def _coalesce_document_operations(
 
 def _edge_operation_indexes(
     operations: list[tuple[int, dict[str, Any]]],
-) -> dict[tuple[str, str, str], int]:
-    indexes: dict[tuple[str, str, str], int] = {}
+) -> dict[tuple[str, str, str, str, str], int]:
+    indexes: dict[tuple[str, str, str, str, str], int] = {}
     for index, (_, operation) in enumerate(operations):
         operation_type = operation.get("type")
         if operation_type not in {"add_edge", "remove_edge"}:
             continue
-        pair = _edge_pair(operation)
-        if pair is None:
+        edge = _edge_spec(operation)
+        if edge is None:
             continue
-        indexes[(operation_type, pair[0], pair[1])] = index
+        indexes[(operation_type, *edge)] = index
     return indexes
 
 
@@ -522,6 +483,8 @@ def _apply_one_operation(
     document_path: str | Path,
     operation: dict[str, Any],
     metadata: dict[str, Any],
+    *,
+    normalize_signatures: bool,
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
     operation_type = operation["type"]
     if operation_type == "update_node_body":
@@ -549,32 +512,33 @@ def _apply_one_operation(
             node_id,
             tuple(outputs),
             validate_output_bindings=False,
+            normalize_signatures=normalize_signatures,
         )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "add_edge":
-        pair = _edge_pair(operation)
-        if pair is None:
-            return _invalid_operation("add_edge requires fromNode and toNode.")
+        edge = _edge_spec(operation)
+        if edge is None:
+            return _invalid_operation("add_edge requires fromNode, fromOutput, toNode, and toInput.")
         result = _add_edge(
             source,
             document_path,
-            pair[0],
-            pair[1],
+            *edge,
             validate_output_bindings=False,
+            normalize_signatures=normalize_signatures,
         )
         return _source_result_or_issue(result, metadata)
 
     if operation_type == "remove_edge":
-        pair = _edge_pair(operation)
-        if pair is None:
-            return _invalid_operation("remove_edge requires fromNode and toNode.")
+        edge = _edge_spec(operation)
+        if edge is None:
+            return _invalid_operation("remove_edge requires fromNode, fromOutput, toNode, and toInput.")
         result = _remove_edge(
             source,
             document_path,
-            pair[0],
-            pair[1],
+            *edge,
             validate_output_bindings=False,
+            normalize_signatures=normalize_signatures,
         )
         return _source_result_or_issue(result, metadata)
 
@@ -598,7 +562,13 @@ def _apply_one_operation(
         node_id = _text_field(operation, "nodeId", "node_id")
         if node_id is None:
             return _invalid_operation("delete_node requires nodeId.")
-        return _delete_node(source, document_path, node_id, metadata)
+        return _delete_node(
+            source,
+            document_path,
+            node_id,
+            metadata,
+            normalize_signatures=normalize_signatures,
+        )
 
     if operation_type in {"move_node", "update_node_title", "update_node_description"}:
         node_id = _text_field(operation, "nodeId", "node_id")
@@ -618,9 +588,10 @@ def _rewrite_edges(
     source: str,
     document_path: str | Path,
     *,
-    add: tuple[str, str] | None,
-    remove: tuple[str, str] | None,
+    add: EdgeSpec | None,
+    remove: EdgeSpec | None,
     validate_output_bindings: bool,
+    normalize_signatures: bool,
 ) -> RewriteResult:
     parsed = _parse_rewrite_source(
         source,
@@ -632,28 +603,64 @@ def _rewrite_edges(
 
     document = parsed.document
     nodes_by_id = {node.id: node for node in document.nodes}
-    edited_pair = add or remove
-    assert edited_pair is not None
-    from_node_id, to_node_id = edited_pair
+    edited_edge = add or remove
+    assert edited_edge is not None
+    from_node_id, from_output, to_node_id, to_input = edited_edge
     if from_node_id not in nodes_by_id:
         return _missing_node(source, parsed, from_node_id)
     if to_node_id not in nodes_by_id:
         return _missing_node(source, parsed, to_node_id)
+    if add is not None:
+        input_issue = _validate_names(to_node_id, (to_input,), "Input")
+        if input_issue is not None:
+            return _with_issue(source, parsed, input_issue)
     custom_downstream_issue = _reject_custom_managed_node_input_change(
         nodes_by_id[to_node_id],
     )
     if custom_downstream_issue is not None:
         return _with_issue(source, parsed, custom_downstream_issue)
 
-    edge_pairs = [(edge.from_node, edge.to_node) for edge in document.edges]
-    if add is not None and add not in edge_pairs:
-        edge_pairs.append(add)
+    edge_specs = [_document_edge_spec(edge) for edge in document.edges]
+    if add is not None and add not in edge_specs:
+        edge_specs.append(add)
     if remove is not None:
-        edge_pairs = [edge for edge in edge_pairs if edge != remove]
+        edge_specs = [edge for edge in edge_specs if edge != remove]
+
+    source_node = nodes_by_id[from_node_id]
+    next_outputs = _outputs_routed_from_node(
+        source_node.outputs,
+        edge_specs,
+        from_node_id,
+    )
+    outputs_changed = source_node.editable and next_outputs != source_node.outputs
+
+    # A new route promotes its source before the route is rendered so every
+    # intermediate document remains valid. Removing a route does the inverse:
+    # first remove it, then demote the source if that was its final route.
+    if add is not None and outputs_changed:
+        promoted = _update_node_outputs(
+            source,
+            document_path,
+            from_node_id,
+            next_outputs,
+            validate_output_bindings=validate_output_bindings,
+            normalize_signatures=False,
+        )
+        if not promoted.ok:
+            return promoted
+        source = promoted.source
+        parsed = _parse_rewrite_source(
+            source,
+            document_path,
+            validate_output_bindings,
+        )
+        if not parsed.ok or not parsed.document:
+            return RewriteResult(source=source, parse_result=parsed)
+        document = parsed.document
 
     lines, newline, final_newline = _split_source(source)
     lines = _strip_graph_lines(source, lines)
-    graph_lines = _render_graph_lines(document.nodes, edge_pairs)
+    graph_lines = _render_graph_lines(document.nodes, edge_specs)
     if graph_lines:
         while lines and lines[-1].strip() == "":
             lines.pop()
@@ -661,12 +668,47 @@ def _rewrite_edges(
             lines.append("")
         lines.extend(graph_lines)
 
-    return _finish_rewrite_with_normalized_signatures(
+    finish = (
+        _finish_rewrite_with_normalized_signatures
+        if normalize_signatures
+        else _finish_rewrite
+    )
+    rewritten = finish(
         lines,
         newline,
         final_newline,
         document_path,
         validate_output_bindings=validate_output_bindings,
+    )
+    if not rewritten.ok or remove is None or not outputs_changed:
+        return rewritten
+
+    return _update_node_outputs(
+        rewritten.source,
+        document_path,
+        from_node_id,
+        next_outputs,
+        validate_output_bindings=validate_output_bindings,
+        normalize_signatures=normalize_signatures,
+    )
+
+
+def _outputs_routed_from_node(
+    current_outputs: tuple[str, ...],
+    edges: list[EdgeSpec],
+    node_id: str,
+) -> tuple[str, ...]:
+    routed_outputs = list(
+        dict.fromkeys(
+            edge[1]
+            for edge in edges
+            if edge[0] == node_id
+        )
+    )
+    routed_set = set(routed_outputs)
+    return tuple(
+        [output for output in current_outputs if output in routed_set]
+        + [output for output in routed_outputs if output not in current_outputs]
     )
 
 
@@ -740,7 +782,11 @@ def _rename_node_function(
         return ValidationIssue(kind="unsupported_python", message=f"Function signature for node '{node_id}' could not be found.", node_id=node_id)
     lines[function_line_number - 1] = _replace_function_def_name(lines[function_line_number - 1], function_name)
     lines = _strip_graph_lines(source, lines)
-    graph_lines = _render_graph_lines_with_names(parsed.document.nodes, [(edge.from_node, edge.to_node) for edge in parsed.document.edges], {node_id: function_name})
+    graph_lines = _render_graph_lines_with_names(
+        parsed.document.nodes,
+        [_document_edge_spec(edge) for edge in parsed.document.edges],
+        {node_id: function_name},
+    )
     _append_graph(lines, graph_lines)
     result = _finish_rewrite(
         lines,
@@ -799,7 +845,10 @@ def _add_node(
             body_code,
         )
     )
-    graph_lines = _render_graph_lines(parsed.document.nodes, [(edge.from_node, edge.to_node) for edge in parsed.document.edges])
+    graph_lines = _render_graph_lines(
+        parsed.document.nodes,
+        [_document_edge_spec(edge) for edge in parsed.document.edges],
+    )
     _append_graph(lines, graph_lines)
     next_metadata = _apply_metadata_fields(metadata, node_id, node_payload)
     result = _finish_rewrite(
@@ -817,6 +866,8 @@ def _delete_node(
     document_path: str | Path,
     node_id: str,
     metadata: dict[str, Any],
+    *,
+    normalize_signatures: bool = True,
 ) -> tuple[str, dict[str, Any]] | ValidationIssue:
     parsed = _parse_source_for_rewrite(source, document_path)
     if not parsed.document:
@@ -835,7 +886,7 @@ def _delete_node(
     _replace_lines(lines, node.source_range.start_line, node.source_range.end_line, [])
     remaining_nodes = tuple(item for item in parsed.document.nodes if item.id != node_id)
     remaining_edges = [
-        (edge.from_node, edge.to_node)
+        _document_edge_spec(edge)
         for edge in parsed.document.edges
         if edge.from_node != node_id and edge.to_node != node_id
     ]
@@ -843,7 +894,12 @@ def _delete_node(
     next_metadata = copy.deepcopy(metadata)
     if isinstance(next_metadata.get("nodes"), dict):
         next_metadata["nodes"].pop(node_id, None)
-    result = _finish_rewrite_with_normalized_signatures(
+    finish = (
+        _finish_rewrite_with_normalized_signatures
+        if normalize_signatures
+        else _finish_rewrite
+    )
+    result = finish(
         _trim_blank_runs(lines),
         newline,
         final_newline,
@@ -944,7 +1000,7 @@ def _render_return_line(outputs: tuple[str, ...], indent: str) -> str:
     return f"{indent}return {{{items}}}"
 
 
-def _render_graph_lines(nodes: tuple[DocumentNode, ...], edges: list[tuple[str, str]]) -> list[str]:
+def _render_graph_lines(nodes: tuple[DocumentNode, ...], edges: list[EdgeSpec]) -> list[str]:
     if not edges:
         return []
 
@@ -954,7 +1010,7 @@ def _render_graph_lines(nodes: tuple[DocumentNode, ...], edges: list[tuple[str, 
 
 def _render_graph_lines_with_names(
     nodes: tuple[DocumentNode, ...],
-    edges: list[tuple[str, str]],
+    edges: list[EdgeSpec],
     overrides: dict[str, str],
 ) -> list[str]:
     if not edges:
@@ -965,21 +1021,30 @@ def _render_graph_lines_with_names(
 
 def _render_graph_lines_for_names(
     nodes: tuple[DocumentNode, ...],
-    edges: list[tuple[str, str]],
+    edges: list[EdgeSpec],
     function_by_id: dict[str, str],
 ) -> list[str]:
     node_order = {node.id: index for index, node in enumerate(nodes)}
-    upstreams_by_to: dict[str, list[str]] = {}
-    for from_node, to_node in edges:
-        upstreams_by_to.setdefault(to_node, [])
-        if from_node not in upstreams_by_to[to_node]:
-            upstreams_by_to[to_node].append(from_node)
+    routes_by_to: dict[str, list[tuple[str, str, str]]] = {}
+    for from_node, from_output, to_node, to_input in edges:
+        routes_by_to.setdefault(to_node, []).append(
+            (from_node, from_output, to_input)
+        )
 
     lines = ["# Rowcall graph"]
-    for to_node in sorted(upstreams_by_to, key=lambda node_id: node_order.get(node_id, 10**9)):
-        upstreams = sorted(upstreams_by_to[to_node], key=lambda node_id: node_order.get(node_id, 10**9))
-        upstream_names = ", ".join(function_by_id[node_id] for node_id in upstreams)
-        lines.append(f"{function_by_id[to_node]}.depends_on({upstream_names})")
+    for to_node in sorted(routes_by_to, key=lambda node_id: node_order.get(node_id, 10**9)):
+        declared_routes = routes_by_to[to_node]
+        routes = [route for route in declared_routes if route[2] == route[1]]
+        routes.extend(route for route in declared_routes if route[2] != route[1])
+        references = []
+        for from_node, from_output, to_input in routes:
+            reference = f"{function_by_id[from_node]}.output({json.dumps(from_output)})"
+            references.append(
+                reference if to_input == from_output else f"{to_input}={reference}"
+            )
+        lines.append(
+            f"{function_by_id[to_node]}.depends_on({', '.join(references)})"
+        )
     return lines
 
 
@@ -1133,7 +1198,7 @@ def _normalize_function_signatures(
     source: str,
     document: ExecutableDocument,
 ) -> str | ValidationIssue:
-    lines, newline, final_newline = _split_source(source)
+    replacements: list[tuple[int, int, str]] = []
     for node in document.nodes:
         parameters = _expected_node_parameters(document, node.id)
         if node.parameters == parameters:
@@ -1148,42 +1213,163 @@ def _normalize_function_signatures(
                 node_id=node.id,
             )
 
-        function_line_number = _function_def_line_number(lines, node)
-        if function_line_number is None:
-            return ValidationIssue(
-                kind="unsupported_python",
-                message=f"Function signature for node '{node.id}' could not be found.",
-                node_id=node.id,
-            )
-        next_line = _replace_function_def_parameters(lines[function_line_number - 1], parameters)
-        if next_line is None:
+        replacement = _function_parameter_replacement(source, node, parameters)
+        if replacement is None:
             return ValidationIssue(
                 kind="unsupported_python",
                 message=f"Function signature for node '{node.id}' could not be rewritten.",
                 node_id=node.id,
             )
-        lines[function_line_number - 1] = next_line
+        replacements.append(replacement)
 
-    return _join_source(lines, newline, final_newline)
+    rewritten = source
+    for start, end, replacement in sorted(replacements, reverse=True):
+        rewritten = f"{rewritten[:start]}{replacement}{rewritten[end:]}"
+    return rewritten
+
+
+def _function_parameter_replacement(
+    source: str,
+    node: DocumentNode,
+    parameters: tuple[str, ...],
+) -> tuple[int, int, str] | None:
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (IndentationError, tokenize.TokenError):
+        return None
+
+    opening: tokenize.TokenInfo | None = None
+    closing: tokenize.TokenInfo | None = None
+    for index, token in enumerate(tokens):
+        if (
+            token.type != tokenize.NAME
+            or token.string != "def"
+            or token.start[0] < node.source_range.start_line
+            or token.start[0] > node.source_range.end_line
+        ):
+            continue
+        name_index = _next_significant_token_index(tokens, index + 1)
+        if name_index is None or tokens[name_index].string != node.function_name:
+            continue
+        opening_index = _next_significant_token_index(tokens, name_index + 1)
+        if opening_index is None or tokens[opening_index].string != "(":
+            return None
+        opening = tokens[opening_index]
+        depth = 0
+        for candidate in tokens[opening_index:]:
+            if candidate.type != tokenize.OP:
+                continue
+            if candidate.string == "(":
+                depth += 1
+            elif candidate.string == ")":
+                depth -= 1
+                if depth == 0:
+                    closing = candidate
+                    break
+        break
+
+    if opening is None or closing is None:
+        return None
+
+    line_offsets = _source_line_offsets(source)
+    start = _source_offset(line_offsets, opening.end)
+    end = _source_offset(line_offsets, closing.start)
+    if start is None or end is None or end < start:
+        return None
+
+    replacement = _render_function_parameters(
+        source,
+        opening,
+        closing,
+        start,
+        end,
+        parameters,
+    )
+    return start, end, replacement
+
+
+def _next_significant_token_index(
+    tokens: list[tokenize.TokenInfo],
+    start: int,
+) -> int | None:
+    ignored = {
+        tokenize.ENCODING,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.COMMENT,
+    }
+    for index in range(start, len(tokens)):
+        if tokens[index].type not in ignored:
+            return index
+    return None
+
+
+def _source_line_offsets(source: str) -> list[int]:
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    return offsets
+
+
+def _source_offset(
+    line_offsets: list[int],
+    position: tuple[int, int],
+) -> int | None:
+    line, column = position
+    if line < 1 or line > len(line_offsets):
+        return None
+    return line_offsets[line - 1] + column
+
+
+def _render_function_parameters(
+    source: str,
+    opening: tokenize.TokenInfo,
+    closing: tokenize.TokenInfo,
+    start: int,
+    end: int,
+    parameters: tuple[str, ...],
+) -> str:
+    if opening.start[0] == closing.start[0]:
+        return ", ".join(parameters)
+
+    newline = "\r\n" if "\r\n" in source else "\n"
+    source_lines = source.splitlines()
+    function_line = source_lines[opening.start[0] - 1]
+    function_indent = function_line[: len(function_line) - len(function_line.lstrip())]
+    parameter_indent = _existing_parameter_indent(
+        source[start:end],
+        function_indent,
+    )
+    if not parameters:
+        return f"{newline}{function_indent}"
+    rendered = newline.join(f"{parameter_indent}{parameter}," for parameter in parameters)
+    return f"{newline}{rendered}{newline}{function_indent}"
+
+
+def _existing_parameter_indent(parameter_source: str, function_indent: str) -> str:
+    for line in parameter_source.splitlines()[1:]:
+        if not line.strip():
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        if len(indent) > len(function_indent):
+            return indent
+    return f"{function_indent}    "
 
 
 def _expected_node_parameters(document: ExecutableDocument, node_id: str) -> tuple[str, ...]:
-    nodes_by_id = {node.id: node for node in document.nodes}
     parameters: list[str] = []
     seen: set[str] = set()
     for edge in document.edges:
         if edge.to_node != node_id:
             continue
-        upstream = nodes_by_id.get(edge.from_node)
-        if upstream is None:
+        if edge.to_input in seen:
             continue
-        for output in upstream.outputs:
-            if output in seen:
-                continue
-            if not output.isidentifier() or keyword.iskeyword(output):
-                continue
-            seen.add(output)
-            parameters.append(output)
+        if not edge.to_input.isidentifier() or keyword.iskeyword(edge.to_input):
+            continue
+        seen.add(edge.to_input)
+        parameters.append(edge.to_input)
     return tuple(parameters)
 
 
@@ -1297,12 +1483,18 @@ def _text_field(operation: dict[str, Any], *names: str) -> str | None:
     return None
 
 
-def _edge_pair(operation: dict[str, Any]) -> tuple[str, str] | None:
+def _edge_spec(operation: dict[str, Any]) -> EdgeSpec | None:
     from_node = _text_field(operation, "fromNode", "from_node", "fromNodeId", "from_node_id")
+    from_output = _text_field(operation, "fromOutput", "from_output")
     to_node = _text_field(operation, "toNode", "to_node", "toNodeId", "to_node_id")
-    if from_node is None or to_node is None:
+    to_input = _text_field(operation, "toInput", "to_input")
+    if from_node is None or from_output is None or to_node is None or to_input is None:
         return None
-    return from_node, to_node
+    return from_node, from_output, to_node, to_input
+
+
+def _document_edge_spec(edge: DocumentEdge) -> EdgeSpec:
+    return edge.from_node, edge.from_output, edge.to_node, edge.to_input
 
 
 def _protected_line_numbers(source: str, nodes: tuple[DocumentNode, ...]) -> set[int]:
@@ -1376,18 +1568,6 @@ def _replace_function_def_name(line: str, function_name: str) -> str:
     prefix, rest = line.split("def ", 1)
     _, suffix = rest.split("(", 1)
     return f"{prefix}def {function_name}({suffix}"
-
-
-def _replace_function_def_parameters(line: str, parameters: tuple[str, ...]) -> str | None:
-    if "def " not in line or "(" not in line or ")" not in line:
-        return None
-    prefix, rest = line.split("def ", 1)
-    function_name, suffix = rest.split("(", 1)
-    close_index = suffix.rfind(")")
-    if close_index < 0:
-        return None
-    after_parameters = suffix[close_index + 1 :]
-    return f"{prefix}def {function_name}({', '.join(parameters)}){after_parameters}"
 
 
 def _function_def_line_number(lines: list[str], node: DocumentNode) -> int | None:

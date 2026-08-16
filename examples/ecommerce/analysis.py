@@ -188,15 +188,18 @@ def retention_risk(customer_facts):
 
 
 # Rowcall graph
-prepare_orders.depends_on(load_orders)
-prepare_customers.depends_on(load_customers)
-prepare_campaigns.depends_on(load_campaigns)
-summarize_support.depends_on(load_support_tickets)
+prepare_orders.depends_on(load_orders.output("orders_raw"))
+prepare_customers.depends_on(load_customers.output("customers_raw"))
+prepare_campaigns.depends_on(load_campaigns.output("campaigns_raw"))
+summarize_support.depends_on(load_support_tickets.output("support_raw"))
 build_customer_facts.depends_on(
-    prepare_orders,
-    prepare_customers,
-    summarize_support,
+    prepare_orders.output("orders"),
+    prepare_customers.output("customers"),
+    summarize_support.output("support_by_customer"),
 )
-campaign_roi.depends_on(build_customer_facts, prepare_campaigns)
-segment_revenue.depends_on(build_customer_facts)
-retention_risk.depends_on(build_customer_facts)
+campaign_roi.depends_on(
+    build_customer_facts.output("customer_facts"),
+    prepare_campaigns.output("campaigns"),
+)
+segment_revenue.depends_on(build_customer_facts.output("customer_facts"))
+retention_risk.depends_on(build_customer_facts.output("customer_facts"))

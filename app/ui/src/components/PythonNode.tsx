@@ -1,5 +1,5 @@
-import { Handle, type NodeProps, NodeToolbar, Position } from "@xyflow/react";
-import { Play, Plus } from "lucide-react";
+import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { Play, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import type {
   NodeRunVisualStatus,
@@ -52,8 +52,12 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
     ? "Run unavailable"
     : "Run this step and required upstream steps fresh";
   const description = data.description?.trim();
+  const hasInboundVariables = data.inputs.length > 0;
   const outputOptionsByName = new Map(
     data.outputOptions.map((option) => [option.name, option]),
+  );
+  const inputTypesByName = new Map(
+    data.inputs.map((input) => [input.name, input.type]),
   );
 
   return (
@@ -71,10 +75,16 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
       ].join(" ")}
     >
       <Handle
+        id="node-input"
         type="target"
-        position={Position.Top}
+        position={Position.Left}
         className="border-2 border-white bg-zinc-500 dark:border-zinc-900 dark:bg-zinc-400"
-        style={{ width: 14, height: 14 }}
+        style={{
+          width: 14,
+          height: 14,
+          top: 25,
+          ...(hasInboundVariables ? { backgroundColor: "#d4d4d8" } : {}),
+        }}
       />
       <div className="cursor-grab border-b border-zinc-200 px-3 py-2 active:cursor-grabbing dark:border-zinc-800">
         <div className="flex items-start justify-between gap-3">
@@ -133,105 +143,114 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
         </div>
       </div>
 
-      <div className="space-y-3 px-3 py-3">
+      <div className="space-y-3 pt-3">
         {description && (
-          <p className="line-clamp-2 min-h-9 text-xs leading-[18px] text-zinc-600 dark:text-zinc-400">
+          <p className="line-clamp-2 min-h-9 px-3 text-xs leading-[18px] text-zinc-600 dark:text-zinc-400">
             {description}
           </p>
         )}
-        <PortList title="Inputs" ports={data.inputs} emptyLabel="none" />
-        <PortList
-          title="Outputs"
-          ports={data.outputs.map((name) => ({
-            name,
-            type: data.outputPreviews[name],
-            missing: outputOptionsByName.get(name)?.source === "missing",
+        <VariableList
+          variables={data.outputOptions.map((option) => ({
+            name: option.name,
+            type: data.outputPreviews[option.name] ??
+              inputTypesByName.get(option.name),
+            exported: data.outputs.includes(option.name),
+            missing: outputOptionsByName.get(option.name)?.source === "missing",
           }))}
-          emptyLabel="none"
-          variant="output"
+          onRemove={data.onOutputsChange && !data.outputsReadOnly
+            ? (name) =>
+              data.onOutputsChange?.(
+                id,
+                data.outputs.filter((output) => output !== name),
+              )
+            : undefined}
         />
       </div>
-
-      <NodeToolbar
-        isVisible={selected}
-        position={Position.Bottom}
-        offset={12}
-      >
-        <div className="flex items-center gap-2 rounded border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-          {data.onAddChild && (
-            <button
-              type="button"
-              aria-label={`Add child node after ${data.label}`}
-              title="Add child node (A)"
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              onClick={() => data.onAddChild?.(id)}
-            >
-              <Plus aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
-            </button>
-          )}
-        </div>
-      </NodeToolbar>
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="border-2 border-white bg-zinc-500 dark:border-zinc-900 dark:bg-zinc-400"
-        style={{ width: 14, height: 14 }}
-      />
     </article>
   );
 }
 
-function PortList({
-  title,
-  ports,
-  emptyLabel,
-  variant = "input",
+function VariableList({
+  variables,
+  onRemove,
 }: {
-  title: string;
-  ports: Array<{ name: string; type?: string; missing?: boolean }>;
-  emptyLabel: string;
-  variant?: "input" | "output";
+  variables: Array<{
+    name: string;
+    type?: string;
+    exported?: boolean;
+    missing?: boolean;
+  }>;
+  onRemove?: (name: string) => void;
 }) {
-  const chipClassName = variant === "output"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-    : "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300";
-
   return (
     <section>
-      <p className="text-[10px] font-medium uppercase leading-none text-zinc-500 dark:text-zinc-400">
-        {title}
+      <p className="px-3 text-[10px] font-medium uppercase leading-none text-zinc-500 dark:text-zinc-400">
+        Variables
       </p>
-      {ports.length === 0
+      {variables.length === 0
         ? (
-          <p className="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">
-            {emptyLabel}
+          <p className="mt-1.5 px-3 text-xs text-zinc-400 dark:text-zinc-500">
+            none
           </p>
         )
         : (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {ports.map((port) => (
-              <span
-                key={port.name}
+          <div className="mt-1.5 border-y border-zinc-200 dark:border-zinc-700">
+            {variables.map((variable) => (
+              <div
+                key={variable.name}
                 className={[
-                  "max-w-full truncate rounded border px-2 py-1 font-mono text-[11px] leading-none",
-                  port.missing
-                    ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                    : chipClassName,
+                  "relative flex min-h-9 items-center justify-between gap-3 border-b px-3 py-2 pr-5 font-mono text-[11px] last:border-b-0",
+                  variable.missing
+                    ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                    : variable.exported
+                    ? "border-zinc-300 bg-zinc-100 text-zinc-950 dark:border-zinc-600 dark:bg-zinc-700/80 dark:text-zinc-50"
+                    : "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-200",
                 ].join(" ")}
-                title={port.missing
-                  ? `${port.name} · declared output not found in code`
-                  : port.type
-                  ? `${port.name} · ${port.type}`
-                  : port.name}
+                title={variable.missing
+                  ? `${variable.name} · routed output not found in code`
+                  : variable.type
+                  ? `${variable.name} · ${variable.type}`
+                  : variable.name}
               >
-                {port.name}
-                {port.type && (
-                  <span className="text-current opacity-60">
-                    {" · "}
-                    {formatPythonType(port.type)}
+                <span className="min-w-0 truncate">{variable.name}</span>
+                {variable.type && (
+                  <span className="shrink-0 text-zinc-400 dark:text-zinc-500">
+                    {formatPythonType(variable.type)}
                   </span>
                 )}
-              </span>
+                {variable.missing && onRemove && (
+                  <button
+                    type="button"
+                    className="nodrag nopan flex h-5 w-5 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-900"
+                    aria-label={`Remove missing output ${variable.name} and its routes`}
+                    title="Remove this missing output and its routes"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemove(variable.name);
+                    }}
+                  >
+                    <X aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <Handle
+                  id={variable.name}
+                  type="source"
+                  position={Position.Right}
+                  className={[
+                    "variable-output-handle border-2 border-white dark:border-zinc-900",
+                    variable.missing
+                      ? "variable-output-handle--missing"
+                      : variable.exported
+                      ? "variable-output-handle--exported"
+                      : "variable-output-handle--available",
+                  ].join(" ")}
+                  style={{
+                    width: 12,
+                    height: 12,
+                    right: 0,
+                  }}
+                />
+              </div>
             ))}
           </div>
         )}

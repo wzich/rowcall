@@ -16,7 +16,6 @@ export type PythonNodeData = {
   editable: boolean;
   runStatus: NodeRunVisualStatus;
   preview?: NodeCanvasPreview;
-  onAddChild?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
@@ -91,9 +90,11 @@ export function toReactFlowGraph(
       },
     })),
     edges: graph.edges.map((edge) => ({
-      id: `${edge.fromNode}->${edge.toNode}`,
+      id: getEdgeId(edge),
       source: edge.fromNode,
+      sourceHandle: edge.fromOutput,
       target: edge.toNode,
+      targetHandle: "node-input",
       type: "default",
       animated: true,
       className: "python-flow-edge",
@@ -108,22 +109,18 @@ function getNodeLabel(node: RuntimeGraph["nodes"][number]): string {
 }
 
 function getNodeInputs(graph: RuntimeGraph, nodeId: string): NodePortPreview[] {
-  const upstreamIds = graph.edges
-    .filter((edge) => edge.toNode === nodeId)
-    .map((edge) => edge.fromNode);
-  const upstreamNodes = upstreamIds.flatMap((upstreamId) => {
-    const node = graph.nodes.find((item) => item.id === upstreamId);
-    return node ? [node] : [];
-  });
   const seen = new Set<string>();
+  return graph.edges
+    .filter((edge) => edge.toNode === nodeId)
+    .flatMap((edge) => {
+      if (seen.has(edge.toInput)) return [];
+      seen.add(edge.toInput);
+      return [{ name: edge.toInput }];
+    });
+}
 
-  return upstreamNodes.flatMap((node) =>
-    node.outputs.flatMap((output) => {
-      if (seen.has(output)) {
-        return [];
-      }
-      seen.add(output);
-      return [{ name: output }];
-    })
-  );
+export function getEdgeId(
+  edge: RuntimeGraph["edges"][number],
+): string {
+  return `${edge.fromNode}.${edge.fromOutput}->${edge.toNode}.${edge.toInput}`;
 }

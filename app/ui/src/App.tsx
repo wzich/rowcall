@@ -24,6 +24,7 @@ import { loadPythonRuntime } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
   coalesceDocumentOperations,
+  deriveRoutedOutputs,
   hasCustomManagedDownstream,
 } from "./documentOperations.ts";
 import {
@@ -34,7 +35,7 @@ import {
   type NodeInspectorBadge,
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
-import { toReactFlowGraph } from "./graph/toReactFlow.ts";
+import { getEdgeId, toReactFlowGraph } from "./graph/toReactFlow.ts";
 import type {
   NodeCanvasPreview,
   NodeRunVisualStatus,
@@ -43,11 +44,9 @@ import {
   type RowcallDocumentV1,
   toRuntimeGraph,
 } from "./graph/documentTypes.ts";
-import {
-  type DirectOutputConflict,
-  getDirectOutputConflictsForConnection,
-} from "./graph/connectionValidation.ts";
+import { getConnectionConflict } from "./graph/connectionValidation.ts";
 import { createSimpleLayout } from "./graph/layout.ts";
+import { detectPureOutputRename } from "./graph/outputRename.ts";
 import {
   functionNameFromDisplayName,
   isValidPythonIdentifier,
@@ -64,7 +63,6 @@ import {
   pythonSyntaxLocationFromOffset,
 } from "./pythonSyntaxError.ts";
 import { classifySaveFailure } from "./saveOutcome.ts";
-import { formatSaveReconciliationNotice } from "./saveReconciliation.ts";
 import {
   canApplyLoadedDocument,
   canEditDocument,
@@ -80,7 +78,6 @@ const documentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
 const successfulRunNoticeMs = 3_000;
-const saveReconciliationNoticeMs = 4_000;
 
 export type ThemeMode = "light" | "dark";
 
@@ -165,9 +162,6 @@ export default function App() {
     "idle" | "saving" | "saved" | "error" | "outcome_unknown"
   >("idle");
   const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
-  const [saveReconciliationNotice, setSaveReconciliationNotice] = useState<
-    string | null
-  >(null);
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
@@ -304,7 +298,6 @@ export default function App() {
       setSaveStatus("idle");
       saveOutcomeUnknownRef.current = false;
       setSaveError(null);
-      setSaveReconciliationNotice(null);
       editGenerationRef.current = 0;
       syncDocumentSourceValue();
     },
@@ -351,7 +344,6 @@ export default function App() {
     }
 
     const operations = pendingOperationsRef.current;
-    const documentBeforeSave = editableDocumentRef.current;
     const baseRevision = baseRevisionRef.current;
     const editGeneration = editGenerationRef.current;
 
@@ -359,21 +351,12 @@ export default function App() {
     saveAttemptGenerationRef.current += 1;
     setSaveStatus("saving");
     setSaveError(null);
-    setSaveReconciliationNotice(null);
 
     const promise = applyDocumentOperations(
       baseRevision,
       operations,
     )
       .then((result) => {
-        setSaveReconciliationNotice(
-          documentBeforeSave
-            ? formatSaveReconciliationNotice(
-              documentBeforeSave,
-              result.document,
-            )
-            : null,
-        );
         setDocumentPath(result.path);
         baseRevisionRef.current = result.document.revision ?? "";
         syncDocumentSourceValue();
@@ -425,15 +408,6 @@ export default function App() {
     flushPromiseRef.current = promise;
     return await promise;
   }, [documentStatusQuery]);
-
-  useEffect(() => {
-    if (!saveReconciliationNotice) return;
-    const timeoutId = setTimeout(
-      () => setSaveReconciliationNotice(null),
-      saveReconciliationNoticeMs,
-    );
-    return () => clearTimeout(timeoutId);
-  }, [saveReconciliationNotice]);
 
   useEffect(() => {
     if (
@@ -799,19 +773,10 @@ export default function App() {
     const nextDocument = {
       ...current,
       nodes: [...current.nodes, node],
-      edges: [
-        ...current.edges,
-        { fromNode: parentNodeId, toNode: node.id },
-      ],
     };
 
     markDocumentEdited();
     queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
-    queueOperation({
-      type: "add_edge",
-      fromNode: parentNodeId,
-      toNode: node.id,
-    });
     setSelectedNodeId(node.id);
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
@@ -822,15 +787,52 @@ export default function App() {
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || node.code === code) return;
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
+    const renamedOutput = detectPureOutputRename(
+      node.code,
+      code,
+      node.outputs,
+      inferAssignableOutputs(node.code),
+      inferAssignableOutputs(code),
+    );
+    const renamedEdges = renamedOutput
+      ? current.edges.filter((edge) =>
+        edge.fromNode === nodeId &&
+        edge.fromOutput === renamedOutput.fromOutput
+      )
+      : [];
+    const nextOutputs = renamedOutput
+      ? node.outputs.map((output) =>
+        output === renamedOutput.fromOutput ? renamedOutput.toOutput : output
+      )
+      : node.outputs;
     const nextDocument = {
       ...current,
       nodes: current.nodes.map((item) =>
-        item.id === nodeId ? { ...item, code, runtimeCode: undefined } : item
+        item.id === nodeId
+          ? { ...item, code, outputs: nextOutputs, runtimeCode: undefined }
+          : item
+      ),
+      edges: current.edges.map((edge) =>
+        renamedEdges.includes(edge)
+          ? { ...edge, fromOutput: renamedOutput!.toOutput }
+          : edge
       ),
     };
 
     markDocumentEdited();
     queueOperation({ type: "update_node_body", nodeId, code });
+    if (renamedOutput) {
+      for (const edge of renamedEdges) {
+        queueOperation({ type: "remove_edge", ...edge });
+      }
+      for (const edge of renamedEdges) {
+        queueOperation({
+          type: "add_edge",
+          ...edge,
+          fromOutput: renamedOutput.toOutput,
+        });
+      }
+    }
     markNodesStale(staleNodeIds);
     commitEditableDocument(nextDocument);
   }, [
@@ -875,15 +877,49 @@ export default function App() {
     if (!node || areStringArraysEqual(node.outputs, outputs)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
+    const removed = node.outputs.filter((output) => !outputs.includes(output));
+    const added = outputs.filter((output) => !node.outputs.includes(output));
+    const renamedEdges = removed.length === 1 && added.length === 1
+      ? current.edges.filter((edge) =>
+        edge.fromNode === nodeId && edge.fromOutput === removed[0]
+      )
+      : [];
+    const removedEdges = renamedEdges.length > 0
+      ? renamedEdges
+      : current.edges.filter((edge) =>
+        edge.fromNode === nodeId && removed.includes(edge.fromOutput)
+      );
+    const nextEdges = current.edges
+      .filter((edge) => !removedEdges.includes(edge))
+      .concat(renamedEdges.map((edge) => ({
+        ...edge,
+        fromOutput: added[0],
+      })));
     const nextDocument = {
       ...current,
       nodes: current.nodes.map((item) =>
         item.id === nodeId ? { ...item, outputs, runtimeCode: undefined } : item
       ),
+      edges: nextEdges,
     };
 
     markDocumentEdited();
-    queueOperation({ type: "update_node_outputs", nodeId, outputs });
+    for (const edge of removedEdges) {
+      queueOperation({ type: "remove_edge", ...edge });
+    }
+    if (removedEdges.length === 0) {
+      // Legacy documents may contain an unconnected declared output. Routes
+      // normally derive this return plumbing, but keep the inline cleanup
+      // action capable of removing that old declaration.
+      queueOperation({ type: "update_node_outputs", nodeId, outputs });
+    }
+    for (const edge of renamedEdges) {
+      queueOperation({
+        type: "add_edge",
+        ...edge,
+        fromOutput: added[0],
+      });
+    }
     markNodesStale(staleNodeIds);
     commitEditableDocument(nextDocument);
   }, [
@@ -1014,40 +1050,72 @@ export default function App() {
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
 
-  const handleConnectNodes = useCallback((fromNode: string, toNode: string) => {
+  const handleConnectNodes = useCallback((
+    fromNode: string,
+    fromOutput: string,
+    toNode: string,
+  ) => {
     const current = editableDocumentRef.current;
     if (!current || saveOutcomeUnknownRef.current) return;
+    const toInput = fromOutput;
+    const sourceNode = current.nodes.find((node) => node.id === fromNode);
+    const targetNode = current.nodes.find((node) => node.id === toNode);
+    const sourceOption = sourceNode && getNodeOutputOptions(
+      sourceNode.parameters ?? [],
+      inferAssignableOutputs(sourceNode.code),
+      sourceNode.outputs,
+    ).find((option) => option.name === fromOutput);
     if (
-      current.edges.some((edge) =>
-        edge.fromNode === fromNode && edge.toNode === toNode
-      )
+      !sourceNode || !sourceOption || sourceOption.source === "missing" ||
+      targetNode?.editable === false || fromNode === toNode
     ) {
       return;
     }
-    const targetNode = current.nodes.find((node) => node.id === toNode);
-    if (targetNode?.editable === false) {
-      return;
-    }
-    const conflicts = getDirectOutputConflictsForConnection(
+    const conflict = getConnectionConflict(
       current,
       fromNode,
+      fromOutput,
       toNode,
+      toInput,
     );
-    if (conflicts.length > 0) {
+    if (conflict === "duplicate") return;
+    if (conflict === "input_bound") {
       setConnectionWarning(
-        createConnectionWarning(current, fromNode, toNode, conflicts),
+        createConnectionWarning(current, fromNode, fromOutput, toNode),
       );
       return;
     }
-    const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), toNode);
+    const promotesOutput = !sourceNode.outputs.includes(fromOutput);
+    const staleNodeIds = Array.from(
+      new Set([
+        ...getNodeAndDescendants(toRuntimeGraph(current), fromNode),
+        ...getNodeAndDescendants(toRuntimeGraph(current), toNode),
+      ]),
+    );
     const nextDocument = {
       ...current,
-      edges: [...current.edges, { fromNode, toNode }],
+      nodes: promotesOutput
+        ? current.nodes.map((node) =>
+          node.id === fromNode
+            ? { ...node, outputs: [...node.outputs, fromOutput] }
+            : node
+        )
+        : current.nodes,
+      edges: [
+        ...current.edges,
+        { fromNode, fromOutput, toNode, toInput },
+      ],
     };
 
     setConnectionWarning(null);
     markDocumentEdited();
-    queueOperation({ type: "add_edge", fromNode, toNode });
+    queueOperation({
+      type: "add_edge",
+      fromNode,
+      fromOutput,
+      toNode,
+      toInput,
+    });
     markNodesStale(staleNodeIds);
     commitEditableDocument(nextDocument);
   }, [
@@ -1072,29 +1140,43 @@ export default function App() {
     if (editableRemovedEdges.length === 0) return [];
     const acceptedEdgeIds = editableRemovedEdges.map((edge) => getEdgeId(edge));
     const runtimeGraph = toRuntimeGraph(current);
-    const staleNodeIdGroups = editableRemovedEdges.map((edge) =>
-      getNodeAndDescendants(runtimeGraph, edge.toNode)
+    const staleNodeIds = Array.from(
+      new Set(editableRemovedEdges.flatMap((edge) => [
+        ...getNodeAndDescendants(runtimeGraph, edge.fromNode),
+        ...getNodeAndDescendants(runtimeGraph, edge.toNode),
+      ])),
     );
+    const nextEdges = current.edges.filter((edge) =>
+      !editableRemovedEdges.some((removedEdge) =>
+        getEdgeId(removedEdge) === getEdgeId(edge)
+      )
+    );
+    const affectedSourceNodeIds = new Set(
+      editableRemovedEdges.map((edge) => edge.fromNode),
+    );
+    const documentWithNextEdges = { ...current, edges: nextEdges };
     const nextDocument = {
       ...current,
-      edges: current.edges.filter((edge) =>
-        !editableRemovedEdges.some((removedEdge) =>
-          getEdgeId(removedEdge) === getEdgeId(edge)
-        )
+      nodes: current.nodes.map((node) =>
+        affectedSourceNodeIds.has(node.id)
+          ? {
+            ...node,
+            outputs: deriveRoutedOutputs(documentWithNextEdges, node.id),
+            runtimeCode: undefined,
+          }
+          : node
       ),
+      edges: nextEdges,
     };
 
     markDocumentEdited();
     for (const edge of editableRemovedEdges) {
       queueOperation({
         type: "remove_edge",
-        fromNode: edge.fromNode,
-        toNode: edge.toNode,
+        ...edge,
       });
     }
-    for (const staleNodeIds of staleNodeIdGroups) {
-      markNodesStale(staleNodeIds);
-    }
+    markNodesStale(staleNodeIds);
     commitEditableDocument(nextDocument);
     return acceptedEdgeIds;
   }, [
@@ -1592,22 +1674,6 @@ export default function App() {
           </button>
         </div>
       )}
-      {saveReconciliationNotice && (
-        <div className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
-          <p className="min-w-0 flex-1">
-            <span className="font-medium">Output contract updated.</span>
-            <span className="ml-2">{saveReconciliationNotice}</span>
-          </p>
-          <button
-            type="button"
-            aria-label="Dismiss output contract update"
-            className="shrink-0 rounded p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900"
-            onClick={() => setSaveReconciliationNotice(null)}
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
-      )}
       {externalDocumentNotice.kind === "dirty" && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-950 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100">
           <p className="min-w-0 flex-1">
@@ -2027,7 +2093,7 @@ function ShortcutHintPanel() {
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         A
       </kbd>
-      <span className="mx-1">add child</span>
+      <span className="mx-1">add nearby node</span>
       <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
         Ctrl+S
       </kbd>
@@ -2537,33 +2603,36 @@ function getNodeInputGroups(
   status: NodeRunVisualStatus;
 }> {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const routesByUpstream = new Map<
+    string,
+    RuntimeGraph["edges"]
+  >();
+  for (const edge of graph.edges) {
+    if (edge.toNode !== nodeId) continue;
+    const routes = routesByUpstream.get(edge.fromNode) ?? [];
+    routes.push(edge);
+    routesByUpstream.set(edge.fromNode, routes);
+  }
 
-  return graph.edges
-    .filter((edge) => edge.toNode === nodeId)
-    .flatMap((edge) => {
-      const upstream = nodesById.get(edge.fromNode);
-      if (!upstream) {
-        return [];
-      }
-
-      const upstreamOutputs = getOutputPreviewsForNode(
-        upstream.id,
-        executionStateByNodeId,
-      );
-      const values = Object.fromEntries(
-        upstream.outputs.map((name) => [
-          name,
-          upstreamOutputs[name] ?? null,
+  return Array.from(routesByUpstream, ([upstreamId, routes]) => {
+    const upstream = nodesById.get(upstreamId);
+    if (!upstream) return null;
+    const upstreamOutputs = getOutputPreviewsForNode(
+      upstream.id,
+      executionStateByNodeId,
+    );
+    return {
+      nodeId: upstream.id,
+      label: getNodeDisplayTitle(upstream),
+      values: Object.fromEntries(
+        routes.map((edge) => [
+          edge.toInput,
+          upstreamOutputs[edge.fromOutput] ?? null,
         ]),
-      );
-
-      return [{
-        nodeId: upstream.id,
-        label: getNodeDisplayTitle(upstream),
-        values,
-        status: nodeRunStatuses[upstream.id] ?? "idle",
-      }];
-    });
+      ),
+      status: nodeRunStatuses[upstream.id] ?? "idle",
+    };
+  }).filter((group) => group !== null);
 }
 
 function getOutputPreviewsForNode(
@@ -2593,37 +2662,20 @@ function getNodeDisplayTitle(node: RuntimeNode): string {
 function createConnectionWarning(
   document: RowcallDocumentV1,
   fromNode: string,
+  fromOutput: string,
   toNode: string,
-  conflicts: DirectOutputConflict[],
 ): ConnectionWarning {
   const labelsById = Object.fromEntries(
     document.nodes.map((node) => [node.id, getNodeDisplayTitle(node)]),
   );
   const sourceLabel = labelsById[fromNode] ?? fromNode;
   const targetLabel = labelsById[toNode] ?? toNode;
-  const conflictDetails = conflicts.map((conflict) => {
-    const ownerLabels = conflict.upstreamNodeIds.map((nodeId) =>
-      labelsById[nodeId] ?? nodeId
-    );
-    return `"${conflict.outputName}" from ${formatList(ownerLabels)}`;
-  });
 
   return {
     title: `Couldn’t connect ${sourceLabel} to ${targetLabel}`,
-    detail: `${
-      formatList(conflictDetails)
-    } would be ambiguous. Rename one of the conflicting outputs before connecting.`,
+    detail:
+      `The input "${fromOutput}" already has a route. Remove that route before connecting a different value.`,
   };
-}
-
-function formatList(items: string[]): string {
-  if (items.length <= 1) {
-    return items[0] ?? "";
-  }
-  if (items.length === 2) {
-    return `${items[0]} and ${items[1]}`;
-  }
-  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
 
 function getNodeLabelsById(graph: RuntimeGraph): Record<string, string> {
@@ -2812,10 +2864,6 @@ function arePositionsNear(
 ): boolean {
   return Math.abs(first.x - second.x) <= tolerance &&
     Math.abs(first.y - second.y) <= tolerance;
-}
-
-function getEdgeId(edge: { fromNode: string; toNode: string }): string {
-  return `${edge.fromNode}->${edge.toNode}`;
 }
 
 function getNodeAndDescendants(graph: RuntimeGraph, nodeId: string): string[] {

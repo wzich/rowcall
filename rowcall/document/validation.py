@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import keyword
-from collections import defaultdict
 
 from .models import DocumentEdge, ExecutableDocument, ValidationIssue, ValidationResult
 
 
-def validate_document(document: ExecutableDocument) -> ValidationResult:
+def validate_document(
+    document: ExecutableDocument,
+    *,
+    validate_parameter_bindings: bool = True,
+) -> ValidationResult:
     issues: list[ValidationIssue] = []
     _validate_duplicate_node_ids(document, issues)
     _validate_duplicate_function_names(document, issues)
@@ -16,22 +19,27 @@ def validate_document(document: ExecutableDocument) -> ValidationResult:
     _validate_edge_endpoints(document, issues)
     _validate_duplicate_edges(document, issues)
     _validate_cycles(document, issues)
-    _validate_conflicting_upstream_outputs(document, issues)
-    _validate_node_parameters_satisfied(document, issues)
+    _validate_edge_bindings(document, issues)
+    if validate_parameter_bindings:
+        _validate_node_parameters_satisfied(document, issues)
     return ValidationResult(ok=len(issues) == 0, issues=tuple(issues))
 
 
 def build_downstream_adjacency(document: ExecutableDocument) -> dict[str, list[str]]:
     adjacency = {node.id: [] for node in document.nodes}
     for edge in document.edges:
-        adjacency.setdefault(edge.from_node, []).append(edge.to_node)
+        children = adjacency.setdefault(edge.from_node, [])
+        if edge.to_node not in children:
+            children.append(edge.to_node)
     return adjacency
 
 
 def build_upstream_adjacency(document: ExecutableDocument) -> dict[str, list[str]]:
     adjacency = {node.id: [] for node in document.nodes}
     for edge in document.edges:
-        adjacency.setdefault(edge.to_node, []).append(edge.from_node)
+        parents = adjacency.setdefault(edge.to_node, [])
+        if edge.from_node not in parents:
+            parents.append(edge.from_node)
     return adjacency
 
 
@@ -132,14 +140,17 @@ def _validate_node_metadata(document: ExecutableDocument, issues: list[Validatio
             seen_outputs.add(output)
 
 def _validate_duplicate_edges(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for index, edge in enumerate(document.edges):
-        key = (edge.from_node, edge.to_node)
+        key = (edge.from_node, edge.from_output, edge.to_node, edge.to_input)
         if key in seen:
             issues.append(
                 ValidationIssue(
                     kind="duplicate_edge",
-                    message=f"Edge from '{edge.from_node}' to '{edge.to_node}' is duplicated",
+                    message=(
+                        f"Route from '{edge.from_node}.{edge.from_output}' to "
+                        f"'{edge.to_node}.{edge.to_input}' is duplicated"
+                    ),
                     edge_index=index,
                     path=f"edges[{index}]",
                 )
@@ -193,39 +204,69 @@ def _validate_cycles(document: ExecutableDocument, issues: list[ValidationIssue]
             return
 
 
-def _validate_conflicting_upstream_outputs(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
-    upstream = build_upstream_adjacency(document)
-    outputs_by_node = {node.id: node.outputs for node in document.nodes}
-    for node in document.nodes:
-        owners_by_output: dict[str, list[str]] = defaultdict(list)
-        for parent_id in upstream.get(node.id, []):
-            for output in outputs_by_node.get(parent_id, ()):
-                owners_by_output[output].append(parent_id)
-        conflicts = [name for name, owners in owners_by_output.items() if len(owners) > 1]
-        if conflicts:
+def _validate_edge_bindings(document: ExecutableDocument, issues: list[ValidationIssue]) -> None:
+    outputs_by_node = {node.id: set(node.outputs) for node in document.nodes}
+    claimed_inputs: set[tuple[str, str]] = set()
+    for index, edge in enumerate(document.edges):
+        if (
+            not edge.to_input.isidentifier()
+            or keyword.iskeyword(edge.to_input)
+            or edge.to_input == "display"
+            or edge.to_input.startswith("__rowcall_")
+        ):
             issues.append(
                 ValidationIssue(
-                    kind="conflicting_outputs",
-                    message=f"Node '{node.id}' has conflicting upstream outputs: {', '.join(conflicts)}",
-                    node_id=node.id,
+                    kind="invalid_input",
+                    message=(
+                        f"Route input '{edge.to_input}' on node "
+                        f"'{edge.to_node}' is not a supported Python parameter name"
+                    ),
+                    edge_index=index,
+                    node_id=edge.to_node,
+                    field="toInput",
+                    path=f"edges[{index}].toInput",
                 )
             )
+        if edge.from_node in outputs_by_node and edge.from_output not in outputs_by_node[edge.from_node]:
+            issues.append(
+                ValidationIssue(
+                    kind="missing_output_reference",
+                    message=(
+                        f"Route references undeclared output "
+                        f"'{edge.from_node}.{edge.from_output}'"
+                    ),
+                    edge_index=index,
+                    node_id=edge.from_node,
+                    field="fromOutput",
+                    path=f"edges[{index}].fromOutput",
+                )
+            )
+        key = (edge.to_node, edge.to_input)
+        if key in claimed_inputs:
+            issues.append(
+                ValidationIssue(
+                    kind="conflicting_input",
+                    message=(
+                        f"Input '{edge.to_input}' on node '{edge.to_node}' is "
+                        "already bound by another route"
+                    ),
+                    edge_index=index,
+                    node_id=edge.to_node,
+                    field="toInput",
+                    path=f"edges[{index}].toInput",
+                )
+            )
+        claimed_inputs.add(key)
 
 
 def _validate_node_parameters_satisfied(
     document: ExecutableDocument,
     issues: list[ValidationIssue],
 ) -> None:
-    upstream = build_upstream_adjacency(document)
-    outputs_by_node = {node.id: node.outputs for node in document.nodes}
-    node_ids = set(outputs_by_node)
-
     for node in document.nodes:
-        available_inputs: set[str] = set()
-        for parent_id in upstream.get(node.id, []):
-            if parent_id not in node_ids:
-                continue
-            available_inputs.update(outputs_by_node[parent_id])
+        available_inputs = {
+            edge.to_input for edge in document.edges if edge.to_node == node.id
+        }
 
         missing_parameters = [
             parameter

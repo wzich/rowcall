@@ -56,7 +56,7 @@ function helloSource(): string {
     "    y = x + 1",
     '    return {"y": y}',
     "",
-    "b.depends_on(a)",
+    'b.depends_on(a.output("x"))',
     "",
   ].join("\n");
 }
@@ -75,7 +75,7 @@ function targetSource(value: number): string {
     "    result = input_value + 2",
     '    return {"result": result}',
     "",
-    "single.depends_on(root)",
+    'single.depends_on(root.output("input_value"))',
     "",
   ].join("\n");
 }
@@ -251,7 +251,7 @@ sourceRuntimeTest(
       "    y = x + 1",
       '    return {"y": y}',
       "",
-      "b.depends_on(a)",
+      'b.depends_on(a.output("x"))',
       "",
     ].join("\n");
 

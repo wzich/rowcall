@@ -49,19 +49,14 @@ export function toRuntimeGraph(document: RowcallDocumentV1): RuntimeGraph {
 function getDirectInputNamesByNodeId(
   document: RowcallDocumentV1,
 ): Map<string, string[]> {
-  const nodesById = new Map(document.nodes.map((node) => [node.id, node]));
   const inputsByNodeId = new Map<string, string[]>(
     document.nodes.map((node) => [node.id, []]),
   );
 
   for (const edge of document.edges) {
-    const upstream = nodesById.get(edge.fromNode);
     const inputs = inputsByNodeId.get(edge.toNode);
-    if (!upstream || !inputs) continue;
-
-    for (const output of upstream.outputs) {
-      inputs.push(output);
-    }
+    if (!inputs || inputs.includes(edge.toInput)) continue;
+    inputs.push(edge.toInput);
   }
 
   return inputsByNodeId;

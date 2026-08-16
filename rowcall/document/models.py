@@ -125,11 +125,18 @@ class DocumentNode:
 @dataclass(frozen=True)
 class DocumentEdge:
     from_node: str
+    from_output: str
     to_node: str
+    to_input: str
     source_range: SourceRange | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {"fromNode": self.from_node, "toNode": self.to_node}
+        result = {
+            "fromNode": self.from_node,
+            "fromOutput": self.from_output,
+            "toNode": self.to_node,
+            "toInput": self.to_input,
+        }
         if self.source_range is not None:
             result["sourceRange"] = self.source_range.to_dict()
         return result
@@ -157,7 +164,12 @@ class ExecutableDocument:
                 for node in self.nodes
             ],
             "edges": [
-                {"fromNode": edge.from_node, "toNode": edge.to_node}
+                {
+                    "fromNode": edge.from_node,
+                    "fromOutput": edge.from_output,
+                    "toNode": edge.to_node,
+                    "toInput": edge.to_input,
+                }
                 for edge in self.edges
             ],
         }
@@ -180,7 +192,12 @@ class ExecutableDocument:
             "globalsCode": self.globals_code,
             "nodes": [node.to_app_dict(self.globals_code) for node in self.nodes],
             "edges": [
-                {"fromNode": edge.from_node, "toNode": edge.to_node}
+                {
+                    "fromNode": edge.from_node,
+                    "fromOutput": edge.from_output,
+                    "toNode": edge.to_node,
+                    "toInput": edge.to_input,
+                }
                 for edge in self.edges
             ],
             "readOnly": False,

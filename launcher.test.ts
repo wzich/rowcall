@@ -494,7 +494,9 @@ Deno.test({
     assertEquals(source.includes("# Rowcall documents"), false);
     assertEquals(source.includes("# Help: rowcall help format"), false);
     assertEquals(
-      source.includes("shout_message.depends_on(load_message)"),
+      source.includes(
+        'shout_message.depends_on(load_message.output("message"))',
+      ),
       true,
     );
     assertEquals(

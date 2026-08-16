@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from rowcall.document import (
+    DocumentEdge,
     DocumentNode,
     ExecutableDocument,
     RunPlan,
@@ -498,7 +499,12 @@ def execute_plan(
                     "dependsOn": list(step.depends_on),
                 }
             )
-        inputs, input_warnings = build_inputs_for_step(step.depends_on, outputs_by_node, root_inputs)
+        inputs, input_warnings = build_inputs_for_step(
+            node_id,
+            document.edges,
+            outputs_by_node,
+            root_inputs,
+        )
         result = execute_node(
             node,
             globals_scope,
@@ -645,16 +651,19 @@ def build_document_globals(
 
 
 def build_inputs_for_step(
-    depends_on: tuple[str, ...],
+    node_id: str,
+    edges: tuple[DocumentEdge, ...],
     outputs_by_node: dict[str, dict[str, Any]],
     root_inputs: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    if not depends_on:
+    incoming = [edge for edge in edges if edge.to_node == node_id]
+    if not incoming:
         raw_inputs = dict(root_inputs or {})
     else:
-        raw_inputs = {}
-        for dependency in depends_on:
-            raw_inputs.update(outputs_by_node[dependency])
+        raw_inputs = {
+            edge.to_input: outputs_by_node[edge.from_node][edge.from_output]
+            for edge in incoming
+        }
 
     scoped_inputs: dict[str, Any] = {}
     warnings: list[str] = []
