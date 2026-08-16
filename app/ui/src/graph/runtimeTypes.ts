@@ -17,7 +17,9 @@ export type RuntimeNode = {
 
 export type RuntimeEdge = {
   fromNode: string;
+  fromOutput: string;
   toNode: string;
+  toInput: string;
 };
 
 export type RuntimeGraph = {

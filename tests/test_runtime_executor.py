@@ -357,7 +357,7 @@ def world(message):
     text = message + " world"
     return {"text": text}
 
-world.depends_on(hello)
+world.depends_on(hello.output("message"))
 """.lstrip()
 
         result = run_source(source, Path("/tmp/hello.py"))
@@ -369,6 +369,38 @@ world.depends_on(hello)
             "hello world",
         )
         json.dumps(result)
+
+    def test_routes_only_selected_train_test_outputs(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="split", outputs=["train", "test"])
+def split_data():
+    train = [1, 2]
+    test = [10]
+    return {"train": train, "test": test}
+
+@node(id="fit", outputs=["model"])
+def fit_model(train):
+    model = sum(train)
+    return {"model": model}
+
+@node(id="evaluate", outputs=["score"])
+def evaluate(test, model):
+    score = sum(test) + model
+    return {"score": score}
+
+fit_model.depends_on(split_data.output("train"))
+evaluate.depends_on(split_data.output("test"), fit_model.output("model"))
+""".lstrip()
+
+        result = run_source(source, Path("/tmp/train_test.py"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["finalOutputsByNode"]["evaluate"]["score"]["jsonValue"],
+            13,
+        )
 
     def test_target_run_by_node_id_and_function_name(self) -> None:
         source = """
@@ -389,8 +421,8 @@ def third(y):
     z = y + 1
     return {"z": z}
 
-second.depends_on(first)
-third.depends_on(second)
+second.depends_on(first.output("x"))
+third.depends_on(second.output("y"))
 """.lstrip()
 
         by_id = run_source(source, Path("/tmp/target.py"), target="b")
@@ -462,7 +494,7 @@ def second(x):
     y = x + 1
     return {"y": y}
 
-second.depends_on(first)
+second.depends_on(first.output("x"))
 """.lstrip()
             )
 

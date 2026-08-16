@@ -54,6 +54,6 @@ def render_summary(summary):
 
 
 # Rowcall graph
-prepare_orders.depends_on(load_orders)
-summarize_by_region.depends_on(prepare_orders)
-render_summary.depends_on(summarize_by_region)
+prepare_orders.depends_on(load_orders.output("orders_raw"))
+summarize_by_region.depends_on(prepare_orders.output("orders"))
+render_summary.depends_on(summarize_by_region.output("summary"))

@@ -492,7 +492,9 @@ Deno.test({
     const source = await Deno.readTextFile(path);
     assertEquals(source.includes("from rowcall import node"), true);
     assertEquals(
-      source.includes("shout_message.depends_on(load_message)"),
+      source.includes(
+        'shout_message.depends_on(load_message.output("message"))',
+      ),
       true,
     );
     assertEquals(

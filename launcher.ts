@@ -113,7 +113,7 @@ def shout_message(message):
     return {"shouted": shouted}
 
 
-shout_message.depends_on(load_message)
+shout_message.depends_on(load_message.output("message"))
 `;
 
 const defaultGitignore = `.venv/
@@ -169,7 +169,7 @@ def summarize_orders(orders):
     return {"summary": summary}
 
 
-summarize_orders.depends_on(load_orders)
+summarize_orders.depends_on(load_orders.output("orders"))
 `;
 
 const exampleOrdersCsv = `order_id,category,amount
@@ -254,7 +254,7 @@ Example:
       display(total, label="Total")
       return {"total": total}
 
-  total_numbers.depends_on(load_numbers)
+  total_numbers.depends_on(load_numbers.output("numbers"))
 
 Return requirements:
   - Use exactly one return statement, last in the node function.
@@ -277,7 +277,7 @@ Valid:
   total = sum(numbers)
   return {"total": total}
 
-Edges are explicit: depends_on says which upstream nodes may provide inputs.
+Edges are explicit: depends_on routes named upstream outputs into node inputs.
 Function parameters consume upstream outputs by name. Run rowcall validate
 <path> after every edit to check returns, IDs, outputs, edges, and
 parameter binding.

@@ -14,4 +14,4 @@ def shout_message(message):
 
 
 # Rowcall graph
-shout_message.depends_on(read_message)
+shout_message.depends_on(read_message.output("message"))

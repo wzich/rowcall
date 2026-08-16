@@ -35,11 +35,11 @@ fresh Python namespace, so normal variables do not persist across Nodes unless
 they are declared outputs and flow through Edges. A Node can access:
 
 - variables it defines in its own code
-- variables made available from directly connected upstream Nodes
+- named values routed from directly connected upstream Nodes
 - top-level document globals, imports, and helpers evaluated once for the run
 
 In source-backed Rowcall documents, every node function parameter must match a
-Declared Output from a direct upstream Node. Root nodes cannot declare
+target input named by a direct incoming route. Root nodes cannot declare
 parameters. Node functions may use only the `@node(...)` decorator; additional
 Python decorators are rejected because the strict runtime owns node invocation.
 `from rowcall import ...` declarations may only import `node`, and may not use
@@ -93,17 +93,27 @@ base64; the public CLI omits those bytes and exposes only image metadata.
 
 ### Edge
 
-An Edge is a one-way connection between two Nodes. An Edge does not connect one
-variable to another variable. It connects one Node to another Node.
+An Edge is a one-way route from one stable named output to one downstream input.
+The document stores `fromNode`, `fromOutput`, `toNode`, and `toInput` for every
+route. Creating the first route from a source variable promotes it into the
+generated output contract; deleting its final route removes it from that
+contract. Runtime values and dictionary members never become graph nodes.
 
-All Declared Outputs from the upstream Node are made available to the downstream
-Node as variables in its execution scope.
+The common same-name form binds the selected output to an input of the same
+name:
 
-If a Node receives inputs from multiple upstream Nodes, all Declared Outputs
-from those upstream Nodes are flattened into the downstream Node's scope.
+```python
+fit_model.depends_on(split_data.output("train"))
+```
 
-If two upstream Nodes would provide the same variable name to the same
-downstream Node, that is a validation error.
+An optional keyword alias preserves a different stable downstream input name:
+
+```python
+fit_model.depends_on(training_data=split_data.output("train"))
+```
+
+Multiple routes may connect the same node pair, and one output may fan out to
+multiple downstream nodes. A downstream input may have only one incoming route.
 
 ### Run
 
@@ -151,16 +161,16 @@ run endpoints receive `invalid_request` instead of having those inputs ignored.
 
 The browser-facing write API applies operation batches rather than replacing a
 whole document projection. `POST /document/operations` accepts a base revision
-and ordered operations such as node body/output/view updates, node/function
-additions and deletions, edge changes, globals edits, and sidecar metadata
-changes. The request has no idempotency key and must not be replayed after an
-uncertain response; reload the document first. The server rejects stale base
-revisions, calls the Python runtime worker's `apply_operations` operation to
-rewrite source, writes the returned Python source and `.rowcall.json` metadata,
-and reloads the canonical document response. Graph and output operations
-normalize standard editor-authored downstream function signatures to match
-direct upstream outputs. Documents with unsupported return structures fail
-validation before an operation batch can be applied.
+and ordered operations such as node body/output updates, node/function additions
+and deletions, edge changes, globals edits, and sidecar metadata changes. The
+request has no idempotency key and must not be replayed after an uncertain
+response; reload the document first. The server rejects stale base revisions,
+calls the Python runtime worker's `apply_operations` operation to rewrite
+source, writes the returned Python source and `.rowcall.json` metadata, and
+reloads the canonical document response. Graph and output operations normalize
+standard editor-authored downstream function signatures to match routed target
+input names. Documents with unsupported return structures fail validation before
+an operation batch can be applied.
 
 External `GET /document` and `GET /document/status` reads are ordered after all
 document operations already accepted by the server. An explicit reload after an
@@ -266,14 +276,14 @@ These are errors that can be detected from the Graph structure before execution:
 - duplicate Node IDs
 - Edges that reference missing Nodes
 - cycles in the Graph
-- conflicting variable names from multiple upstream Nodes into the same
-  downstream Node
+- routes whose named source variable is unavailable
+- multiple routes that claim the same downstream input
 
 ### Runtime Errors
 
 These are errors that can only be detected while executing Node code:
 
-- a Declared Output name does not exist after the Node finishes executing
+- a routed output name does not exist after the Node finishes executing
 - the Python process exits with an error
 
 If an input value cannot be copied into a downstream Node's namespace, the

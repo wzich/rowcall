@@ -6,7 +6,6 @@ import ast
 import hashlib
 import textwrap
 from pathlib import Path
-from typing import Any
 
 from .models import (
     DocumentEdge,
@@ -40,14 +39,24 @@ def parse_source(
     source: str,
     document_path: str | Path,
 ) -> ParseResult:
-    return _parse_source(source, document_path, validate_output_bindings=True)
+    # Keep a declared output parseable while its local assignment is missing so
+    # the graph can show and repair the broken route without blocking editing.
+    return _parse_source(source, document_path, validate_output_bindings=False)
 
 
 def _parse_source_for_rewrite(
     source: str,
     document_path: str | Path,
 ) -> ParseResult:
-    return _parse_source(source, document_path, validate_output_bindings=False)
+    # Operation batches may temporarily remove a route before adding its
+    # replacement. Keep that intermediate source editable and validate the
+    # final parameter bindings after the complete batch is applied.
+    return _parse_source(
+        source,
+        document_path,
+        validate_output_bindings=False,
+        validate_parameter_bindings=False,
+    )
 
 
 def _parse_source(
@@ -55,6 +64,7 @@ def _parse_source(
     document_path: str | Path,
     *,
     validate_output_bindings: bool,
+    validate_parameter_bindings: bool = True,
 ) -> ParseResult:
     path = Path(document_path).expanduser().resolve()
     try:
@@ -103,7 +113,10 @@ def _parse_source(
         nodes=nodes,
         edges=tuple(edges),
     )
-    validation = validate_document(document)
+    validation = validate_document(
+        document,
+        validate_parameter_bindings=validate_parameter_bindings,
+    )
     all_issues = tuple([*issues, *validation.issues])
     document = ExecutableDocument(
         path=document.path,
@@ -838,7 +851,10 @@ def _decode_edges(
             issues.append(
                 ValidationIssue(
                     kind="unsupported_python",
-                    message="depends_on declarations must be top-level child.depends_on(parent, ...) calls",
+                    message=(
+                        "depends_on declarations must be top-level "
+                        "child.depends_on(parent.output(\"name\"), ...) calls"
+                    ),
                     path=_statement_path(statement),
                 )
             )
@@ -856,17 +872,7 @@ def _decode_edges(
             )
             continue
 
-        if call.keywords:
-            issues.append(
-                ValidationIssue(
-                    kind="unsupported_python",
-                    message="depends_on declarations may not use keyword arguments",
-                    node_id=downstream_id,
-                    path=_statement_path(statement),
-                )
-            )
-
-        if not call.args:
+        if not call.args and not call.keywords:
             issues.append(
                 ValidationIssue(
                     kind="unsupported_python",
@@ -876,23 +882,45 @@ def _decode_edges(
                 )
             )
 
-        for argument in call.args:
-            if not isinstance(argument, ast.Name):
+        bindings: list[tuple[str | None, ast.AST]] = [
+            (None, argument) for argument in call.args
+        ]
+        bindings.extend((keyword.arg, keyword.value) for keyword in call.keywords)
+
+        for target_input, argument in bindings:
+            if target_input is None and any(
+                keyword.value is argument and keyword.arg is None
+                for keyword in call.keywords
+            ):
                 issues.append(
                     ValidationIssue(
                         kind="unsupported_python",
-                        message="depends_on arguments must be node function names",
+                        message="depends_on declarations may not use **kwargs",
                         node_id=downstream_id,
                         path=_path_for(argument.lineno, argument.col_offset + 1),
                     )
                 )
                 continue
-            upstream_id = ids_by_function.get(argument.id)
+
+            output_reference = _decode_output_reference(argument)
+            if output_reference is None:
+                issues.append(
+                    ValidationIssue(
+                        kind="unsupported_python",
+                        message='depends_on values must be node.output("name") references',
+                        node_id=downstream_id,
+                        path=_path_for(argument.lineno, argument.col_offset + 1),
+                    )
+                )
+                continue
+
+            upstream_name, from_output = output_reference
+            upstream_id = ids_by_function.get(upstream_name)
             if upstream_id is None:
                 issues.append(
                     ValidationIssue(
                         kind="missing_node_reference",
-                        message=f"Edge references nonexistent upstream node {argument.id}",
+                        message=f"Edge references nonexistent upstream node {upstream_name}",
                         node_id=downstream_id,
                         path=_path_for(argument.lineno, argument.col_offset + 1),
                     )
@@ -902,12 +930,30 @@ def _decode_edges(
             edges.append(
                 DocumentEdge(
                     from_node=upstream_id,
+                    from_output=from_output,
                     to_node=downstream_id,
+                    to_input=target_input or from_output,
                     source_range=_range_for(statement),
                 )
             )
 
     return edges
+
+
+def _decode_output_reference(value: ast.AST) -> tuple[str, str] | None:
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "output"
+        and isinstance(value.func.value, ast.Name)
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        return None
+    output_name = _literal_string(value.args[0])
+    if output_name is None:
+        return None
+    return value.func.value.id, output_name
 
 
 def _looks_like_depends_on_call(value: ast.AST | None) -> bool:

@@ -14,6 +14,34 @@ import {
   runSourceSingleNode,
   shutdownSourceRuntimeSession,
 } from "./executor.ts";
+import {
+  decodeDocumentOperationsRequest,
+  decodeRowcallDocument,
+} from "./document.ts";
+
+Deno.test("document gateways preserve named route fields", () => {
+  const edge = {
+    fromNode: "split",
+    fromOutput: "train",
+    toNode: "fit",
+    toInput: "training_data",
+  };
+  const decodedDocument = decodeRowcallDocument({
+    version: 1,
+    nodes: [],
+    edges: [edge],
+  });
+  const decodedOperations = decodeDocumentOperationsRequest({
+    baseRevision: "revision",
+    operations: [{ type: "add_edge", ...edge }],
+  });
+
+  assertEquals(decodedDocument.ok && decodedDocument.document.edges, [edge]);
+  assertEquals(
+    decodedOperations.ok && decodedOperations.request.operations,
+    [{ type: "add_edge", ...edge }],
+  );
+});
 
 Deno.test("post-commit inspection failures report an unknown save outcome", () => {
   const result = postCommitInspectionResult({
@@ -51,7 +79,12 @@ Deno.test("loadPythonDocument decodes function-shaped node document", async () =
     "shout_message",
   ]);
   assertEquals(decoded.document.edges, [
-    { fromNode: "n_load", toNode: "n_shout" },
+    {
+      fromNode: "n_load",
+      fromOutput: "message",
+      toNode: "n_shout",
+      toInput: "message",
+    },
   ]);
   assertEquals(
     decoded.document.nodes[1].code,
@@ -119,7 +152,7 @@ Deno.test("edited Python document nodes execute with document globals", async ()
       "    y = x + GLOBAL_OFFSET",
       '    return {"y": y}',
       "",
-      "add_offset.depends_on(load_x)",
+      'add_offset.depends_on(load_x.output("x"))',
       "",
     ].join("\n"),
   );
@@ -153,7 +186,7 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
 });
 
-Deno.test("saving a body edit removes declarations that are no longer locally bound", async () => {
+Deno.test("saving a body edit preserves temporarily missing outputs", async () => {
   const directory = await Deno.makeTempDir();
   const documentPath = `${directory}/stale_output.py`;
 
@@ -188,17 +221,17 @@ Deno.test("saving a body edit removes declarations that are no longer locally bo
     throw new Error(edited.issues.map((issue) => issue.message).join("; "));
   }
 
-  assertEquals(edited.document.nodes[0].outputs, []);
+  assertEquals(edited.document.nodes[0].outputs, ["message"]);
   assertEquals(edited.document.nodes[0].code, "answer = 42");
   assertEquals(
     await Deno.readTextFile(documentPath),
     [
       "from rowcall import node",
       "",
-      '@node(id="n_start", outputs=[])',
+      '@node(id="n_start", outputs=["message"])',
       "def start():",
       "    answer = 42",
-      "    return {}",
+      '    return {"message": message}',
       "",
     ].join("\n"),
   );
@@ -224,7 +257,7 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
       '    return {"prepared": prepared}',
       "",
       "# Rowcall graph",
-      "prepare_trips.depends_on(load_trips)",
+      'prepare_trips.depends_on(load_trips.output("trips"))',
       "",
     ].join("\n"),
   );
@@ -687,7 +720,7 @@ Deno.test("applyPythonDocumentOperations removes deleted node incident edges", a
       '    return {"y": y}',
       "",
       "# Rowcall graph",
-      "make_y.depends_on(make_x)",
+      'make_y.depends_on(make_x.output("x"))',
       "",
     ].join("\n"),
   );

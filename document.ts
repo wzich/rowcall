@@ -47,8 +47,20 @@ export type DocumentOperation =
   | { type: "rename_node_function"; nodeId: string; functionName: string }
   | { type: "add_node"; node: DocumentOperationNode }
   | { type: "delete_node"; nodeId: string }
-  | { type: "add_edge"; fromNode: string; toNode: string }
-  | { type: "remove_edge"; fromNode: string; toNode: string }
+  | {
+    type: "add_edge";
+    fromNode: string;
+    fromOutput: string;
+    toNode: string;
+    toInput: string;
+  }
+  | {
+    type: "remove_edge";
+    fromNode: string;
+    fromOutput: string;
+    toNode: string;
+    toInput: string;
+  }
   | { type: "move_node"; nodeId: string; position: GraphPosition }
   | { type: "update_node_title"; nodeId: string; title: string }
   | { type: "update_node_description"; nodeId: string; description: string };
@@ -216,10 +228,23 @@ function decodeDocumentOperation(
         `${path}.fromNode`,
         issues,
       );
+      const fromOutput = requiredString(
+        record,
+        "fromOutput",
+        `${path}.fromOutput`,
+        issues,
+      );
       const toNode = requiredString(record, "toNode", `${path}.toNode`, issues);
-      return fromNode === null || toNode === null
+      const toInput = requiredString(
+        record,
+        "toInput",
+        `${path}.toInput`,
+        issues,
+      );
+      return fromNode === null || fromOutput === null || toNode === null ||
+          toInput === null
         ? null
-        : { type, fromNode, toNode };
+        : { type, fromNode, fromOutput, toNode, toInput };
     }
     case "move_node": {
       const nodeId = requiredString(record, "nodeId", `${path}.nodeId`, issues);
@@ -791,7 +816,9 @@ function decodeDocumentEdge(
   }
 
   const fromNode = record["fromNode"];
+  const fromOutput = record["fromOutput"];
   const toNode = record["toNode"];
+  const toInput = record["toInput"];
   let ok = true;
 
   if (typeof fromNode !== "string") {
@@ -816,9 +843,36 @@ function decodeDocumentEdge(
     ok = false;
   }
 
+  if (typeof fromOutput !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Edge fromOutput must be a string",
+      field: "fromOutput",
+      edgeIndex: index,
+      path: `edges[${index}].fromOutput`,
+    });
+    ok = false;
+  }
+
+  if (typeof toInput !== "string") {
+    issues.push({
+      kind: "wrong_type",
+      message: "Edge toInput must be a string",
+      field: "toInput",
+      edgeIndex: index,
+      path: `edges[${index}].toInput`,
+    });
+    ok = false;
+  }
+
   if (!ok) {
     return null;
   }
 
-  return { fromNode: fromNode as string, toNode: toNode as string };
+  return {
+    fromNode: fromNode as string,
+    fromOutput: fromOutput as string,
+    toNode: toNode as string,
+    toInput: toInput as string,
+  };
 }

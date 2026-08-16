@@ -52,8 +52,8 @@ self-documenting.
 
 ### The Graph
 
-Nodes connect to each other by wiring one node to another node. All declared
-outputs from an upstream node become available to the downstream node. The
+Nodes connect by routing a particular stable named output to a downstream node.
+The selected value becomes a same-named downstream input by default. The
 resulting directed graph is the program. Execution order is determined by the
 graph structure, not by the order nodes were created or where they sit on the
 canvas.
@@ -62,17 +62,18 @@ canvas.
 
 Any node can have multiple downstream nodes connected to it. This is how you
 explore two approaches from the same starting point — fork the graph. Both
-branches receive the same upstream outputs as inputs. Neither branch affects the
-other.
+branches receive the explicitly routed upstream values as inputs. Neither branch
+affects the other.
 
-### Explicit Outputs
+### Routed Outputs
 
-When a node runs, its declared outputs are captured by the runtime. During a
-run, downstream nodes receive copies of those Python objects rather than
-JSON-serialized values. Runtime responses expose JSON-safe previews of outputs,
-such as name, Python type, `repr`, and an optional small `jsonValue` for plain
-JSON-compatible values, rather than attempting to send arbitrary Python objects
-to the browser. The contract between nodes remains explicit and inspectable.
+Creating an outgoing route promotes its named source variable to an output.
+Removing its final route demotes it again. The generated Python decorator and
+return dictionary materialize that graph contract for execution; they are not a
+second independently authored output declaration. During a run, downstream nodes
+receive copies of those Python objects rather than JSON-serialized values.
+Runtime responses expose JSON-safe previews such as name, Python type, `repr`,
+and an optional small `jsonValue` for plain JSON-compatible values.
 
 ### Human-Facing Displays
 

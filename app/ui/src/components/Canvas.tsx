@@ -6,6 +6,8 @@ import {
   type NodeMouseHandler,
   type NodeTypes,
   type OnConnect,
+  type OnConnectEnd,
+  type OnConnectStart,
   type OnNodeDrag,
   type OnNodesChange,
   Panel,
@@ -67,7 +69,11 @@ type CanvasProps = {
   onAutoLayout?: () => void;
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
-  onConnectNodes?: (fromNode: string, toNode: string) => void;
+  onConnectNodes?: (
+    fromNode: string,
+    fromOutput: string,
+    toNode: string,
+  ) => void;
   onDeleteEdges?: (edgeIds: string[]) => string[];
   onDeleteNode?: (nodeId: string) => void;
   onNodePositionChange?: (nodeId: string, position: GraphPosition) => void;
@@ -110,6 +116,12 @@ export function Canvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState(flowGraph.edges);
   const shortcutScopeRef = useRef<HTMLDivElement>(null);
   const addNodeAtCanvasCenterRef = useRef<() => void>(() => {});
+  const pendingConnectionRef = useRef<
+    {
+      fromNode: string;
+      fromOutput: string;
+    } | null
+  >(null);
 
   useEffect(() => {
     setNodes(flowGraph.nodes);
@@ -130,7 +142,6 @@ export function Canvas({
           inputs: nodeInputPreviews[node.id] ?? node.data.inputs,
           outputPreviews: getOutputTypePreviews(nodePreviews[node.id]),
           outputOptions: nodeOutputOptions[node.id] ?? [],
-          onAddChild: onAddChildNode,
           onCodeChange: node.data.editable ? onCodeChange : undefined,
           onOutputsChange,
           onRunToNode,
@@ -146,7 +157,6 @@ export function Canvas({
       nodePreviews,
       nodeInputPreviews,
       nodeOutputOptions,
-      onAddChildNode,
       onCodeChange,
       onDeleteNode,
       selectedNodeId,
@@ -216,11 +226,35 @@ export function Canvas({
     }
   }, [onDeleteEdges, onEdgesChange]);
   const handleConnect = useCallback<OnConnect>((connection) => {
-    if (!connection.source || !connection.target) {
+    if (!connection.source || !connection.sourceHandle || !connection.target) {
       return;
     }
 
-    onConnectNodes?.(connection.source, connection.target);
+    onConnectNodes?.(
+      connection.source,
+      connection.sourceHandle,
+      connection.target,
+    );
+    pendingConnectionRef.current = null;
+  }, [onConnectNodes]);
+  const handleConnectStart = useCallback<OnConnectStart>((_event, params) => {
+    pendingConnectionRef.current = params.handleType === "source" &&
+        params.nodeId && params.handleId
+      ? { fromNode: params.nodeId, fromOutput: params.handleId }
+      : null;
+  }, []);
+  const handleConnectEnd = useCallback<OnConnectEnd>((event) => {
+    const pending = pendingConnectionRef.current;
+    pendingConnectionRef.current = null;
+    if (!pending || !onConnectNodes) return;
+    const point = getConnectionEndPoint(event);
+    if (!point) return;
+    const target = document.elementFromPoint(point.x, point.y)?.closest(
+      "[data-node-id]",
+    );
+    const toNode = target?.getAttribute("data-node-id");
+    if (!toNode || toNode === pending.fromNode) return;
+    onConnectNodes(pending.fromNode, pending.fromOutput, toNode);
   }, [onConnectNodes]);
   useEffect(() => {
     addNodeAtCanvasCenterRef.current = () => {
@@ -314,6 +348,8 @@ export function Canvas({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        onConnectStart={handleConnectStart}
+        onConnectEnd={handleConnectEnd}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
         onNodeDragStop={handleNodeDragStop}
@@ -328,6 +364,7 @@ export function Canvas({
         zoomOnPinch
         minZoom={minCanvasZoom}
         maxZoom={maxCanvasZoom}
+        connectionRadius={24}
         proOptions={{ hideAttribution: true }}
       >
         <CanvasShortcutBridge
@@ -350,6 +387,16 @@ export function Canvas({
       </ReactFlow>
     </div>
   );
+}
+
+function getConnectionEndPoint(
+  event: MouseEvent | TouchEvent,
+): { x: number; y: number } | null {
+  if ("changedTouches" in event) {
+    const touch = event.changedTouches[0];
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  return { x: event.clientX, y: event.clientY };
 }
 
 function FocusNode({

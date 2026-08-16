@@ -33,7 +33,7 @@ def world(message):
     text = message + " world"
     return {"text": text}
 
-world.depends_on(hello)
+world.depends_on(hello.output("message"))
 """.lstrip()
 
 
@@ -105,7 +105,7 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertEqual(document["nodes"][0]["id"], "hello")
         self.assertEqual(
             document["edges"],
-            [{"fromNode": "hello", "toNode": "world"}],
+            [{"fromNode": "hello", "fromOutput": "message", "toNode": "world", "toInput": "message"}],
         )
         self.assertNotIn("path", document)
         self.assertNotIn("issues", document)
@@ -134,7 +134,7 @@ class RuntimeWorkerTests(unittest.TestCase):
         )
         self.assertEqual(
             document["edges"],
-            [{"fromNode": "hello", "toNode": "world"}],
+            [{"fromNode": "hello", "fromOutput": "message", "toNode": "world", "toInput": "message"}],
         )
 
     def test_worker_render_source_echoes_valid_source_and_document(self) -> None:
@@ -195,7 +195,7 @@ def world(message):
     text = message + " world"
     return {"text": text}
 
-world.depends_on(hello)
+world.depends_on(hello.output("message"))
 """.lstrip()
 
         events = self.run_lines(

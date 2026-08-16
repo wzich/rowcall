@@ -24,4 +24,4 @@ def new_node_2(name):
     return {"welcome": welcome}
 
 # Rowcall graph
-new_node_2.depends_on(start)
+new_node_2.depends_on(start.output("name"))
