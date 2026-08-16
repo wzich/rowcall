@@ -236,22 +236,18 @@ function VariableList({
                   id={variable.name}
                   type="source"
                   position={Position.Right}
-                  className={variable.missing
-                    ? "border-2 border-white bg-red-500 dark:border-zinc-900"
-                    : variable.exported
-                    ? "border-2 border-white dark:border-zinc-900"
-                    : "border-2 border-white bg-zinc-500 dark:border-zinc-900 dark:bg-zinc-400"}
+                  className={[
+                    "variable-output-handle border-2 border-white dark:border-zinc-900",
+                    variable.missing
+                      ? "variable-output-handle--missing"
+                      : variable.exported
+                      ? "variable-output-handle--exported"
+                      : "variable-output-handle--available",
+                  ].join(" ")}
                   style={{
                     width: 12,
                     height: 12,
                     right: 0,
-                    ...(variable.missing
-                      ? { backgroundColor: "#ef4444" }
-                      : variable.exported
-                      ? {
-                        backgroundColor: "#d4d4d8",
-                      }
-                      : {}),
                   }}
                 />
               </div>
