@@ -746,6 +746,39 @@ def broken():
         self.assertEqual(node_result["displays"][0]["name"], "Checkpoint")
         self.assertEqual(node_result["displays"][0]["jsonValue"], "before")
         self.assertEqual(node_result["error"], "boom")
+        self.assertEqual(node_result["variables"], {})
+
+    def test_success_snapshots_final_values_for_all_node_variables(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="load", outputs=["value"])
+def load():
+    value = 2
+    return {"value": value}
+
+@node(id="transform", outputs=["routed"])
+def transform(value):
+    value = value + 1
+    local = value * 2
+    routed = local + 3
+    return {"routed": routed}
+
+transform.depends_on(load.output("value"))
+""".lstrip()
+
+        result = run_source(source, Path("/tmp/all_variables.py"))
+
+        self.assertTrue(result["ok"])
+        node_result = result["resultsByNode"]["transform"]
+        self.assertEqual(list(node_result["outputs"]), ["routed"])
+        self.assertEqual(
+            {
+                name: preview["jsonValue"]
+                for name, preview in node_result["variables"].items()
+            },
+            {"value": 3, "local": 6, "routed": 9},
+        )
 
     def test_document_global_helper_can_use_bare_display(self) -> None:
         source = """

@@ -26,7 +26,7 @@ class RuntimeSession:
     """Stateful runtime boundary used by the NDJSON worker.
 
     Execution is always fresh. The only retained state is the latest successful
-    UI run's declared outputs for bounded, provenance-checked inspection.
+    UI run's routed outputs for bounded, provenance-checked inspection.
     """
 
     def __init__(self) -> None:

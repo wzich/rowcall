@@ -81,6 +81,7 @@ type CanvasProps = {
   onNodeSelect: (nodeId: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
+  onVariableSelect?: (nodeId: string, variableName: string) => void;
   onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
@@ -107,6 +108,7 @@ export function Canvas({
   onNodeSelect,
   onOutputsChange,
   onRunToNode,
+  onVariableSelect,
   onSaveDocument,
   outputsReadOnly = false,
   runToNodeDisabled = false,
@@ -146,6 +148,7 @@ export function Canvas({
           onCodeChange: node.data.editable ? onCodeChange : undefined,
           onOutputsChange,
           onRunToNode,
+          onVariableSelect,
           onSaveDocument,
           outputsReadOnly,
           runToNodeDisabled,
@@ -163,6 +166,7 @@ export function Canvas({
       selectedNodeId,
       onOutputsChange,
       onRunToNode,
+      onVariableSelect,
       onSaveDocument,
       outputsReadOnly,
       runToNodeDisabled,

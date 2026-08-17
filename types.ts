@@ -95,6 +95,7 @@ export type NodeRunResult = {
   stdout: string;
   stderr: string;
   outputs: Record<string, ValuePreview>;
+  variables: Record<string, ValuePreview>;
   displays: ValuePreview[];
   warnings: string[];
   error?: string;

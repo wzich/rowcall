@@ -290,6 +290,7 @@ format_text.depends_on(double.output("y"))
             [("load", "double"), ("double", "format")],
         )
         self.assertEqual(result.document.nodes[1].parameters, ("x",))
+        self.assertEqual(result.document.nodes[1].variables, ("x", "y"))
         self.assertEqual(result.document.nodes[1].display_code, "y = x * 2")
         self.assertIn("GLOBAL = 2", result.document.globals_code)
 

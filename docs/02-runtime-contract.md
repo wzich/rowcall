@@ -72,6 +72,25 @@ containing the output name, Python type, truncated `repr`, and optionally
 `jsonValue` when the value is a small plain JSON-compatible primitive or
 container.
 
+### Variable Snapshots
+
+After a Node completes successfully, its result includes a separate `variables`
+map containing bounded `ValuePreview` records for the final values shown in that
+Node's canvas variable list. This includes incoming parameters, their post-step
+values when reassigned, locally assigned variables, and routed outputs.
+`variables` is inspection telemetry only: adding a variable preview does not
+route, export, or retain the underlying Python object for downstream execution.
+
+The `outputs` map remains the route-derived execution contract and is the only
+map backed by the session's interactive result store. Consequently, every
+variable can have a small dataframe/JSON/`repr` preview, while only routed
+outputs support follow-up pagination and sorting queries.
+
+A failed Node result contains an empty `variables` map. Rowcall does not expose
+partially mutated locals from a failed attempt. The UI may preserve an older
+successful result as stale context, but must identify it as belonging to the
+previous successful execution.
+
 ### Displays
 
 Bare `display(value, label="...")` calls record ordered, human-facing results
@@ -257,6 +276,11 @@ to mark planned Nodes as queued before individual Nodes start running.
 
 The final `run_completed` or `run_failed` event contains the full
 `ExecutionResponse`, matching the non-streaming JSON response shape.
+
+Each successful entry in `resultsByNode` includes `outputs`, `variables`,
+`displays`, `stdout`, `stderr`, and `warnings`. `node_completed` carries the
+same node result shape. Failed node results include diagnostics and displays
+recorded before failure, but publish empty `outputs` and `variables` maps.
 
 In the current runtime, `stdout` and `stderr` are still node result artifacts.
 They are included in node results, not streamed as live chunks while Python code

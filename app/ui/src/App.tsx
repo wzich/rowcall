@@ -668,13 +668,18 @@ export default function App() {
       code: node.displayCode ?? node.code,
       editable: node.editable ?? true,
       routedOutputs: node.outputs,
+      variables: getNodeOutputOptions(
+        node.parameters ?? [],
+        inferAssignableOutputs(node.displayCode ?? node.code),
+        node.outputs,
+      ),
       inputGroups: getNodeInputGroups(
         editableGraph,
         node.id,
         executionStateByNodeId,
         nodeRunStatuses,
       ),
-      outputPreviews: getOutputPreviewsForNode(
+      variablePreviews: getVariablePreviewsForNode(
         node.id,
         executionStateByNodeId,
       ),
@@ -1450,7 +1455,6 @@ export default function App() {
     }
     const runSourceValue = documentSourceValueRef.current;
 
-    showNodeResults(nodeId);
     const abortController = startRunAbortController();
     markNodeExecutionRunning(nodeId, "run_to_node");
     runToNodeMutation.mutate({
@@ -1474,7 +1478,9 @@ export default function App() {
     }
     const runSourceValue = documentSourceValueRef.current;
 
-    showInspectorTarget("run_result");
+    if (selectedNodeId === null) {
+      showInspectorTarget("run_result");
+    }
     const abortController = startRunAbortController();
     markGraphExecutionRunning();
     runGraphMutation.mutate({
@@ -1514,11 +1520,12 @@ export default function App() {
     }));
   }
 
-  function showNodeResults(nodeId: string) {
+  function showNodeVariable(nodeId: string, variableName: string) {
     setSelectedNodeId(nodeId);
     setInspectorNavigationRequest((current) => ({
       target: "node_results",
       nodeId,
+      variableName,
       requestId: (current?.requestId ?? 0) + 1,
     }));
   }
@@ -1855,6 +1862,7 @@ export default function App() {
                   ? handleOutputsChange
                   : undefined}
                 onRunToNode={handleRunToNode}
+                onVariableSelect={showNodeVariable}
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
                 runToNodeDisabled={isRunActive || isSelectedNodeRunning ||
@@ -2538,10 +2546,10 @@ function resultToCanvasPreview(
   const preview: NodeCanvasPreview = {
     ok: result.ok,
     outputs: result.ok
-      ? Object.entries(result.outputs).map(([name, output]) => ({
-        name: output.name || name,
-        type: output.type,
-        table: output.table,
+      ? Object.entries(result.variables).map(([name, variable]) => ({
+        name: variable.name || name,
+        type: variable.type,
+        table: variable.table,
       }))
       : [],
     displays: result.displays.map((display) => ({
@@ -2649,6 +2657,26 @@ function getOutputPreviewsForNode(
 
   if (state.status === "completed") {
     return state.response.resultsByNode[nodeId]?.outputs ?? {};
+  }
+
+  return {};
+}
+
+function getVariablePreviewsForNode(
+  nodeId: string,
+  executionStateByNodeId: Record<string, ExecutionDisplayState>,
+): Record<string, ValuePreview> {
+  const state = executionStateByNodeId[nodeId];
+  if (!state) {
+    return {};
+  }
+
+  if (state.status === "completed_node" || state.status === "failed_node") {
+    return state.result.variables;
+  }
+
+  if (state.status === "completed") {
+    return state.response.resultsByNode[nodeId]?.variables ?? {};
   }
 
   return {};

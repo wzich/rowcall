@@ -726,7 +726,7 @@ def execute_node(
     for name in node.outputs:
         if name not in scope:
             result = make_error_result(
-                f"Declared output '{name}' was not defined by node code",
+                f"Routed variable '{name}' was not defined by node code",
                 stdout_buffer.getvalue(),
                 stderr_buffer.getvalue(),
             )
@@ -738,11 +738,20 @@ def execute_node(
         node_outputs[name] = scope[name]
         output_previews[name] = preview_value(name, scope[name])
 
+    captured_variables = scope.get("__rowcall_variables")
+    variable_previews = {
+        name: output_previews.get(name)
+        or preview_value(name, captured_variables[name])
+        for name in node.variables
+        if isinstance(captured_variables, dict) and name in captured_variables
+    }
+
     return {
         "ok": True,
         "stdout": stdout_buffer.getvalue(),
         "stderr": stderr_buffer.getvalue(),
         "outputs": output_previews,
+        "variables": variable_previews,
         "displays": displays,
         "warnings": [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)],
         "_rawOutputs": node_outputs,
@@ -762,6 +771,7 @@ def make_error_result(
         "stdout": stdout,
         "stderr": stderr,
         "outputs": {},
+        "variables": {},
         "displays": [],
         "warnings": [],
         "error": bound_diagnostic_text(message),

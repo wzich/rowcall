@@ -25,6 +25,14 @@ function completedPreview(value: number): ExecutionDisplayState {
           jsonValue: value,
         },
       },
+      variables: {
+        value: {
+          name: "value",
+          type: "int",
+          repr: String(value),
+          jsonValue: value,
+        },
+      },
       displays: [],
       warnings: [],
     },

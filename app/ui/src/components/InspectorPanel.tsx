@@ -66,8 +66,12 @@ export type NodeInspectorSelection = {
   code: string;
   editable: boolean;
   routedOutputs: string[];
+  variables: Array<{
+    name: string;
+    source: "input" | "assigned" | "missing";
+  }>;
   inputGroups: NodeInspectorInputGroup[];
-  outputPreviews: Record<string, ValuePreview>;
+  variablePreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   nodeLabelsById: Record<string, string>;
@@ -81,7 +85,7 @@ export type NodeInspectorInputGroup = {
   status?: NodeRunVisualStatus;
 };
 
-type NodeInspectorMode = "develop" | "overview" | "results";
+type NodeInspectorMode = "code" | "results";
 type GraphInspectorMode = "overview" | "results";
 
 export type GraphInspectorModel = {
@@ -142,6 +146,7 @@ export type InspectorNavigationRequest =
   | {
     target: "node_code" | "node_results";
     nodeId: string;
+    variableName?: string;
     requestId: number;
   };
 
@@ -1615,6 +1620,8 @@ function NodeInspector({
   onShowDocumentGlobals,
   pythonEditorError,
   errorFocusRequestId,
+  selectedVariableName,
+  onVariableSelect,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
@@ -1637,10 +1644,11 @@ function NodeInspector({
   onShowDocumentGlobals?: () => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
+  selectedVariableName: string;
+  onVariableSelect: (name: string) => void;
 }) {
   const metadataReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
-  const preflightIssues = getNodePreflightIssues(selectedNode);
   const runSummary = getNodeRunSummary(
     selectedNode,
     executionState,
@@ -1665,63 +1673,6 @@ function NodeInspector({
       },
     ]),
   ], [actionsDisabled, onRunToNode, selectedNode.id]);
-  const inputStatus = getInputStatusLabel(selectedNode, runStatus);
-  const shouldShowPriorOutputPreviews = !hasCurrentRunPreviews(
-    selectedNode.id,
-    executionState,
-  );
-  const inputOptions = useMemo(
-    () => flattenInputPreviews(selectedNode.inputGroups),
-    [selectedNode.inputGroups],
-  );
-  const resultPreviewOptions = useMemo(
-    () =>
-      selectedNode.routedOutputs.map((name) => ({
-        name,
-        preview: selectedNode.outputPreviews[name] ?? null,
-        downstream: true,
-      })),
-    [
-      selectedNode.outputPreviews,
-      selectedNode.routedOutputs,
-    ],
-  );
-  const [selectedInputName, setSelectedInputName] = useState(
-    () => getPreferredPreviewName(inputOptions),
-  );
-  const [selectedOutputName, setSelectedOutputName] = useState(
-    () => getPreferredPreviewName(resultPreviewOptions),
-  );
-
-  useEffect(() => {
-    setSelectedInputName((current) =>
-      inputOptions.some((option) => option.name === current)
-        ? current
-        : getPreferredPreviewName(inputOptions)
-    );
-  }, [inputOptions, selectedNode.id]);
-
-  useEffect(() => {
-    setSelectedOutputName((current) =>
-      resultPreviewOptions.some((option) => option.name === current)
-        ? current
-        : getPreferredPreviewName(resultPreviewOptions)
-    );
-  }, [resultPreviewOptions, selectedNode.id]);
-
-  if (mode === "overview") {
-    return (
-      <NodeOverview
-        selectedNode={selectedNode}
-        metadataReadOnly={metadataReadOnly}
-        actionsDisabled={actionsDisabled}
-        onNodeMetadataChange={onNodeMetadataChange}
-        onNodeSelect={onNodeSelect}
-        onDeleteNode={onDeleteNode}
-      />
-    );
-  }
-
   if (mode === "results") {
     return (
       <NodeResults
@@ -1729,38 +1680,29 @@ function NodeInspector({
         executionState={executionState}
         runStatus={runStatus}
         runSummary={runSummary}
-        inputStatus={inputStatus}
-        preflightIssues={preflightIssues}
         onViewError={isBlockedByDocumentGlobals
           ? onShowDocumentGlobals
           : undefined}
         traceEnabled={traceEnabled}
         onTraceEnabledChange={onTraceEnabledChange}
-        shouldShowPriorOutputPreviews={shouldShowPriorOutputPreviews}
+        selectedVariableName={selectedVariableName}
+        onVariableSelect={onVariableSelect}
       />
     );
   }
 
   return (
-    <NodeDevelop
+    <NodeCode
       themeMode={themeMode}
       selectedNode={selectedNode}
-      executionState={executionState}
-      runStatus={runStatus}
+      metadataReadOnly={metadataReadOnly}
       codeReadOnly={codeReadOnly}
+      actionsDisabled={actionsDisabled}
       extensions={extensions}
-      inputOptions={inputOptions}
-      resultOptions={resultPreviewOptions}
-      selectedInputName={selectedInputName}
-      selectedOutputName={selectedOutputName}
-      runSummary={runSummary}
-      onInputSelect={setSelectedInputName}
-      onOutputSelect={setSelectedOutputName}
       onCodeChange={onCodeChange}
-      onShowDocumentGlobals={isBlockedByDocumentGlobals
-        ? onShowDocumentGlobals
-        : undefined}
-      onShowResults={() => onModeChange("results")}
+      onNodeMetadataChange={onNodeMetadataChange}
+      onNodeSelect={onNodeSelect}
+      onDeleteNode={onDeleteNode}
       pythonEditorError={pythonEditorError}
       errorFocusRequestId={errorFocusRequestId}
     />
@@ -1796,59 +1738,39 @@ function getPreferredPreviewName(options: InspectorPreviewOption[]): string {
     options[0]?.name ?? "";
 }
 
-function NodeDevelop({
+function NodeCode({
   themeMode,
   selectedNode,
-  executionState,
-  runStatus,
+  metadataReadOnly,
   codeReadOnly,
+  actionsDisabled,
   extensions,
-  inputOptions,
-  resultOptions,
-  selectedInputName,
-  selectedOutputName,
-  runSummary,
-  onInputSelect,
-  onOutputSelect,
   onCodeChange,
-  onShowDocumentGlobals,
-  onShowResults,
+  onNodeMetadataChange,
+  onNodeSelect,
+  onDeleteNode,
   pythonEditorError,
   errorFocusRequestId,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
-  executionState: ExecutionDisplayState | null;
-  runStatus: NodeRunVisualStatus;
+  metadataReadOnly: boolean;
   codeReadOnly: boolean;
+  actionsDisabled: boolean;
   extensions: Array<
     ReturnType<typeof python> | ReturnType<typeof keymap.of>
   >;
-  inputOptions: InspectorPreviewOption[];
-  resultOptions: InspectorPreviewOption[];
-  selectedInputName: string;
-  selectedOutputName: string;
-  runSummary: NodeRunSummary;
-  onInputSelect: (name: string) => void;
-  onOutputSelect: (name: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
-  onShowDocumentGlobals?: () => void;
-  onShowResults: () => void;
+  onNodeMetadataChange: (
+    nodeId: string,
+    metadata: { description?: string },
+  ) => void;
+  onNodeSelect: (nodeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
 }) {
   const codeEditorRef = useRef<EditorView | null>(null);
-  const displays = getLatestDisplaysForNode(executionState, selectedNode.id);
-  const selectedInput =
-    inputOptions.find((option) => option.name === selectedInputName) ?? null;
-  const selectedOutput =
-    resultOptions.find((option) => option.name === selectedOutputName) ?? null;
-  const outputIssue = getDevelopOutputIssue(
-    selectedNode,
-    executionState,
-    runStatus,
-    runSummary,
-  );
 
   useEffect(() => {
     if (
@@ -1861,21 +1783,9 @@ function NodeDevelop({
   }, [errorFocusRequestId, pythonEditorError, selectedNode.id]);
 
   return (
-    <div className="h-full min-h-[500px] overflow-hidden bg-white dark:bg-zinc-900">
-      <div className="flex h-full flex-col">
-        <ValuePeek
-          label="Inputs"
-          direction="input"
-          className="h-[24%] min-h-28"
-          options={inputOptions}
-          selectedName={selectedInputName}
-          selectedOption={selectedInput}
-          status={selectedInput?.status ?? "idle"}
-          emptyLabel="This source step has no upstream inputs."
-          onSelect={onInputSelect}
-        />
-
-        <section className="flex min-h-52 flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="h-full overflow-y-auto bg-white dark:bg-zinc-900">
+      <div className="flex min-h-full flex-col">
+        <section className="flex min-h-[360px] flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
               Code
@@ -1916,27 +1826,58 @@ function NodeDevelop({
             </div>
           </div>
         </section>
+        <div className="space-y-5 px-5 py-5">
+          <section>
+            <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+              Description
+            </label>
+            <textarea
+              className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+              value={selectedNode.description}
+              placeholder="What does this step do?"
+              readOnly={metadataReadOnly}
+              onChange={(event) =>
+                onNodeMetadataChange(selectedNode.id, {
+                  description: event.currentTarget.value,
+                })}
+            />
+          </section>
 
-        <div className="h-[32%] min-h-36 overflow-y-auto border-b border-zinc-300 dark:border-zinc-700">
-          {displays.length > 0 && (
-            <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
-              <DisplayResults displays={displays} />
-            </div>
-          )}
-          <ValuePeek
-            label="Outputs"
-            direction="output"
-            className={displays.length > 0 ? "min-h-36" : "h-full min-h-36"}
-            options={resultOptions}
-            selectedName={selectedOutputName}
-            selectedOption={selectedOutput}
-            status={runStatus}
-            emptyLabel="Route a variable from this step to inspect it here."
-            issue={outputIssue}
-            onShowDocumentGlobals={onShowDocumentGlobals}
-            onSelect={onOutputSelect}
-            onExpand={onShowResults}
+          <FlowNavigation
+            upstreamDependencies={selectedNode.upstreamDependencies}
+            downstreamDependencies={selectedNode.downstreamDependencies}
+            labelsById={selectedNode.nodeLabelsById}
+            onNodeSelect={onNodeSelect}
           />
+
+          {(selectedNode.badges.length > 0 || selectedNode.functionName) && (
+            <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+              <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+                Identity
+              </h3>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+                {selectedNode.badges.map((badge) => (
+                  <span
+                    key={badge}
+                    className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
+                  >
+                    {badge}
+                  </span>
+                ))}
+                <code className="rounded bg-zinc-100 px-2 py-1 font-mono dark:bg-zinc-800">
+                  {selectedNode.functionName ?? "custom Python"}
+                </code>
+              </div>
+            </section>
+          )}
+
+          {onDeleteNode && (
+            <DeleteNodeAction
+              selectedNode={selectedNode}
+              disabled={actionsDisabled}
+              onDeleteNode={onDeleteNode}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -2336,42 +2277,124 @@ function NodeResults({
   executionState,
   runStatus,
   runSummary,
-  inputStatus,
-  preflightIssues,
   onViewError,
   traceEnabled,
   onTraceEnabledChange,
-  shouldShowPriorOutputPreviews,
+  selectedVariableName,
+  onVariableSelect,
 }: {
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
   runSummary: NodeRunSummary;
-  inputStatus: string;
-  preflightIssues: PreflightIssue[];
   onViewError?: () => void;
   traceEnabled: boolean;
   onTraceEnabledChange: (value: boolean) => void;
-  shouldShowPriorOutputPreviews: boolean;
+  selectedVariableName: string;
+  onVariableSelect: (name: string) => void;
 }) {
+  const baseResult = getNodeResult(executionState, selectedNode.id);
+  const latestFailure = executionState?.status === "completed" &&
+      executionState.freshness === "failed_run"
+    ? executionState.latestFailure
+    : undefined;
+  const latestAttemptResult = latestFailure?.resultsByNode[selectedNode.id] ??
+    baseResult;
+  const displays = latestAttemptResult?.displays ?? [];
+  const stdout = latestAttemptResult?.stdout ?? "";
+  const stderr = latestAttemptResult?.stderr ?? "";
+  const warnings = latestAttemptResult?.warnings ?? [];
+  const selectedVariable =
+    selectedNode.variables.find((variable) =>
+      variable.name === selectedVariableName
+    ) ?? selectedNode.variables[0] ?? null;
+  const selectedPreview = selectedVariable
+    ? selectedNode.variablePreviews[selectedVariable.name] ?? null
+    : null;
+  const interactiveTable = selectedVariable && selectedPreview?.table &&
+      selectedNode.routedOutputs.includes(selectedVariable.name) &&
+      executionState?.status === "completed" &&
+      executionState.response.resultStore &&
+      (executionState.freshness === "fresh" ||
+        executionState.freshness === "failed_run")
+    ? {
+      identity: executionState.response.resultStore,
+      nodeId: selectedNode.id,
+      outputName: selectedVariable.name,
+    }
+    : undefined;
+  const traceStep = executionState?.status === "completed"
+    ? (latestFailure ?? executionState.response).trace?.find((step) =>
+      step.nodeId === selectedNode.id
+    ) ?? null
+    : null;
+  const valuesAreStale = runStatus === "stale" ||
+    (executionState?.status === "completed" &&
+      executionState.freshness !== "fresh");
+
   return (
     <div className="h-full overflow-y-auto px-5 py-4">
       <div className="space-y-4">
         <NodeRunBanner
           summary={runSummary}
-          inputStatus={inputStatus}
-          preflightIssues={preflightIssues}
           onViewError={onViewError}
         />
-        <div className={runStatus === "stale" ? "opacity-60" : ""}>
-          {shouldShowPriorOutputPreviews && (
-            <OutputPreviewSection previews={selectedNode.outputPreviews} />
-          )}
-          <RunResult
-            selectedNode={selectedNode}
-            executionState={executionState}
-          />
+        {executionState?.status === "completed" &&
+          executionState.freshness === "failed_run" && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="text-sm font-medium">Showing previous values</p>
+            <p className="mt-1 text-xs">
+              The latest attempt failed. No partial variable values were kept.
+            </p>
+          </div>
+        )}
+
+        <DisplayResults displays={displays} />
+
+        <VariableResults
+          variables={selectedNode.variables}
+          routedOutputs={selectedNode.routedOutputs}
+          previews={selectedNode.variablePreviews}
+          selectedName={selectedVariable?.name ?? ""}
+          runStatus={runStatus}
+          valuesAreStale={valuesAreStale}
+          onSelect={onVariableSelect}
+        >
+          {selectedVariable && selectedPreview
+            ? (
+              <FlatPreview
+                preview={{ ...selectedPreview, name: selectedVariable.name }}
+                metadataSuffix={selectedNode.routedOutputs.includes(
+                    selectedVariable.name,
+                  )
+                  ? <span>routed output</span>
+                  : <span>bounded preview</span>}
+                interactiveTable={interactiveTable}
+              />
+            )
+            : (
+              <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                {getMissingVariablePreviewMessage(
+                  selectedVariable,
+                  runStatus,
+                )}
+              </p>
+            )}
+        </VariableResults>
+
+        <div className="space-y-4">
+          <TextOutputBlock title="Stdout" value={stdout} />
+          <WarningList warnings={warnings} />
+          <TextOutputBlock title="Stderr" value={stderr} variant="danger" />
         </div>
+
+        {traceStep && (
+          <NodeTraceResult
+            step={traceStep}
+            label={selectedNode.displayName}
+            nodeLabelsById={selectedNode.nodeLabelsById}
+          />
+        )}
         <TraceToggle
           traceEnabled={traceEnabled}
           onTraceEnabledChange={onTraceEnabledChange}
@@ -2379,6 +2402,156 @@ function NodeResults({
       </div>
     </div>
   );
+}
+
+function getNodeResult(
+  executionState: ExecutionDisplayState | null,
+  nodeId: string,
+): NodeRunResult | null {
+  if (
+    !executionState || executionState.status === "running" ||
+    executionState.status === "request_error"
+  ) {
+    return null;
+  }
+  if (
+    executionState.status === "completed_node" ||
+    executionState.status === "failed_node"
+  ) {
+    return executionState.result;
+  }
+  return executionState.response.resultsByNode[nodeId] ?? null;
+}
+
+function VariableResults({
+  variables,
+  routedOutputs,
+  previews,
+  selectedName,
+  runStatus,
+  valuesAreStale,
+  onSelect,
+  children,
+}: {
+  variables: NodeInspectorSelection["variables"];
+  routedOutputs: string[];
+  previews: Record<string, ValuePreview>;
+  selectedName: string;
+  runStatus: NodeRunVisualStatus;
+  valuesAreStale: boolean;
+  onSelect: (name: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+        Variables
+      </h3>
+      {variables.length === 0
+        ? (
+          <p className="mt-2 rounded border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+            This step has no variables to inspect.
+          </p>
+        )
+        : (
+          <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700">
+            <div className="grid min-h-64 grid-cols-[minmax(140px,0.36fr)_minmax(0,1fr)]">
+              <div className="border-r border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+                {variables.map((variable) => {
+                  const preview = previews[variable.name];
+                  const state = getVariablePreviewState(
+                    variable.source,
+                    runStatus,
+                    Boolean(preview),
+                    valuesAreStale,
+                  );
+                  const selected = variable.name === selectedName;
+                  return (
+                    <button
+                      key={variable.name}
+                      type="button"
+                      title={`${variable.name}: ${state.label}`}
+                      className={[
+                        "flex w-full items-center gap-2 border-b border-zinc-200 px-3 py-2 text-left font-mono text-xs last:border-b-0 dark:border-zinc-700",
+                        selected
+                          ? "bg-white font-semibold text-zinc-950 dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-600 hover:bg-white dark:text-zinc-300 dark:hover:bg-zinc-800/70",
+                      ].join(" ")}
+                      onClick={() => onSelect(variable.name)}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`h-2 w-2 shrink-0 rounded-full ${state.dotClassName}`}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {variable.name}
+                      </span>
+                      {routedOutputs.includes(variable.name) && (
+                        <span className="rounded bg-blue-100 px-1 py-0.5 font-sans text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                          output
+                        </span>
+                      )}
+                      <span className="sr-only">{state.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div
+                className={valuesAreStale
+                  ? "min-w-0 p-4 opacity-65"
+                  : "min-w-0 p-4"}
+              >
+                {children}
+              </div>
+            </div>
+          </div>
+        )}
+    </section>
+  );
+}
+
+function getVariablePreviewState(
+  source: NodeInspectorSelection["variables"][number]["source"],
+  runStatus: NodeRunVisualStatus,
+  hasPreview: boolean,
+  valuesAreStale: boolean,
+): { label: string; dotClassName: string } {
+  if (source === "missing") {
+    return { label: "Missing from code", dotClassName: "bg-red-500" };
+  }
+  if (runStatus === "running" || runStatus === "queued") {
+    return {
+      label: runStatus === "running" ? "Running" : "Queued",
+      dotClassName: "bg-blue-500",
+    };
+  }
+  if (valuesAreStale) {
+    return { label: "Stale", dotClassName: "bg-amber-500" };
+  }
+  if (hasPreview) {
+    return { label: "Fresh", dotClassName: "bg-emerald-500" };
+  }
+  return { label: "Unavailable", dotClassName: "bg-zinc-300" };
+}
+
+function getMissingVariablePreviewMessage(
+  variable: NodeInspectorSelection["variables"][number] | null,
+  runStatus: NodeRunVisualStatus,
+): string {
+  if (!variable) return "Select a variable to inspect its final value.";
+  if (variable.source === "missing") {
+    return "This routed variable no longer exists in the step code.";
+  }
+  if (runStatus === "failed") {
+    return "No variable values were captured because this step failed.";
+  }
+  if (runStatus === "blocked" || runStatus === "blocked_globals") {
+    return "This step did not run, so no current value is available.";
+  }
+  if (runStatus === "running" || runStatus === "queued") {
+    return "The final value will appear after this step completes.";
+  }
+  return "Run through this step to capture its final value.";
 }
 
 function getInputStatusLabel(
@@ -2448,12 +2621,10 @@ type PreflightIssue = {
 function NodeRunBanner({
   summary,
   inputStatus,
-  preflightIssues,
   onViewError,
 }: {
   summary: NodeRunSummary;
-  inputStatus: string;
-  preflightIssues: PreflightIssue[];
+  inputStatus?: string;
   onViewError?: () => void;
 }) {
   const variant = summary.variant;
@@ -2478,7 +2649,9 @@ function NodeRunBanner({
         <div className="min-w-0 flex-1">
           <p className="font-medium">{summary.title}</p>
           <p className="mt-0.5 text-xs opacity-80">{summary.detail}</p>
-          <p className="mt-1 text-xs opacity-70">{inputStatus}</p>
+          {inputStatus && (
+            <p className="mt-1 text-xs opacity-70">{inputStatus}</p>
+          )}
           {onViewError && (
             <button
               type="button"
@@ -2487,15 +2660,6 @@ function NodeRunBanner({
             >
               View Document Globals
             </button>
-          )}
-          {preflightIssues.length > 0 && (
-            <ul className="mt-2 space-y-1 text-xs">
-              {preflightIssues.map((issue) => (
-                <li key={`${issue.kind}-${issue.message}`}>
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
           )}
         </div>
       </div>
@@ -2528,7 +2692,21 @@ function getNodeRunSummary(
     return {
       variant: "warning",
       title: "Stale result",
-      detail: "Code, outputs, or upstream inputs changed since the last run.",
+      detail: "Code, routing, or upstream inputs changed since the last run.",
+    };
+  }
+
+  if (
+    executionState?.status === "completed" &&
+    (executionState.freshness === "document_changed" ||
+      executionState.freshness === "replaced")
+  ) {
+    return {
+      variant: "warning",
+      title: "Stale result",
+      detail: executionState.freshness === "replaced"
+        ? "A newer run replaced the interactive result store."
+        : "The document changed since these values were produced.",
     };
   }
 
@@ -2605,8 +2783,8 @@ function getNodeRunSummary(
         };
       }
       return {
-        variant: "danger",
-        title: runStatus === "blocked" ? "Step did not run" : "Run failed",
+        variant: "neutral",
+        title: "Step did not run",
         detail: failedNodeId
           ? `Upstream step ${
             selectedNode.nodeLabelsById[failedNodeId] ?? "a step"
@@ -2626,7 +2804,7 @@ function getNodeRunSummary(
 
   if (runStatus === "blocked") {
     return {
-      variant: "danger",
+      variant: "neutral",
       title: "Step did not run",
       detail: "An upstream step failed before this step could run.",
     };
@@ -2634,7 +2812,7 @@ function getNodeRunSummary(
 
   if (runStatus === "blocked_globals") {
     return {
-      variant: "danger",
+      variant: "neutral",
       title: "Blocked by Document Globals",
       detail: "Document Globals failed before this step could run.",
     };
@@ -2651,7 +2829,7 @@ function getNodeRunSummary(
   return {
     variant: "neutral",
     title: "No fresh run result",
-    detail: "Run this step to preview its current outputs.",
+    detail: "Run through this step to inspect its final variable values.",
   };
 }
 
@@ -2889,8 +3067,7 @@ function NodeInspectorTabs({
 }) {
   const state = getPreviewState(runStatus, runStatus === "completed");
   const tabs: Array<{ id: NodeInspectorMode; label: string }> = [
-    { id: "develop", label: "Develop" },
-    { id: "overview", label: "Overview" },
+    { id: "code", label: "Code" },
     { id: "results", label: "Results" },
   ];
 
@@ -2962,7 +3139,7 @@ export function InspectorPanel({
   );
   const [isResizing, setIsResizing] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<NodeInspectorMode>(
-    "develop",
+    "code",
   );
   const [graphInspectorMode, setGraphInspectorMode] = useState<
     GraphInspectorMode
@@ -2972,6 +3149,9 @@ export function InspectorPanel({
     selectedNode?.displayName ?? "",
   );
   const [nodeNameError, setNodeNameError] = useState<string | null>(null);
+  const [selectedVariableName, setSelectedVariableName] = useState(
+    selectedNode?.variables[0]?.name ?? "",
+  );
 
   useEffect(() => {
     scrollContainerRef.current?.scrollTo({ top: 0 });
@@ -2994,8 +3174,14 @@ export function InspectorPanel({
       }
       handledNavigationRequestIdRef.current = navigationRequest.requestId;
       setInspectorMode(
-        navigationRequest.target === "node_results" ? "results" : "develop",
+        navigationRequest.target === "node_results" ? "results" : "code",
       );
+      if (
+        navigationRequest.target === "node_results" &&
+        navigationRequest.variableName
+      ) {
+        setSelectedVariableName(navigationRequest.variableName);
+      }
       scrollContainerRef.current?.scrollTo({ top: 0 });
       return;
     }
@@ -3027,6 +3213,21 @@ export function InspectorPanel({
     setNodeNameDraft(selectedNode?.displayName ?? "");
     setNodeNameError(null);
   }, [selectedNode?.id, selectedNode?.displayName]);
+
+  useEffect(() => {
+    setSelectedVariableName((current) => {
+      if (
+        selectedNode?.variables.some((variable) => variable.name === current)
+      ) {
+        return current;
+      }
+      return selectedNode?.variables.find((variable) =>
+        selectedNode.variablePreviews[variable.name]?.image
+      )?.name ?? selectedNode?.variables.find((variable) =>
+        selectedNode.variablePreviews[variable.name]?.table
+      )?.name ?? selectedNode?.variables[0]?.name ?? "";
+    });
+  }, [selectedNode]);
 
   useEffect(() => {
     const handleWindowResize = () => {
@@ -3097,7 +3298,7 @@ export function InspectorPanel({
                   ].join(" ")}
                   value={nodeNameDraft}
                   placeholder={selectedNode.displayName}
-                  readOnly={isNodeNameReadOnly}
+                  readOnly={isNodeNameReadOnly || inspectorMode !== "code"}
                   onChange={(event) => {
                     if (isNodeNameReadOnly) {
                       return;
@@ -3196,6 +3397,8 @@ export function InspectorPanel({
                 errorFocusRequestId={navigationRequest?.target === "node_code"
                   ? navigationRequest.requestId
                   : undefined}
+                selectedVariableName={selectedVariableName}
+                onVariableSelect={setSelectedVariableName}
               />
             </div>
           </>

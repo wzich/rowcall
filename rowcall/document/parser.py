@@ -973,6 +973,7 @@ def _build_node(node: _DecodedNode, lines: list[str], globals_code: str) -> Docu
     function_def = node.function_def
     outputs = node.outputs or ()
     parameters = _parameter_names(function_def)
+    variables = _node_variable_names(function_def, parameters, outputs)
     standard_return = _has_standard_generated_return(function_def, outputs)
     function_source = _extract_function_source(lines, function_def)
     display_code = _extract_display_code(lines, function_def, standard_return)
@@ -981,12 +982,14 @@ def _build_node(node: _DecodedNode, lines: list[str], globals_code: str) -> Docu
         function_name=function_def.name,
         parameters=parameters,
         outputs=outputs,
+        capture_variables=standard_return,
     )
     return DocumentNode(
         id=node.node_id if node.node_id is not None else function_def.name,
         function_name=function_def.name,
         outputs=outputs,
         parameters=parameters,
+        variables=variables,
         source_range=_function_source_range(function_def, standard_return),
         function_source=function_source,
         display_code=display_code,
@@ -1102,6 +1105,69 @@ def _parameter_names(function_def: ast.FunctionDef) -> tuple[str, ...]:
     return tuple(argument.arg for argument in [*function_def.args.args, *function_def.args.kwonlyargs])
 
 
+def _node_variable_names(
+    function_def: ast.FunctionDef,
+    parameters: tuple[str, ...],
+    outputs: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return the input and assignment names exposed by the graph variable list."""
+    names = list(parameters)
+    seen = set(names)
+
+    def add_target(target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            if target.id not in seen:
+                seen.add(target.id)
+                names.append(target.id)
+            return
+        if isinstance(target, (ast.List, ast.Tuple)):
+            for element in target.elts:
+                add_target(element)
+            return
+        if isinstance(target, ast.Starred):
+            add_target(target.value)
+            return
+        if isinstance(target, ast.Attribute):
+            root: ast.AST = target.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                add_target(root)
+
+    class AssignmentVisitor(ast.NodeVisitor):
+        def visit_Assign(self, assignment: ast.Assign) -> None:
+            for target in assignment.targets:
+                add_target(target)
+            self.visit(assignment.value)
+
+        def visit_AnnAssign(self, assignment: ast.AnnAssign) -> None:
+            add_target(assignment.target)
+            if assignment.value is not None:
+                self.visit(assignment.value)
+
+        def visit_FunctionDef(self, _nested: ast.FunctionDef) -> None:
+            return
+
+        def visit_AsyncFunctionDef(self, _nested: ast.AsyncFunctionDef) -> None:
+            return
+
+        def visit_ClassDef(self, _nested: ast.ClassDef) -> None:
+            return
+
+        def visit_Lambda(self, _nested: ast.Lambda) -> None:
+            return
+
+    visitor = AssignmentVisitor()
+    for statement in function_def.body:
+        visitor.visit(statement)
+
+    for output in outputs:
+        if output not in seen:
+            seen.add(output)
+            names.append(output)
+    return tuple(names)
+
+
 def _has_standard_generated_return(
     function_def: ast.FunctionDef,
     outputs: tuple[str, ...],
@@ -1134,8 +1200,27 @@ def _build_runtime_code(
     function_name: str,
     parameters: tuple[str, ...],
     outputs: tuple[str, ...],
+    capture_variables: bool,
 ) -> str:
-    parts = [function_source]
+    parts = [
+        _instrument_standard_function_return(function_source)
+        if capture_variables
+        else function_source
+    ]
+    call_lines = [
+        f"__rowcall_call_result = {function_name}(**__rowcall_call_inputs)",
+    ]
+    if capture_variables:
+        call_lines.append(
+            "__rowcall_result, __rowcall_variables = __rowcall_call_result"
+        )
+    else:
+        call_lines.extend(
+            [
+                "__rowcall_result = __rowcall_call_result",
+                "__rowcall_variables = dict(__rowcall_call_inputs)",
+            ]
+        )
     parts.append(
         "\n".join(
             [
@@ -1145,21 +1230,45 @@ def _build_runtime_code(
                 "    name: globals()[name]",
                 "    for name in __rowcall_parameters",
                 "}",
-                f"__rowcall_result = {function_name}(**__rowcall_call_inputs)",
+                *call_lines,
                 "if not isinstance(__rowcall_result, dict):",
-                "    raise TypeError('Node function must return a dict of declared values')",
+                "    raise TypeError('Node function must return a dict of routed values')",
                 "__rowcall_missing_values = [",
                 "    name for name in __rowcall_return_names",
                 "    if name not in __rowcall_result",
                 "]",
                 "if __rowcall_missing_values:",
                 "    raise NameError(",
-                "        'Node function did not return declared values: '",
+                "        'Node function did not return routed values: '",
                 "        + ', '.join(__rowcall_missing_values)",
                 "    )",
                 "for __rowcall_return_name in __rowcall_return_names:",
                 "    globals()[__rowcall_return_name] = __rowcall_result[__rowcall_return_name]",
+                "    __rowcall_variables[__rowcall_return_name] = __rowcall_result[__rowcall_return_name]",
             ]
         )
     )
     return "\n\n".join(parts)
+
+
+def _instrument_standard_function_return(function_source: str) -> str:
+    """Capture final function locals without changing the authored source."""
+    module = ast.parse(function_source)
+    function_def = module.body[0]
+    if not isinstance(function_def, ast.FunctionDef) or not function_def.body:
+        return function_source
+    return_statement = function_def.body[-1]
+    if not isinstance(return_statement, ast.Return) or return_statement.value is None:
+        return function_source
+
+    lines = function_source.splitlines()
+    indent = " " * return_statement.col_offset
+    return_expression = ast.unparse(return_statement.value)
+    replacement = [
+        f"{indent}__rowcall_variables = locals().copy()",
+        f"{indent}return ({return_expression}, __rowcall_variables)",
+    ]
+    lines[
+        return_statement.lineno - 1 : (return_statement.end_lineno or return_statement.lineno)
+    ] = replacement
+    return "\n".join(lines)

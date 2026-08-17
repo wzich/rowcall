@@ -28,11 +28,11 @@ const statusStyles: Record<
     label: "Running",
   },
   blocked: {
-    dot: "bg-red-300",
+    dot: "bg-zinc-300",
     label: "Did not run because an upstream step failed",
   },
   blocked_globals: {
-    dot: "bg-red-300",
+    dot: "bg-zinc-300",
     label: "Did not run because Document Globals failed",
   },
   completed: {
@@ -157,6 +157,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
             exported: data.outputs.includes(option.name),
             missing: outputOptionsByName.get(option.name)?.source === "missing",
           }))}
+          onSelect={(name) => data.onVariableSelect?.(id, name)}
           onRemove={data.onOutputsChange && !data.outputsReadOnly
             ? (name) =>
               data.onOutputsChange?.(
@@ -172,6 +173,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
 
 function VariableList({
   variables,
+  onSelect,
   onRemove,
 }: {
   variables: Array<{
@@ -180,6 +182,7 @@ function VariableList({
     exported?: boolean;
     missing?: boolean;
   }>;
+  onSelect?: (name: string) => void;
   onRemove?: (name: string) => void;
 }) {
   return (
@@ -198,6 +201,8 @@ function VariableList({
             {variables.map((variable) => (
               <div
                 key={variable.name}
+                role={onSelect ? "button" : undefined}
+                tabIndex={onSelect ? 0 : undefined}
                 className={[
                   "relative flex min-h-9 items-center justify-between gap-3 border-b px-3 py-2 pr-5 font-mono text-[11px] last:border-b-0",
                   variable.missing
@@ -211,6 +216,28 @@ function VariableList({
                   : variable.type
                   ? `${variable.name} · ${variable.type}`
                   : variable.name}
+                onClick={(event) => {
+                  if (
+                    !onSelect ||
+                    (event.target as HTMLElement).closest(
+                      "button, .variable-output-handle",
+                    )
+                  ) {
+                    return;
+                  }
+                  event.stopPropagation();
+                  onSelect(variable.name);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    !onSelect || (event.key !== "Enter" && event.key !== " ")
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelect(variable.name);
+                }}
               >
                 <span className="min-w-0 truncate">{variable.name}</span>
                 {variable.type && (

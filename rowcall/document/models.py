@@ -77,6 +77,7 @@ class DocumentNode:
     function_name: str
     outputs: tuple[str, ...]
     parameters: tuple[str, ...]
+    variables: tuple[str, ...]
     source_range: SourceRange
     function_source: str
     display_code: str
@@ -95,6 +96,7 @@ class DocumentNode:
             "functionName": self.function_name,
             "outputs": list(self.outputs),
             "parameters": list(self.parameters),
+            "variables": list(self.variables),
             "sourceRange": self.source_range.to_dict(),
             "functionSource": self.function_source,
             "code": self.display_code,
@@ -116,6 +118,7 @@ class DocumentNode:
             "runtimeCode": runtime_code,
             "outputs": list(self.outputs),
             "parameters": list(self.parameters),
+            "variables": list(self.variables),
             "customReturn": self.custom_return,
             "editable": self.editable,
             "sourceRange": self.source_range.to_dict(),

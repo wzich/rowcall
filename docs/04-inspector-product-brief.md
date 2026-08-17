@@ -20,11 +20,11 @@ Code owns the authored definition. Results owns runtime observations. This
 boundary is more important than reproducing a notebook cell's simultaneous
 input, code, and output layout in the first beta.
 
-Results is deliberately a latest-state view, not immutable run history. A step's
-currently available upstream inputs and its most recent outputs may come from
-different executions. Every value therefore carries its own provenance and
-freshness; the tab must not imply that all visible values belong to one
-execution snapshot.
+Results is deliberately a latest-state view, not immutable run history. For a
+successful execution, it shows the final post-step value of every variable
+listed on the canvas node, including inputs reassigned by the step. A later
+failed attempt does not publish partial locals. The previous successful values
+may remain only when the tab labels them unmistakably as stale.
 
 ## Graph routing model
 
@@ -80,18 +80,19 @@ visuals it produced so that I can decide whether it did what I intended.
 - As an author, I can distinguish a failure in this step from a step that did
   not run because something upstream failed.
 - As an author, I can inspect displays explicitly produced for human review.
-- As an author, I can inspect previews of routed variables produced by the step.
-- As an author, I can inspect the latest available upstream input values.
+- As an author, I can inspect the final value of every variable listed on the
+  canvas node, whether or not it is routed downstream.
 - As an author, I can inspect stdout, stderr, warnings, and an optional trace
   when I need diagnostics.
 - As an author, I can tell whether each visible value is fresh, stale, running,
-  failed, or unavailable.
+  missing, or unavailable.
 - As an author, I can keep a previous successful value as clearly labeled
   historical context after an edit or failed execution.
 
 Displays receive high priority because `display()` is an explicit request from
-the author to inspect a value. Routed variables support data flow and may also
-be useful to inspect, but they should not displace an explicit display.
+the author to inspect a value. The variable list mirrors the canvas node. Every
+variable gets a bounded preview; routed outputs may additionally use the
+interactive result store for pagination and sorting.
 
 An upstream failure does not make the selected step look failed. The global run
 notification identifies the actual failing step, and selecting that notification
@@ -163,10 +164,9 @@ A reasonable information priority is:
 
 1. selected-step execution state or selected-step error
 2. ordered displays
-3. routed-variable previews
-4. latest available input previews
-5. stdout, warnings, and stderr
-6. optional advanced trace
+3. all canvas-listed variables and the selected variable's final value
+4. stdout, warnings, and stderr when non-empty
+5. optional advanced trace
 
 Tables, images, JSON values, and plain Python representations use the richest
 available preview. Large tables may use the interactive paginated result store
@@ -179,8 +179,9 @@ graph nodes.
 
 ## Important interaction rules
 
-1. **Freshness is part of each value.** Do not imply that independently retained
-   inputs, outputs, and displays form one coherent run snapshot.
+1. **Final values are the unit of inspection.** A successful node result records
+   each canvas-listed variable after the step finishes. Failed attempts record
+   no partial variable state.
 2. **Preserve authored context.** Running through a selected step does not move
    the user away from Code.
 3. **Show the actual failure owner.** A step is failed only when its own
@@ -240,5 +241,5 @@ sink values.
 - How often do users want simultaneous code and result previews?
 - Which low-frequency step controls deserve direct placement rather than an
   overflow or disclosure?
-- When both displays and routed variables exist, do users consistently prefer
-  displays first?
+- When both displays and variables exist, do users consistently prefer displays
+  first?
