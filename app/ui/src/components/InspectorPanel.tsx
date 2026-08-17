@@ -10,7 +10,7 @@ import type {
 import { python } from "@codemirror/lang-python";
 import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { AlertTriangle, Check, Play, Trash2, X } from "lucide-react";
+import { AlertTriangle, Play, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -65,9 +65,7 @@ export type NodeInspectorSelection = {
   functionName: string | null;
   code: string;
   editable: boolean;
-  outputs: string[];
-  inferredOutputs: string[];
-  inputNames: string[];
+  routedOutputs: string[];
   inputGroups: NodeInspectorInputGroup[];
   outputPreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
@@ -168,7 +166,6 @@ type InspectorPanelProps = {
     metadata: { description?: string },
   ) => void;
   onGlobalsCodeChange: (code: string) => void;
-  onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
@@ -1608,7 +1605,6 @@ function NodeInspector({
   readOnly,
   actionsDisabled,
   onCodeChange,
-  onOutputsChange,
   onNodeMetadataChange,
   onNodeSelect,
   onRunToNode,
@@ -1628,7 +1624,6 @@ function NodeInspector({
   readOnly: boolean;
   actionsDisabled: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
-  onOutputsChange: (nodeId: string, outputs: string[]) => void;
   onNodeMetadataChange: (
     nodeId: string,
     metadata: { description?: string },
@@ -1643,26 +1638,9 @@ function NodeInspector({
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
 }) {
-  const outputsReadOnly = readOnly || !selectedNode.editable;
+  const metadataReadOnly = readOnly || !selectedNode.editable;
   const codeReadOnly = readOnly || !selectedNode.editable;
-  const outputOptions = getOutputOptions(
-    selectedNode.inputNames,
-    selectedNode.inferredOutputs,
-    selectedNode.outputs,
-  );
-  const missingSelectedOutputs = outputOptions
-    .filter((option) =>
-      option.source === "missing" && selectedNode.outputs.includes(option.name)
-    )
-    .map((option) => option.name);
-  const outputReplacement = getSimpleOutputReplacement(
-    selectedNode.outputs,
-    outputOptions,
-  );
-  const preflightIssues = getNodePreflightIssues(
-    selectedNode,
-    missingSelectedOutputs,
-  );
+  const preflightIssues = getNodePreflightIssues(selectedNode);
   const runSummary = getNodeRunSummary(
     selectedNode,
     executionState,
@@ -1698,15 +1676,14 @@ function NodeInspector({
   );
   const resultPreviewOptions = useMemo(
     () =>
-      selectedNode.outputs.map((name) => ({
+      selectedNode.routedOutputs.map((name) => ({
         name,
         preview: selectedNode.outputPreviews[name] ?? null,
-        shown: false,
         downstream: true,
       })),
     [
       selectedNode.outputPreviews,
-      selectedNode.outputs,
+      selectedNode.routedOutputs,
     ],
   );
   const [selectedInputName, setSelectedInputName] = useState(
@@ -1732,40 +1709,12 @@ function NodeInspector({
     );
   }, [resultPreviewOptions, selectedNode.id]);
 
-  const handleOutputReplacement = () => {
-    if (!outputReplacement || readOnly || !selectedNode.editable) return;
-    onOutputsChange(
-      selectedNode.id,
-      selectedNode.outputs.map((output) =>
-        output === outputReplacement.from ? outputReplacement.to : output
-      ),
-    );
-  };
-
-  const handleOutputToggle = (name: string) => {
-    if (readOnly || !selectedNode.editable) return;
-    const selectedOutputs = new Set(selectedNode.outputs);
-    if (selectedOutputs.has(name)) {
-      selectedOutputs.delete(name);
-    } else {
-      selectedOutputs.add(name);
-    }
-    onOutputsChange(
-      selectedNode.id,
-      outputOptions
-        .map((option) => option.name)
-        .filter((optionName) => selectedOutputs.has(optionName)),
-    );
-  };
-
   if (mode === "overview") {
     return (
       <NodeOverview
         selectedNode={selectedNode}
-        outputOptions={outputOptions}
-        outputsReadOnly={outputsReadOnly}
+        metadataReadOnly={metadataReadOnly}
         actionsDisabled={actionsDisabled}
-        onOutputToggle={handleOutputToggle}
         onNodeMetadataChange={onNodeMetadataChange}
         onNodeSelect={onNodeSelect}
         onDeleteNode={onDeleteNode}
@@ -1782,9 +1731,6 @@ function NodeInspector({
         runSummary={runSummary}
         inputStatus={inputStatus}
         preflightIssues={preflightIssues}
-        outputReplacement={outputReplacement}
-        outputReplacementDisabled={readOnly || !selectedNode.editable}
-        onOutputReplacement={handleOutputReplacement}
         onViewError={isBlockedByDocumentGlobals
           ? onShowDocumentGlobals
           : undefined}
@@ -1808,13 +1754,9 @@ function NodeInspector({
       selectedInputName={selectedInputName}
       selectedOutputName={selectedOutputName}
       runSummary={runSummary}
-      preflightIssues={preflightIssues}
-      outputReplacement={outputReplacement}
-      outputReplacementDisabled={readOnly || !selectedNode.editable}
       onInputSelect={setSelectedInputName}
       onOutputSelect={setSelectedOutputName}
       onCodeChange={onCodeChange}
-      onOutputReplacement={handleOutputReplacement}
       onShowDocumentGlobals={isBlockedByDocumentGlobals
         ? onShowDocumentGlobals
         : undefined}
@@ -1828,7 +1770,6 @@ function NodeInspector({
 type InspectorPreviewOption = {
   name: string;
   preview: ValuePreview | null;
-  shown?: boolean;
   downstream?: boolean;
   sourceNodeId?: string;
   sourceLabel?: string;
@@ -1867,13 +1808,9 @@ function NodeDevelop({
   selectedInputName,
   selectedOutputName,
   runSummary,
-  preflightIssues,
-  outputReplacement,
-  outputReplacementDisabled,
   onInputSelect,
   onOutputSelect,
   onCodeChange,
-  onOutputReplacement,
   onShowDocumentGlobals,
   onShowResults,
   pythonEditorError,
@@ -1892,13 +1829,9 @@ function NodeDevelop({
   selectedInputName: string;
   selectedOutputName: string;
   runSummary: NodeRunSummary;
-  preflightIssues: PreflightIssue[];
-  outputReplacement: { from: string; to: string } | null;
-  outputReplacementDisabled: boolean;
   onInputSelect: (name: string) => void;
   onOutputSelect: (name: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
-  onOutputReplacement: () => void;
   onShowDocumentGlobals?: () => void;
   onShowResults: () => void;
   pythonEditorError?: PythonEditorErrorTarget;
@@ -1915,7 +1848,6 @@ function NodeDevelop({
     executionState,
     runStatus,
     runSummary,
-    preflightIssues,
   );
 
   useEffect(() => {
@@ -1999,11 +1931,8 @@ function NodeDevelop({
             selectedName={selectedOutputName}
             selectedOption={selectedOutput}
             status={runStatus}
-            emptyLabel="Declare an output to inspect it here."
+            emptyLabel="Route a variable from this step to inspect it here."
             issue={outputIssue}
-            outputReplacement={outputReplacement}
-            outputReplacementDisabled={outputReplacementDisabled}
-            onOutputReplacement={onOutputReplacement}
             onShowDocumentGlobals={onShowDocumentGlobals}
             onSelect={onOutputSelect}
             onExpand={onShowResults}
@@ -2024,9 +1953,6 @@ function ValuePeek({
   status,
   emptyLabel,
   issue,
-  outputReplacement,
-  outputReplacementDisabled = false,
-  onOutputReplacement,
   onShowDocumentGlobals,
   onSelect,
   onExpand,
@@ -2040,9 +1966,6 @@ function ValuePeek({
   status: NodeRunVisualStatus;
   emptyLabel: string;
   issue?: DevelopOutputIssue | null;
-  outputReplacement?: { from: string; to: string } | null;
-  outputReplacementDisabled?: boolean;
-  onOutputReplacement?: () => void;
   onShowDocumentGlobals?: () => void;
   onSelect: (name: string) => void;
   onExpand?: () => void;
@@ -2075,11 +1998,6 @@ function ValuePeek({
                 onClick={() => onSelect(option.name)}
               >
                 <span>{option.name}</span>
-                {option.shown && (
-                  <span className="rounded bg-violet-100 px-1 py-0.5 font-sans text-[9px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                    shown
-                  </span>
-                )}
                 {option.downstream && (
                   <span className="rounded bg-blue-100 px-1 py-0.5 font-sans text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                     output
@@ -2127,9 +2045,6 @@ function ValuePeek({
           ? (
             <DevelopIssue
               issue={issue}
-              outputReplacement={outputReplacement}
-              outputReplacementDisabled={outputReplacementDisabled}
-              onOutputReplacement={onOutputReplacement}
               onShowDocumentGlobals={onShowDocumentGlobals}
             />
           )
@@ -2241,7 +2156,6 @@ function CompactPreview({ preview }: { preview: ValuePreview }) {
 }
 
 type DevelopOutputIssue = {
-  tone: "warning" | "danger";
   title: string;
   detail: string;
   action?: "document_globals";
@@ -2252,19 +2166,9 @@ function getDevelopOutputIssue(
   executionState: ExecutionDisplayState | null,
   runStatus: NodeRunVisualStatus,
   runSummary: NodeRunSummary,
-  preflightIssues: PreflightIssue[],
 ): DevelopOutputIssue | null {
   if (runSummary.variant !== "danger") {
-    const contractIssue = preflightIssues.find((issue) =>
-      issue.kind === "missing_output" && issue.severity === "warning"
-    );
-    return contractIssue
-      ? {
-        tone: "warning",
-        title: "Output contract needs attention",
-        detail: contractIssue.message,
-      }
-      : null;
+    return null;
   }
 
   const blockedByGlobals = executionState?.status === "completed" &&
@@ -2280,7 +2184,6 @@ function getDevelopOutputIssue(
     : runSummary.detail;
 
   return {
-    tone: "danger",
     title: runStatus === "blocked" ? "Step did not run" : runSummary.title,
     detail,
     ...(blockedByGlobals ? { action: "document_globals" as const } : {}),
@@ -2289,23 +2192,13 @@ function getDevelopOutputIssue(
 
 function DevelopIssue({
   issue,
-  outputReplacement,
-  outputReplacementDisabled,
-  onOutputReplacement,
   onShowDocumentGlobals,
 }: {
   issue: DevelopOutputIssue;
-  outputReplacement?: { from: string; to: string } | null;
-  outputReplacementDisabled: boolean;
-  onOutputReplacement?: () => void;
   onShowDocumentGlobals?: () => void;
 }) {
-  const styles = issue.tone === "warning"
-    ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-    : "border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200";
-
   return (
-    <div className={`m-3 rounded border p-3 ${styles}`}>
+    <div className="m-3 rounded border border-red-200 bg-red-50 p-3 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
       <p className="text-sm font-medium">{issue.title}</p>
       <p className="mt-1 text-xs leading-5">{issue.detail}</p>
       <div className="mt-2 flex flex-wrap gap-2">
@@ -2316,16 +2209,6 @@ function DevelopIssue({
             onClick={onShowDocumentGlobals}
           >
             View Document Globals
-          </button>
-        )}
-        {outputReplacement && onOutputReplacement && (
-          <button
-            type="button"
-            className="rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-60"
-            disabled={outputReplacementDisabled}
-            onClick={onOutputReplacement}
-          >
-            Use {outputReplacement.to} instead
           </button>
         )}
       </div>
@@ -2373,19 +2256,15 @@ function getPreviewState(
 
 function NodeOverview({
   selectedNode,
-  outputOptions,
-  outputsReadOnly,
+  metadataReadOnly,
   actionsDisabled,
-  onOutputToggle,
   onNodeMetadataChange,
   onNodeSelect,
   onDeleteNode,
 }: {
   selectedNode: NodeInspectorSelection;
-  outputOptions: OutputOption[];
-  outputsReadOnly: boolean;
+  metadataReadOnly: boolean;
   actionsDisabled: boolean;
-  onOutputToggle: (name: string) => void;
   onNodeMetadataChange: (
     nodeId: string,
     metadata: { description?: string },
@@ -2404,7 +2283,7 @@ function NodeOverview({
             className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
             value={selectedNode.description}
             placeholder="What does this step do?"
-            readOnly={outputsReadOnly}
+            readOnly={metadataReadOnly}
             onChange={(event) =>
               onNodeMetadataChange(selectedNode.id, {
                 description: event.currentTarget.value,
@@ -2418,24 +2297,6 @@ function NodeOverview({
           labelsById={selectedNode.nodeLabelsById}
           onNodeSelect={onNodeSelect}
         />
-
-        <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-              Declared Outputs
-            </h3>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {selectedNode.outputs.length} selected
-            </span>
-          </div>
-          <DeclaredValuesEditor
-            selectedNames={selectedNode.outputs}
-            outputOptions={outputOptions}
-            readOnly={outputsReadOnly}
-            onToggle={onOutputToggle}
-            emptyLabel="No assignable outputs found."
-          />
-        </section>
 
         {(selectedNode.badges.length > 0 || selectedNode.functionName) && (
           <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
@@ -2470,86 +2331,6 @@ function NodeOverview({
   );
 }
 
-function DeclaredValuesEditor({
-  selectedNames,
-  outputOptions,
-  readOnly,
-  onToggle,
-  emptyLabel,
-}: {
-  selectedNames: string[];
-  outputOptions: OutputOption[];
-  readOnly: boolean;
-  onToggle: (name: string) => void;
-  emptyLabel: string;
-}) {
-  if (outputOptions.length === 0) {
-    return (
-      <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-        {emptyLabel}
-      </p>
-    );
-  }
-
-  return (
-    <ul className="mt-2 space-y-1.5">
-      {outputOptions.map((option) => {
-        const checked = selectedNames.includes(option.name);
-        const isMissing = option.source === "missing" && checked;
-        return (
-          <li key={option.name}>
-            <label
-              className={`flex items-center gap-2 rounded border px-3 py-2 text-sm ${
-                isMissing
-                  ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-                  : checked
-                  ? "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  : "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400"
-              } ${
-                readOnly
-                  ? "cursor-not-allowed opacity-70"
-                  : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              }`}
-            >
-              <input
-                type="checkbox"
-                className="sr-only"
-                checked={checked}
-                disabled={readOnly}
-                onChange={() => onToggle(option.name)}
-              />
-              <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                  isMissing
-                    ? "border-amber-700 bg-amber-700 text-white"
-                    : checked
-                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
-                    : "border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900"
-                }`}
-                aria-hidden="true"
-              >
-                {checked && <Check className="h-3 w-3" strokeWidth={3} />}
-              </span>
-              <code className="min-w-0 flex-1 truncate font-mono text-xs">
-                {option.name}
-              </code>
-              <span
-                className={`rounded px-1.5 py-0.5 text-xs ${
-                  isMissing
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                    : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                }`}
-              >
-                {isMissing ? "missing" : option.source}
-              </span>
-            </label>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 function NodeResults({
   selectedNode,
   executionState,
@@ -2557,9 +2338,6 @@ function NodeResults({
   runSummary,
   inputStatus,
   preflightIssues,
-  outputReplacement,
-  outputReplacementDisabled,
-  onOutputReplacement,
   onViewError,
   traceEnabled,
   onTraceEnabledChange,
@@ -2571,9 +2349,6 @@ function NodeResults({
   runSummary: NodeRunSummary;
   inputStatus: string;
   preflightIssues: PreflightIssue[];
-  outputReplacement: { from: string; to: string } | null;
-  outputReplacementDisabled: boolean;
-  onOutputReplacement: () => void;
   onViewError?: () => void;
   traceEnabled: boolean;
   onTraceEnabledChange: (value: boolean) => void;
@@ -2586,9 +2361,6 @@ function NodeResults({
           summary={runSummary}
           inputStatus={inputStatus}
           preflightIssues={preflightIssues}
-          outputReplacement={outputReplacement}
-          outputReplacementDisabled={outputReplacementDisabled}
-          onOutputReplacement={onOutputReplacement}
           onViewError={onViewError}
         />
         <div className={runStatus === "stale" ? "opacity-60" : ""}>
@@ -2662,14 +2434,6 @@ function hasCurrentRunPreviews(
   return false;
 }
 
-function formatMissingOutputsWarning(outputs: string[]): string {
-  const formattedOutputs = outputs.map((output) => `"${output}"`).join(", ");
-  const verb = outputs.length === 1 ? "is" : "are";
-  return `${formattedOutputs} ${verb} declared as an output but not assigned in this step.`;
-}
-
-type OutputOption = { name: string; source: "input" | "assigned" | "missing" };
-
 type NodeRunSummary = {
   variant: "neutral" | "success" | "warning" | "danger" | "info";
   title: string;
@@ -2677,8 +2441,7 @@ type NodeRunSummary = {
 };
 
 type PreflightIssue = {
-  kind: "missing_output" | "missing_input_preview";
-  severity: "info" | "warning";
+  kind: "missing_input_preview";
   message: string;
 };
 
@@ -2686,25 +2449,14 @@ function NodeRunBanner({
   summary,
   inputStatus,
   preflightIssues,
-  outputReplacement,
-  outputReplacementDisabled,
-  onOutputReplacement,
   onViewError,
 }: {
   summary: NodeRunSummary;
   inputStatus: string;
   preflightIssues: PreflightIssue[];
-  outputReplacement: { from: string; to: string } | null;
-  outputReplacementDisabled: boolean;
-  onOutputReplacement: () => void;
   onViewError?: () => void;
 }) {
-  const hasWarningIssue = preflightIssues.some((issue) =>
-    issue.severity === "warning"
-  );
-  const variant = summary.variant === "neutral" && hasWarningIssue
-    ? "warning"
-    : summary.variant;
+  const variant = summary.variant;
   const styles = {
     neutral: "border-zinc-200 bg-white text-zinc-700",
     success: "border-emerald-200 bg-emerald-50 text-emerald-900",
@@ -2744,16 +2496,6 @@ function NodeRunBanner({
                 </li>
               ))}
             </ul>
-          )}
-          {outputReplacement && (
-            <button
-              type="button"
-              className="mt-2 rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={outputReplacementDisabled}
-              onClick={onOutputReplacement}
-            >
-              Use {outputReplacement.to} instead of {outputReplacement.from}
-            </button>
           )}
         </div>
       </div>
@@ -2915,17 +2657,8 @@ function getNodeRunSummary(
 
 function getNodePreflightIssues(
   selectedNode: NodeInspectorSelection,
-  missingSelectedOutputs: string[],
 ): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
-
-  if (missingSelectedOutputs.length > 0) {
-    issues.push({
-      kind: "missing_output",
-      severity: "warning",
-      message: formatMissingOutputsWarning(missingSelectedOutputs),
-    });
-  }
 
   const missingInputPreviews = selectedNode.inputGroups.reduce(
     (count, group) =>
@@ -2937,7 +2670,6 @@ function getNodePreflightIssues(
   if (missingInputPreviews > 0) {
     issues.push({
       kind: "missing_input_preview",
-      severity: "info",
       message: `${missingInputPreviews} upstream ${
         missingInputPreviews === 1 ? "input has" : "inputs have"
       } not been previewed yet.`,
@@ -2945,28 +2677,6 @@ function getNodePreflightIssues(
   }
 
   return issues;
-}
-
-function getSimpleOutputReplacement(
-  declaredOutputs: string[],
-  outputOptions: OutputOption[],
-): { from: string; to: string } | null {
-  const declared = new Set(declaredOutputs);
-  const selectedMissing = outputOptions.filter((option) =>
-    option.source === "missing" && declared.has(option.name)
-  );
-  const unselectedAssigned = outputOptions.filter((option) =>
-    option.source === "assigned" && !declared.has(option.name)
-  );
-
-  if (selectedMissing.length !== 1 || unselectedAssigned.length !== 1) {
-    return null;
-  }
-
-  return {
-    from: selectedMissing[0].name,
-    to: unselectedAssigned[0].name,
-  };
 }
 
 function FlowNavigation({
@@ -3087,35 +2797,6 @@ function OutputPreviewSection({
       <ResultOutputTabs previews={previews} title={title} />
     </section>
   );
-}
-
-function getOutputOptions(
-  inputNames: string[],
-  inferredOutputs: string[],
-  declaredOutputs: string[],
-): OutputOption[] {
-  const options: OutputOption[] = [];
-  const seen = new Set<string>();
-
-  for (const name of inputNames) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    options.push({ name, source: "input" });
-  }
-
-  for (const name of inferredOutputs) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    options.push({ name, source: "assigned" });
-  }
-
-  for (const name of declaredOutputs) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    options.push({ name, source: "missing" });
-  }
-
-  return options;
 }
 
 function TraceToggle({
@@ -3257,7 +2938,6 @@ export function InspectorPanel({
   onNodeNameChange,
   onNodeMetadataChange,
   onGlobalsCodeChange,
-  onOutputsChange,
   onTraceEnabledChange,
   onDeleteNode,
   onRunToNode,
@@ -3504,7 +3184,6 @@ export function InspectorPanel({
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}
                 onCodeChange={onCodeChange}
-                onOutputsChange={onOutputsChange}
                 onNodeMetadataChange={onNodeMetadataChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}

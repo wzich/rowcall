@@ -32,7 +32,7 @@ runtime parses source into an executable graph before planning and execution.
 A Node is a small block of Python code that can run on its own or as part of a
 Graph. The current runtime uses namespace isolation: each Node executes with a
 fresh Python namespace, so normal variables do not persist across Nodes unless
-they are declared outputs and flow through Edges. A Node can access:
+they are explicitly routed through Edges. A Node can access:
 
 - variables it defines in its own code
 - named values routed from directly connected upstream Nodes
@@ -50,21 +50,27 @@ Namespace isolation is not process isolation. Nodes in the same Run currently
 share one Python process, so deliberate process-global side effects such as
 mutating imported modules or `builtins` may be visible to later Nodes. The
 runtime contract treats that as outside the normal data-flow model: portable
-Rowcall programs should communicate through Declared Outputs and Edges.
+Rowcall programs should communicate through named routes.
 
-### Declared Outputs
+### Routed Outputs
 
-Declared Outputs are the variable names a Node exports for downstream use. Not
-all variables defined in a Node are exported. Only Declared Outputs are
-available to downstream Nodes.
+Routed Outputs are stable variable names used as the source of one or more
+outgoing Edges. Not all variables defined in a Node are routed, and only a value
+selected by an outgoing route is available to that route's downstream Node.
 
-During a Run, Declared Output values may be arbitrary Python objects. Downstream
-Nodes receive copied values from upstream Declared Outputs so rich objects such
-as data frames do not need to be serialized between Nodes. Runtime responses do
-not return those Python objects directly. They return JSON-serializable
-`ValuePreview` records containing the output name, Python type, truncated
-`repr`, and optionally `jsonValue` when the value is a small plain
-JSON-compatible primitive or container.
+Edges are the authored source of truth. Creating the first route from a source
+variable adds that name to the Node's generated output list and return
+dictionary; removing its final route removes that generated plumbing. The
+`outputs` field in parsed and runtime Node models materializes those routes for
+execution and compatibility. It is not a second user-authored declaration.
+
+During a Run, routed values may be arbitrary Python objects. Downstream Nodes
+receive copied routed values so rich objects such as data frames do not need to
+be serialized between Nodes. Runtime responses do not return those Python
+objects directly. They return JSON-serializable `ValuePreview` records
+containing the output name, Python type, truncated `repr`, and optionally
+`jsonValue` when the value is a small plain JSON-compatible primitive or
+container.
 
 ### Displays
 
@@ -96,8 +102,8 @@ base64; the public CLI omits those bytes and exposes only image metadata.
 An Edge is a one-way route from one stable named output to one downstream input.
 The document stores `fromNode`, `fromOutput`, `toNode`, and `toInput` for every
 route. Creating the first route from a source variable promotes it into the
-generated output contract; deleting its final route removes it from that
-contract. Runtime values and dictionary members never become graph nodes.
+generated return plumbing; deleting its final route removes that plumbing.
+Runtime values and dictionary members never become graph nodes.
 
 The common same-name form binds the selected output to an input of the same
 name:
@@ -210,7 +216,7 @@ Future runtime configurations may expose explicit isolation modes:
 - process isolation, where Nodes run in separate processes and values must cross
   a serialization boundary
 - namespace isolation, where Nodes share a Python process but get fresh
-  namespaces and copied Declared Outputs
+  namespaces and copied routed values
 - no isolation, where Nodes intentionally share the same execution namespace
 
 ## Streaming Execution

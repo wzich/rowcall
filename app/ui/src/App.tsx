@@ -667,9 +667,7 @@ export default function App() {
       functionName: node.functionName ?? null,
       code: node.displayCode ?? node.code,
       editable: node.editable ?? true,
-      outputs: node.outputs,
-      inferredOutputs: inferAssignableOutputs(node.displayCode ?? node.code),
-      inputNames: node.parameters ?? [],
+      routedOutputs: node.outputs,
       inputGroups: getNodeInputGroups(
         editableGraph,
         node.id,
@@ -1884,7 +1882,6 @@ export default function App() {
               onNodeNameChange={handleNodeNameChange}
               onNodeMetadataChange={handleNodeMetadataChange}
               onGlobalsCodeChange={handleGlobalsCodeChange}
-              onOutputsChange={handleOutputsChange}
               onTraceEnabledChange={setTraceEnabled}
               onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
               onRunToNode={handleRunToNode}
@@ -2950,7 +2947,7 @@ function getNodeOutputOptionsById(
 function getNodeOutputOptions(
   inputNames: string[],
   inferredOutputs: string[],
-  declaredOutputs: string[],
+  routedOutputs: string[],
 ): Array<{ name: string; source: "input" | "assigned" | "missing" }> {
   const options: Array<
     { name: string; source: "input" | "assigned" | "missing" }
@@ -2969,7 +2966,7 @@ function getNodeOutputOptions(
     options.push({ name, source: "assigned" });
   }
 
-  for (const name of declaredOutputs) {
+  for (const name of routedOutputs) {
     if (seen.has(name)) continue;
     seen.add(name);
     options.push({ name, source: "missing" });

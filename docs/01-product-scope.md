@@ -124,9 +124,9 @@ computation.
 
 **Caching** — a future version may cache node outputs using the node's code and
 upstream cache keys. A carefully designed cache could reuse valid upstream
-Python objects while still only exposing declared outputs to downstream Nodes.
-The invited beta does not implement this; all runs recompute their complete
-plans afresh.
+Python objects while still only exposing routed values to downstream Nodes. The
+invited beta does not implement this; all runs recompute their complete plans
+afresh.
 
 **AI features** — nodes can collapse into AI-generated one-line descriptions of
 what they do (easy given explicit inputs/outputs). Code inside a node can be
