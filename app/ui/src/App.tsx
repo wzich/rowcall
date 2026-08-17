@@ -673,12 +673,6 @@ export default function App() {
         inferAssignableOutputs(node.displayCode ?? node.code),
         node.outputs,
       ),
-      inputGroups: getNodeInputGroups(
-        editableGraph,
-        node.id,
-        executionStateByNodeId,
-        nodeRunStatuses,
-      ),
       variablePreviews: getVariablePreviewsForNode(
         node.id,
         executionStateByNodeId,
@@ -692,7 +686,6 @@ export default function App() {
     editableGraph,
     executionStateByNodeId,
     graphNodeDetails,
-    nodeRunStatuses,
     selectedNodeId,
   ]);
 

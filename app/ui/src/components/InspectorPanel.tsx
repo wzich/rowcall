@@ -23,8 +23,6 @@ import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
 import { ResultTable } from "./ResultTable.tsx";
 import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
-import { isJsonContainer } from "./jsonPreviewState.ts";
-import { hasResultPreviews } from "./viewState.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
@@ -70,19 +68,11 @@ export type NodeInspectorSelection = {
     name: string;
     source: "input" | "assigned" | "missing";
   }>;
-  inputGroups: NodeInspectorInputGroup[];
   variablePreviews: Record<string, ValuePreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   nodeLabelsById: Record<string, string>;
   badges: NodeInspectorBadge[];
-};
-
-export type NodeInspectorInputGroup = {
-  nodeId: string;
-  label: string;
-  values: Record<string, ValuePreview | null>;
-  status?: NodeRunVisualStatus;
 };
 
 type NodeInspectorMode = "code" | "results";
@@ -240,52 +230,6 @@ function NodeIdButton({
     >
       {label}
     </button>
-  );
-}
-
-function DependencyList({
-  title,
-  items,
-  emptyLabel,
-  labelsById = {},
-  onNodeSelect,
-}: {
-  title: string;
-  items: string[];
-  emptyLabel: string;
-  labelsById?: Record<string, string>;
-  onNodeSelect: (nodeId: string) => void;
-}) {
-  return (
-    <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-          {title}
-        </h3>
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          {items.length}
-        </span>
-      </div>
-      {items.length === 0
-        ? (
-          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-            {emptyLabel}
-          </p>
-        )
-        : (
-          <ul className="mt-2 space-y-1">
-            {items.map((item) => (
-              <li key={item}>
-                <NodeIdButton
-                  nodeId={item}
-                  label={labelsById[item]}
-                  onNodeSelect={onNodeSelect}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-    </section>
   );
 }
 
@@ -571,78 +515,6 @@ function FlatPreview({
   );
 }
 
-function ResultOutputTabs({
-  previews,
-  title = "Outputs",
-  interactiveTable,
-}: {
-  previews: Record<string, ValuePreview>;
-  title?: string;
-  interactiveTable?: {
-    identity: ResultStoreIdentity;
-    nodeId: string;
-  };
-}) {
-  const options = Object.entries(previews);
-  const [selectedName, setSelectedName] = useState(options[0]?.[0] ?? "");
-
-  useEffect(() => {
-    if (!options.some(([name]) => name === selectedName)) {
-      setSelectedName(options[0]?.[0] ?? "");
-    }
-  }, [options, selectedName]);
-
-  const selected = options.find(([name]) => name === selectedName) ??
-    options[0];
-
-  if (!selected) {
-    return (
-      <section>
-        <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-          {title}
-        </h4>
-        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-          No {title.toLowerCase()}.
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <section>
-      <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-        {title}
-      </h4>
-      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-700">
-        {options.map(([name]) => (
-          <button
-            key={name}
-            type="button"
-            className={[
-              "shrink-0 border-b-2 px-0.5 pb-2 font-mono text-xs",
-              name === selected[0]
-                ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
-                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
-            ].join(" ")}
-            onClick={() => setSelectedName(name)}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
-      <FlatPreview
-        preview={{ ...selected[1], name: selected[0] }}
-        interactiveTable={interactiveTable
-          ? {
-            ...interactiveTable,
-            outputName: selected[0],
-          }
-          : undefined}
-      />
-    </section>
-  );
-}
-
 function DisplayResults({ displays }: { displays: ValuePreview[] }) {
   if (displays.length === 0) return null;
 
@@ -658,22 +530,6 @@ function DisplayResults({ displays }: { displays: ValuePreview[] }) {
       </div>
     </section>
   );
-}
-
-function getLatestDisplaysForNode(
-  executionState: ExecutionDisplayState | null,
-  nodeId: string,
-): ValuePreview[] {
-  if (!executionState) return [];
-  if (
-    executionState.status === "completed_node" ||
-    executionState.status === "failed_node"
-  ) {
-    return executionState.result.displays;
-  }
-  if (executionState.status !== "completed") return [];
-  return executionState.latestFailure?.resultsByNode[nodeId]?.displays ??
-    executionState.response.resultsByNode[nodeId]?.displays ?? [];
 }
 
 function WarningList({ warnings }: { warnings: string[] }) {
@@ -715,265 +571,6 @@ function TextOutputBlock({
       </h4>
       <pre className={blockClassName}>{value}</pre>
     </section>
-  );
-}
-
-function RunResult({
-  selectedNode,
-  executionState,
-}: {
-  selectedNode: NodeInspectorSelection;
-  executionState: ExecutionDisplayState | null;
-}) {
-  if (!executionState) {
-    return null;
-  }
-
-  if (executionState.status === "running") {
-    return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <p className="mt-2 text-sm text-zinc-600">Running...</p>
-      </section>
-    );
-  }
-
-  if (executionState.status === "request_error") {
-    return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-          <p className="text-sm font-medium text-red-800">
-            Could not start run
-          </p>
-          <p className="mt-1 text-sm text-red-700">
-            The request failed before Python execution completed.
-          </p>
-          <p className="mt-2 font-mono text-xs text-red-950">
-            {executionState.message}
-          </p>
-        </div>
-      </section>
-    );
-  }
-
-  if (
-    executionState.status === "completed_node" ||
-    executionState.status === "failed_node"
-  ) {
-    const nodeResult = executionState.result;
-
-    return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <p
-          className={[
-            "mt-2 text-sm font-medium",
-            nodeResult.ok ? "text-zinc-700" : "text-red-800",
-          ].join(" ")}
-        >
-          {nodeResult.ok ? "Node completed" : "Node failed"}
-        </p>
-
-        <div className="mt-4">
-          <DisplayResults displays={nodeResult.displays} />
-        </div>
-
-        {!nodeResult.ok && (
-          <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-            <p className="text-sm font-medium text-red-800">
-              Python execution failed.
-            </p>
-            {nodeResult.error && (
-              <p className="mt-1 text-sm text-red-700">{nodeResult.error}</p>
-            )}
-          </div>
-        )}
-
-        <div className="mt-4 space-y-4">
-          <ResultOutputTabs previews={nodeResult.outputs} />
-          <TextOutputBlock title="Stdout" value={nodeResult.stdout} />
-          <WarningList warnings={nodeResult.warnings} />
-          <TextOutputBlock
-            title="Stderr"
-            value={nodeResult.stderr}
-            variant="danger"
-          />
-        </div>
-      </section>
-    );
-  }
-
-  const response = executionState.response;
-  const nodeResult = response.resultsByNode[selectedNode.id];
-  const latestFailure = executionState.freshness === "failed_run"
-    ? executionState.latestFailure
-    : undefined;
-  const failureResponse = latestFailure ?? (!response.ok ? response : null);
-  const latestAttemptResult = failureResponse?.resultsByNode[selectedNode.id];
-  const traceStep =
-    (failureResponse ?? response).trace?.find((step) =>
-      step.nodeId === selectedNode.id
-    ) ?? null;
-
-  if (!nodeResult && !response.ok) {
-    const failedNodeId = response.error?.nodeId;
-    const globalsFailed = response.error?.phase === "document_globals";
-    const subject = response.runType === "run_to_node" &&
-        response.targetNodeId === selectedNode.id
-      ? "Target"
-      : "This node";
-
-    return (
-      <section className="border-t border-zinc-200 pt-4">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500">
-          Run Result
-        </h3>
-        <p className="mt-2 text-sm font-medium text-red-800">Run failed</p>
-        <div className="mt-2 rounded border border-red-200 bg-red-50 p-3">
-          <p className="text-sm font-medium text-red-800">
-            {globalsFailed
-              ? `${subject} did not run because Document Globals failed.`
-              : failedNodeId
-              ? (
-                <>
-                  {subject} did not run because{" "}
-                  {selectedNode.nodeLabelsById[failedNodeId] ?? "a step"}{" "}
-                  failed.
-                </>
-              )
-              : `${subject} did not run because an upstream node failed.`}
-          </p>
-          {globalsFailed && response.error?.message && (
-            <p className="mt-1 text-sm text-red-700">
-              {response.error.message}
-            </p>
-          )}
-        </div>
-        <NodeTraceResult
-          step={traceStep}
-          label={selectedNode.displayName}
-          nodeLabelsById={selectedNode.nodeLabelsById}
-        />
-      </section>
-    );
-  }
-
-  const outputs = nodeResult?.outputs ?? {};
-  const displays = latestAttemptResult?.displays ?? nodeResult?.displays ?? [];
-  const stdout = latestAttemptResult?.stdout ?? nodeResult?.stdout ?? "";
-  const stderr = latestAttemptResult?.stderr ?? nodeResult?.stderr ?? "";
-  const warnings = latestAttemptResult?.warnings ?? nodeResult?.warnings ?? [];
-  const interactiveTable = response.resultStore &&
-      (executionState.freshness === "fresh" ||
-        executionState.freshness === "failed_run")
-    ? {
-      identity: response.resultStore,
-      nodeId: selectedNode.id,
-    }
-    : undefined;
-
-  return (
-    <section className="border-t border-zinc-200 pt-4">
-      <h3 className="text-xs font-semibold uppercase text-zinc-500">
-        Run Result
-      </h3>
-      <p
-        className={[
-          "mt-2 text-sm font-medium",
-          failureResponse ? "text-red-800" : "text-zinc-700",
-        ].join(" ")}
-      >
-        {failureResponse ? "Latest run failed" : "Run succeeded"}
-      </p>
-
-      {executionState.freshness === "failed_run" && (
-        <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-          <p className="text-sm font-medium">Showing the previous result</p>
-          <p className="mt-1 text-xs">
-            The latest run failed, so this successful result was kept for
-            inspection.
-          </p>
-        </div>
-      )}
-
-      <DisplayResults displays={displays} />
-
-      {failureResponse && (
-        <RunFailureDetails
-          response={failureResponse}
-          nodeId={selectedNode.id}
-        />
-      )}
-
-      <div className="mt-4 space-y-4">
-        <ResultOutputTabs
-          previews={outputs}
-          interactiveTable={interactiveTable}
-        />
-        <TextOutputBlock title="Stdout" value={stdout} />
-        <WarningList warnings={warnings} />
-        <TextOutputBlock
-          title="Stderr"
-          value={stderr}
-          variant="danger"
-        />
-      </div>
-      <NodeTraceResult
-        step={traceStep}
-        label={selectedNode.displayName}
-        nodeLabelsById={selectedNode.nodeLabelsById}
-      />
-    </section>
-  );
-}
-
-function RunFailureDetails({
-  response,
-  nodeId,
-}: {
-  response: ExecutionResponse;
-  nodeId: string;
-}) {
-  const nodeResult = response.resultsByNode[nodeId];
-  const messages = [response.error?.message, nodeResult?.error]
-    .filter((message): message is string => Boolean(message))
-    .filter((message, index, all) => all.indexOf(message) === index);
-  const stderr = nodeResult?.stderr || response.error?.stderr || "";
-
-  return (
-    <div className="mt-2 space-y-3">
-      <div className="rounded border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/40">
-        <p className="text-sm font-medium text-red-800 dark:text-red-200">
-          Latest failure
-        </p>
-        {messages.length > 0
-          ? messages.map((message) => (
-            <p
-              key={message}
-              className="mt-1 text-sm text-red-700 dark:text-red-300"
-            >
-              {message}
-            </p>
-          ))
-          : (
-            <p className="mt-1 text-sm text-red-700 dark:text-red-300">
-              Python execution failed.
-            </p>
-          )}
-      </div>
-      <TextOutputBlock
-        title="Latest run stderr"
-        value={stderr}
-        variant="danger"
-      />
-    </div>
   );
 }
 
@@ -1613,7 +1210,6 @@ function NodeInspector({
   onNodeMetadataChange,
   onNodeSelect,
   onRunToNode,
-  onModeChange,
   traceEnabled,
   onTraceEnabledChange,
   onDeleteNode,
@@ -1637,7 +1233,6 @@ function NodeInspector({
   ) => void;
   onNodeSelect: (nodeId: string) => void;
   onRunToNode: (nodeId: string) => void;
-  onModeChange: (mode: NodeInspectorMode) => void;
   traceEnabled: boolean;
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
@@ -1707,35 +1302,6 @@ function NodeInspector({
       errorFocusRequestId={errorFocusRequestId}
     />
   );
-}
-
-type InspectorPreviewOption = {
-  name: string;
-  preview: ValuePreview | null;
-  downstream?: boolean;
-  sourceNodeId?: string;
-  sourceLabel?: string;
-  status?: NodeRunVisualStatus;
-};
-
-function flattenInputPreviews(
-  groups: NodeInspectorInputGroup[],
-): InspectorPreviewOption[] {
-  return groups.flatMap((group) =>
-    Object.entries(group.values).map(([name, preview]) => ({
-      name,
-      preview,
-      sourceNodeId: group.nodeId,
-      sourceLabel: group.label,
-      status: group.status,
-    }))
-  );
-}
-
-function getPreferredPreviewName(options: InspectorPreviewOption[]): string {
-  return options.find((option) => option.preview?.image)?.name ??
-    options.find((option) => option.preview?.table)?.name ??
-    options[0]?.name ?? "";
 }
 
 function NodeCode({
@@ -1884,279 +1450,6 @@ function NodeCode({
   );
 }
 
-function ValuePeek({
-  label,
-  direction,
-  className,
-  options,
-  selectedName,
-  selectedOption,
-  status,
-  emptyLabel,
-  issue,
-  onShowDocumentGlobals,
-  onSelect,
-  onExpand,
-}: {
-  label: string;
-  direction: "input" | "output";
-  className: string;
-  options: InspectorPreviewOption[];
-  selectedName: string;
-  selectedOption: InspectorPreviewOption | null;
-  status: NodeRunVisualStatus;
-  emptyLabel: string;
-  issue?: DevelopOutputIssue | null;
-  onShowDocumentGlobals?: () => void;
-  onSelect: (name: string) => void;
-  onExpand?: () => void;
-}) {
-  const state = getPreviewState(status, Boolean(selectedOption?.preview));
-  const isStale = status === "stale";
-
-  return (
-    <section
-      className={`flex shrink-0 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900 ${className}`}
-    >
-      <div className="flex h-12 shrink-0 items-end gap-4 border-b border-zinc-200 bg-zinc-50 px-4 dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex shrink-0 items-center pb-2.5">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
-            {label}
-          </h3>
-        </div>
-        <div className="flex min-w-0 flex-1 items-end gap-4 overflow-x-auto">
-          {options.map((option) => {
-            const selected = option.name === selectedName;
-            return (
-              <button
-                key={option.name}
-                type="button"
-                className={`flex shrink-0 items-center gap-1.5 border-b-2 pb-2.5 font-mono text-xs ${
-                  selected
-                    ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
-                    : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                }`}
-                onClick={() => onSelect(option.name)}
-              >
-                <span>{option.name}</span>
-                {option.downstream && (
-                  <span className="rounded bg-blue-100 px-1 py-0.5 font-sans text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                    output
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex shrink-0 items-center gap-3 pb-2.5">
-          {state && (
-            <span
-              className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${state.className}`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${state.dotClassName}`}
-              />
-              {state.label}
-            </span>
-          )}
-          {onExpand && (
-            <button
-              type="button"
-              className="text-[11px] font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
-              onClick={onExpand}
-            >
-              Expand ↗
-            </button>
-          )}
-        </div>
-      </div>
-
-      {selectedOption &&
-        !(
-          !selectedOption.preview?.table &&
-          isJsonContainer(selectedOption.preview?.jsonValue)
-        ) && <PreviewMetadata option={selectedOption} direction={direction} />}
-
-      <div
-        className={`min-h-0 flex-1 overflow-auto ${
-          isStale ? "opacity-55 grayscale-[0.2]" : ""
-        }`}
-      >
-        {issue
-          ? (
-            <DevelopIssue
-              issue={issue}
-              onShowDocumentGlobals={onShowDocumentGlobals}
-            />
-          )
-          : selectedOption?.preview
-          ? <CompactPreview preview={selectedOption.preview} />
-          : (
-            <div className="flex h-full items-center justify-center px-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
-              {selectedOption
-                ? "Run through this step to create a preview."
-                : emptyLabel}
-            </div>
-          )}
-      </div>
-    </section>
-  );
-}
-
-function PreviewMetadata({
-  option,
-  direction,
-}: {
-  option: InspectorPreviewOption;
-  direction: "input" | "output";
-}) {
-  const table = option.preview?.table;
-  return (
-    <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-zinc-200 px-4 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-      {direction === "input" && option.sourceLabel && (
-        <>
-          <span>from</span>
-          <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
-            {option.sourceLabel}
-          </span>
-          <span>·</span>
-        </>
-      )}
-      {table
-        ? (
-          <>
-            <span>
-              {table.rowCount.toLocaleString()} rows × {table.columnCount}{" "}
-              columns
-            </span>
-            <span className="ml-auto">First {table.rows.length} rows</span>
-          </>
-        )
-        : (
-          <span className="font-mono">
-            {option.preview?.type ?? "not previewed"}
-          </span>
-        )}
-    </div>
-  );
-}
-
-function CompactPreview({ preview }: { preview: ValuePreview }) {
-  if (preview.image) {
-    return <ImagePreviewBlock image={preview.image} alt={preview.name} />;
-  }
-  if (!preview.table) {
-    return <JsonPreview preview={preview} variant="compact" />;
-  }
-
-  const table = preview.table;
-  return (
-    <table className="min-w-full border-separate border-spacing-0 text-left font-mono text-[10px] text-zinc-800 dark:text-zinc-200">
-      <thead className="sticky top-0 z-[1] bg-zinc-100 dark:bg-zinc-800">
-        <tr>
-          {table.index && (
-            <th
-              className="sticky left-0 z-[2] border-b border-r border-zinc-300 bg-zinc-100 px-3 py-1 font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800"
-              title={table.indexLabel ?? "index"}
-            >
-              #
-            </th>
-          )}
-          {table.columns.map((column) => (
-            <th
-              key={column.name}
-              className="whitespace-nowrap border-b border-r border-zinc-300 px-3 py-1 font-semibold text-zinc-600 last:border-r-0 dark:border-zinc-700 dark:text-zinc-300"
-              title={column.dtype}
-            >
-              {column.name}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {table.rows.map((row, rowIndex) => (
-          <tr key={rowIndex}>
-            {table.index && (
-              <td className="sticky left-0 z-[1] whitespace-nowrap border-b border-r border-zinc-100 bg-white px-3 py-1 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
-                <CellValue value={table.index[rowIndex] ?? null} />
-              </td>
-            )}
-            {row.map((cell, columnIndex) => (
-              <td
-                key={columnIndex}
-                className="whitespace-nowrap border-b border-r border-zinc-100 px-3 py-1 last:border-r-0 dark:border-zinc-800"
-              >
-                <CellValue value={cell} />
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-type DevelopOutputIssue = {
-  title: string;
-  detail: string;
-  action?: "document_globals";
-};
-
-function getDevelopOutputIssue(
-  selectedNode: NodeInspectorSelection,
-  executionState: ExecutionDisplayState | null,
-  runStatus: NodeRunVisualStatus,
-  runSummary: NodeRunSummary,
-): DevelopOutputIssue | null {
-  if (runSummary.variant !== "danger") {
-    return null;
-  }
-
-  const blockedByGlobals = executionState?.status === "completed" &&
-    !executionState.response.ok &&
-    executionState.response.error?.phase === "document_globals";
-  const detail = executionState?.status === "completed" &&
-      executionState.response.error?.nodeId &&
-      executionState.response.error.nodeId !== selectedNode.id
-    ? `Upstream step ${
-      selectedNode.nodeLabelsById[executionState.response.error.nodeId] ??
-        executionState.response.error.nodeId
-    } failed before this step could run.`
-    : runSummary.detail;
-
-  return {
-    title: runStatus === "blocked" ? "Step did not run" : runSummary.title,
-    detail,
-    ...(blockedByGlobals ? { action: "document_globals" as const } : {}),
-  };
-}
-
-function DevelopIssue({
-  issue,
-  onShowDocumentGlobals,
-}: {
-  issue: DevelopOutputIssue;
-  onShowDocumentGlobals?: () => void;
-}) {
-  return (
-    <div className="m-3 rounded border border-red-200 bg-red-50 p-3 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
-      <p className="text-sm font-medium">{issue.title}</p>
-      <p className="mt-1 text-xs leading-5">{issue.detail}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {issue.action === "document_globals" && onShowDocumentGlobals && (
-          <button
-            type="button"
-            className="rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-100 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
-            onClick={onShowDocumentGlobals}
-          >
-            View Document Globals
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function getPreviewState(
   status: NodeRunVisualStatus,
   hasPreview: boolean,
@@ -2193,83 +1486,6 @@ function getPreviewState(
     };
   }
   return null;
-}
-
-function NodeOverview({
-  selectedNode,
-  metadataReadOnly,
-  actionsDisabled,
-  onNodeMetadataChange,
-  onNodeSelect,
-  onDeleteNode,
-}: {
-  selectedNode: NodeInspectorSelection;
-  metadataReadOnly: boolean;
-  actionsDisabled: boolean;
-  onNodeMetadataChange: (
-    nodeId: string,
-    metadata: { description?: string },
-  ) => void;
-  onNodeSelect: (nodeId: string) => void;
-  onDeleteNode?: (nodeId: string) => void;
-}) {
-  return (
-    <div className="h-full overflow-y-auto px-5 py-4">
-      <div className="space-y-5">
-        <section>
-          <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-            Description
-          </label>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-            value={selectedNode.description}
-            placeholder="What does this step do?"
-            readOnly={metadataReadOnly}
-            onChange={(event) =>
-              onNodeMetadataChange(selectedNode.id, {
-                description: event.currentTarget.value,
-              })}
-          />
-        </section>
-
-        <FlowNavigation
-          upstreamDependencies={selectedNode.upstreamDependencies}
-          downstreamDependencies={selectedNode.downstreamDependencies}
-          labelsById={selectedNode.nodeLabelsById}
-          onNodeSelect={onNodeSelect}
-        />
-
-        {(selectedNode.badges.length > 0 || selectedNode.functionName) && (
-          <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
-            <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-              Identity
-            </h3>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-              {selectedNode.badges.map((badge) => (
-                <span
-                  key={badge}
-                  className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
-                >
-                  {badge}
-                </span>
-              ))}
-              <code className="rounded bg-zinc-100 px-2 py-1 font-mono dark:bg-zinc-800">
-                {selectedNode.functionName ?? "custom Python"}
-              </code>
-            </div>
-          </section>
-        )}
-
-        {onDeleteNode && (
-          <DeleteNodeAction
-            selectedNode={selectedNode}
-            disabled={actionsDisabled}
-            onDeleteNode={onDeleteNode}
-          />
-        )}
-      </div>
-    </div>
-  );
 }
 
 function NodeResults({
@@ -2554,68 +1770,10 @@ function getMissingVariablePreviewMessage(
   return "Run through this step to capture its final value.";
 }
 
-function getInputStatusLabel(
-  selectedNode: NodeInspectorSelection,
-  runStatus: NodeRunVisualStatus,
-): string {
-  const inputCount = selectedNode.inputGroups.reduce(
-    (sum, group) => sum + Object.keys(group.values).length,
-    0,
-  );
-  const previewCount = selectedNode.inputGroups.reduce(
-    (sum, group) =>
-      sum +
-      Object.values(group.values).filter((value) => value !== null).length,
-    0,
-  );
-
-  if (inputCount === 0) {
-    return "This source step has no upstream inputs.";
-  }
-
-  if (runStatus === "stale") {
-    return "Inputs may be stale. Run through this step to rebuild its required upstream inputs.";
-  }
-
-  if (previewCount === inputCount) {
-    return "Run through this step to rebuild upstream inputs before executing it.";
-  }
-
-  return "Run through this step to execute its required upstream steps first.";
-}
-
-function hasCurrentRunPreviews(
-  nodeId: string,
-  executionState: ExecutionDisplayState | null,
-): boolean {
-  if (!executionState) {
-    return false;
-  }
-
-  if (
-    executionState.status === "completed_node" ||
-    executionState.status === "failed_node"
-  ) {
-    return hasResultPreviews(executionState.result);
-  }
-
-  if (executionState.status === "completed") {
-    const nodeResult = executionState.response.resultsByNode[nodeId];
-    return hasResultPreviews(nodeResult);
-  }
-
-  return false;
-}
-
 type NodeRunSummary = {
   variant: "neutral" | "success" | "warning" | "danger" | "info";
   title: string;
   detail: string;
-};
-
-type PreflightIssue = {
-  kind: "missing_input_preview";
-  message: string;
 };
 
 function NodeRunBanner({
@@ -2833,30 +1991,6 @@ function getNodeRunSummary(
   };
 }
 
-function getNodePreflightIssues(
-  selectedNode: NodeInspectorSelection,
-): PreflightIssue[] {
-  const issues: PreflightIssue[] = [];
-
-  const missingInputPreviews = selectedNode.inputGroups.reduce(
-    (count, group) =>
-      count +
-      Object.values(group.values).filter((preview) => preview === null).length,
-    0,
-  );
-
-  if (missingInputPreviews > 0) {
-    issues.push({
-      kind: "missing_input_preview",
-      message: `${missingInputPreviews} upstream ${
-        missingInputPreviews === 1 ? "input has" : "inputs have"
-      } not been previewed yet.`,
-    });
-  }
-
-  return issues;
-}
-
 function FlowNavigation({
   upstreamDependencies,
   downstreamDependencies,
@@ -2924,56 +2058,6 @@ function NodeLinkList({
           </div>
         )}
     </div>
-  );
-}
-
-function InputPreviewSection({
-  inputGroups,
-}: {
-  inputGroups: NodeInspectorInputGroup[];
-}) {
-  return (
-    <section className="border-t border-zinc-200 pt-4">
-      <h3 className="text-xs font-semibold uppercase text-zinc-500">
-        Inputs
-      </h3>
-      {inputGroups.length === 0
-        ? <p className="mt-2 text-sm text-zinc-500">No upstream inputs.</p>
-        : (
-          <div className="mt-2 space-y-3">
-            {inputGroups.map((group) => (
-              <div key={group.nodeId}>
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-xs text-zinc-500">from</span>
-                  <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700">
-                    {group.label}
-                  </code>
-                </div>
-                <PreviewBlock previews={group.values} />
-              </div>
-            ))}
-          </div>
-        )}
-    </section>
-  );
-}
-
-function OutputPreviewSection({
-  previews,
-  title = "Output previews",
-}: {
-  previews: Record<string, ValuePreview>;
-  title?: string;
-}) {
-  const entries = Object.entries(previews);
-  if (entries.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className="border-t border-zinc-200 pt-4">
-      <ResultOutputTabs previews={previews} title={title} />
-    </section>
   );
 }
 
@@ -3388,7 +2472,6 @@ export function InspectorPanel({
                 onNodeMetadataChange={onNodeMetadataChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}
-                onModeChange={setInspectorMode}
                 traceEnabled={traceEnabled}
                 onTraceEnabledChange={onTraceEnabledChange}
                 onDeleteNode={onDeleteNode}
