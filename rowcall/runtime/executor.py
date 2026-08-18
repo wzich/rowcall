@@ -113,6 +113,23 @@ class DisplayIntrinsic:
             self._active.reset(token)
 
 
+def close_open_matplotlib_figures() -> None:
+    """Close pyplot-managed figures without importing Matplotlib for other runs."""
+    pyplot = sys.modules.get("matplotlib.pyplot")
+    if pyplot is None:
+        return
+
+    close = getattr(pyplot, "close", None)
+    if not callable(close):
+        return
+
+    try:
+        close("all")
+    except Exception:
+        # Plot cleanup is isolation hygiene and must not change node outcomes.
+        pass
+
+
 def run_document(path: str | Path, target: str | None = None, trace: bool = False) -> dict[str, Any]:
     document_path = Path(path).expanduser().resolve()
     return run_source(document_path.read_text(), document_path, target=target, trace=trace)
@@ -701,6 +718,7 @@ def execute_node(
         remaining_image_bytes=remaining_display_image_bytes,
     )
 
+    close_open_matplotlib_figures()
     try:
         with intrinsic.activate(display_collector):
             with contextlib.redirect_stdout(stdout_buffer):
@@ -720,6 +738,8 @@ def execute_node(
         result["_displayImageBytes"] = display_collector.image_bytes
         result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
         return result
+    finally:
+        close_open_matplotlib_figures()
 
     node_outputs: dict[str, Any] = {}
     output_previews: dict[str, Any] = {}

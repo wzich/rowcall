@@ -112,6 +112,13 @@ Rowcall workers force Matplotlib's non-interactive `Agg` backend. Consequently,
 `plt.show()` cannot open a native GUI or block the worker; authors should pass
 the figure or axes to `display()` instead.
 
+Pyplot-managed figures are scoped to one Node execution. If pyplot has been
+imported, the worker closes all registered figures before and after each Node,
+including failed Nodes. Displays are snapshotted before cleanup, so authors do
+not need to call `plt.close()` themselves and implicit current-axes state cannot
+leak between Nodes or Runs. Rowcall does not import Matplotlib solely to perform
+this cleanup.
+
 Each Node execution records at most 10 displays. PNG data is limited to 5 MiB
 per display and 20 MiB per Run. The app response carries accepted image bytes as
 base64; the public CLI omits those bytes and exposes only image metadata.

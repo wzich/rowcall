@@ -578,6 +578,118 @@ def talk():
         self.assertEqual(result["trace"][0]["stdout"], "hello stdout\n")
         self.assertEqual(result["trace"][0]["displays"], node_result["displays"])
 
+    def test_pyplot_figures_are_closed_between_nodes_and_repeated_runs(self) -> None:
+        fake_matplotlib = types.ModuleType("matplotlib")
+        fake_matplotlib.__path__ = []  # type: ignore[attr-defined]
+        fake_pyplot = types.ModuleType("matplotlib.pyplot")
+        fake_pyplot.layers = ["left over from an earlier run"]  # type: ignore[attr-defined]
+        close_calls: list[str] = []
+
+        def close(target: str) -> None:
+            close_calls.append(target)
+            fake_pyplot.layers.clear()  # type: ignore[attr-defined]
+
+        fake_pyplot.close = close  # type: ignore[attr-defined]
+        fake_matplotlib.pyplot = fake_pyplot  # type: ignore[attr-defined]
+        source = """
+import matplotlib.pyplot as plt
+from rowcall import node
+
+@node(id="first", outputs=["marker", "first_initial", "first_final"])
+def first():
+    first_initial = len(plt.layers)
+    plt.layers.append("first")
+    first_final = len(plt.layers)
+    marker = True
+    return {
+        "marker": marker,
+        "first_initial": first_initial,
+        "first_final": first_final,
+    }
+
+@node(id="second", outputs=["second_initial", "second_final"])
+def second(marker):
+    second_initial = len(plt.layers)
+    plt.layers.append("second")
+    second_final = len(plt.layers)
+    return {
+        "second_initial": second_initial,
+        "second_final": second_final,
+    }
+
+second.depends_on(first.output("marker"))
+""".lstrip()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "matplotlib": fake_matplotlib,
+                "matplotlib.pyplot": fake_pyplot,
+            },
+        ):
+            session = RuntimeSession()
+            first_run = session.run_graph(source, Path("/tmp/plot_cleanup.py"))
+            second_run = session.run_graph(source, Path("/tmp/plot_cleanup.py"))
+
+        for result in (first_run, second_run):
+            self.assertTrue(result["ok"])
+            self.assertEqual(
+                result["resultsByNode"]["first"]["outputs"]["first_initial"]["jsonValue"],
+                0,
+            )
+            self.assertEqual(
+                result["resultsByNode"]["first"]["outputs"]["first_final"]["jsonValue"],
+                1,
+            )
+            self.assertEqual(
+                result["resultsByNode"]["second"]["outputs"]["second_initial"]["jsonValue"],
+                0,
+            )
+            self.assertEqual(
+                result["resultsByNode"]["second"]["outputs"]["second_final"]["jsonValue"],
+                1,
+            )
+        self.assertEqual(close_calls, ["all"] * 8)
+        self.assertEqual(fake_pyplot.layers, [])  # type: ignore[attr-defined]
+
+    def test_pyplot_figures_are_closed_when_a_node_fails(self) -> None:
+        fake_matplotlib = types.ModuleType("matplotlib")
+        fake_matplotlib.__path__ = []  # type: ignore[attr-defined]
+        fake_pyplot = types.ModuleType("matplotlib.pyplot")
+        fake_pyplot.layers = []  # type: ignore[attr-defined]
+        close_calls: list[str] = []
+
+        def close(target: str) -> None:
+            close_calls.append(target)
+            fake_pyplot.layers.clear()  # type: ignore[attr-defined]
+
+        fake_pyplot.close = close  # type: ignore[attr-defined]
+        fake_matplotlib.pyplot = fake_pyplot  # type: ignore[attr-defined]
+        source = """
+import matplotlib.pyplot as plt
+from rowcall import node
+
+@node(id="broken", outputs=[])
+def broken():
+    plt.layers.append("broken")
+    raise RuntimeError("boom")
+    return {}
+""".lstrip()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "matplotlib": fake_matplotlib,
+                "matplotlib.pyplot": fake_pyplot,
+            },
+        ):
+            result = run_source(source, Path("/tmp/plot_cleanup_error.py"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["nodeId"], "broken")
+        self.assertEqual(close_calls, ["all", "all"])
+        self.assertEqual(fake_pyplot.layers, [])  # type: ignore[attr-defined]
+
     def test_display_uses_repr_png_without_becoming_an_output(self) -> None:
         source = """
 import base64
