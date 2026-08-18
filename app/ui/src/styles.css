@@ -83,6 +83,16 @@ body {
   background-color: #18181b;
 }
 
+.inspector-code-editor,
+.inspector-code-editor .cm-editor,
+.inspector-code-editor .cm-scroller {
+  height: 100%;
+}
+
+.inspector-code-editor .cm-gutters {
+  min-height: 100%;
+}
+
 .rowcall-json-tree {
   color: #27272a;
   font-family:

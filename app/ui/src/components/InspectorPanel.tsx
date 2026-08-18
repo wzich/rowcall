@@ -1296,7 +1296,6 @@ function NodeInspector({
       extensions={extensions}
       onCodeChange={onCodeChange}
       onNodeMetadataChange={onNodeMetadataChange}
-      onNodeSelect={onNodeSelect}
       onDeleteNode={onDeleteNode}
       pythonEditorError={pythonEditorError}
       errorFocusRequestId={errorFocusRequestId}
@@ -1313,7 +1312,6 @@ function NodeCode({
   extensions,
   onCodeChange,
   onNodeMetadataChange,
-  onNodeSelect,
   onDeleteNode,
   pythonEditorError,
   errorFocusRequestId,
@@ -1331,7 +1329,6 @@ function NodeCode({
     nodeId: string,
     metadata: { description?: string },
   ) => void;
-  onNodeSelect: (nodeId: string) => void;
   onDeleteNode?: (nodeId: string) => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
@@ -1349,102 +1346,72 @@ function NodeCode({
   }, [errorFocusRequestId, pythonEditorError, selectedNode.id]);
 
   return (
-    <div className="h-full overflow-y-auto bg-white dark:bg-zinc-900">
-      <div className="flex min-h-full flex-col">
-        <section className="flex min-h-[360px] flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
-              Code
-            </h3>
-            <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-              Shift ↵ run
+    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-zinc-900">
+      <section className="flex min-h-60 flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
+            Code
+          </h3>
+          <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+            Shift ↵ run
+          </span>
+          {pythonEditorError?.editor === "node" &&
+            pythonEditorError.nodeId === selectedNode.id && (
+            <span className="ml-auto font-mono text-[10px] font-medium text-red-700 dark:text-red-300">
+              Line {pythonEditorError.line}, column {pythonEditorError.column}:
+              {"  "}{pythonEditorError.message}
             </span>
-            {pythonEditorError?.editor === "node" &&
-              pythonEditorError.nodeId === selectedNode.id && (
-              <span className="ml-auto font-mono text-[10px] font-medium text-red-700 dark:text-red-300">
-                Line {pythonEditorError.line}, column{" "}
-                {pythonEditorError.column}:{"  "}{pythonEditorError.message}
-              </span>
-            )}
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
-            <div data-shortcut-scope="editor" className="h-full">
-              <CodeMirror
-                className="inspector-code-editor h-full"
-                value={selectedNode.code}
-                height="100%"
-                extensions={extensions}
-                readOnly={codeReadOnly}
-                onCreateEditor={(view) => {
-                  codeEditorRef.current = view;
-                }}
-                onChange={(value) => onCodeChange(selectedNode.id, value)}
-                basicSetup={{
-                  autocompletion: false,
-                  closeBrackets: true,
-                  foldGutter: true,
-                  highlightActiveLine: true,
-                  highlightActiveLineGutter: true,
-                  lineNumbers: true,
-                }}
-                theme={themeMode}
-              />
-            </div>
-          </div>
-        </section>
-        <div className="space-y-5 px-5 py-5">
-          <section>
-            <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-              Description
-            </label>
-            <textarea
-              className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-              value={selectedNode.description}
-              placeholder="What does this step do?"
-              readOnly={metadataReadOnly}
-              onChange={(event) =>
-                onNodeMetadataChange(selectedNode.id, {
-                  description: event.currentTarget.value,
-                })}
-            />
-          </section>
-
-          <FlowNavigation
-            upstreamDependencies={selectedNode.upstreamDependencies}
-            downstreamDependencies={selectedNode.downstreamDependencies}
-            labelsById={selectedNode.nodeLabelsById}
-            onNodeSelect={onNodeSelect}
-          />
-
-          {(selectedNode.badges.length > 0 || selectedNode.functionName) && (
-            <section className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
-              <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-                Identity
-              </h3>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-                {selectedNode.badges.map((badge) => (
-                  <span
-                    key={badge}
-                    className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
-                  >
-                    {badge}
-                  </span>
-                ))}
-                <code className="rounded bg-zinc-100 px-2 py-1 font-mono dark:bg-zinc-800">
-                  {selectedNode.functionName ?? "custom Python"}
-                </code>
-              </div>
-            </section>
-          )}
-
-          {onDeleteNode && (
-            <DeleteNodeAction
-              selectedNode={selectedNode}
-              disabled={actionsDisabled}
-              onDeleteNode={onDeleteNode}
-            />
           )}
         </div>
+        <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
+          <div data-shortcut-scope="editor" className="h-full">
+            <CodeMirror
+              className="inspector-code-editor h-full"
+              value={selectedNode.code}
+              height="100%"
+              extensions={extensions}
+              readOnly={codeReadOnly}
+              onCreateEditor={(view) => {
+                codeEditorRef.current = view;
+              }}
+              onChange={(value) => onCodeChange(selectedNode.id, value)}
+              basicSetup={{
+                autocompletion: false,
+                closeBrackets: true,
+                foldGutter: true,
+                highlightActiveLine: true,
+                highlightActiveLineGutter: true,
+                lineNumbers: true,
+              }}
+              theme={themeMode}
+            />
+          </div>
+        </div>
+      </section>
+      <div className="shrink-0 space-y-5 px-5 py-5">
+        <section>
+          <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+            Description
+          </label>
+          <textarea
+            className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            value={selectedNode.description}
+            placeholder="What does this step do?"
+            readOnly={metadataReadOnly}
+            onChange={(event) =>
+              onNodeMetadataChange(selectedNode.id, {
+                description: event.currentTarget.value,
+              })}
+          />
+        </section>
+
+        {onDeleteNode && (
+          <DeleteNodeAction
+            selectedNode={selectedNode}
+            disabled={actionsDisabled}
+            onDeleteNode={onDeleteNode}
+          />
+        )}
       </div>
     </div>
   );
@@ -1989,76 +1956,6 @@ function getNodeRunSummary(
     title: "No fresh run result",
     detail: "Run through this step to inspect its final variable values.",
   };
-}
-
-function FlowNavigation({
-  upstreamDependencies,
-  downstreamDependencies,
-  labelsById,
-  onNodeSelect,
-}: {
-  upstreamDependencies: string[];
-  downstreamDependencies: string[];
-  labelsById: Record<string, string>;
-  onNodeSelect: (nodeId: string) => void;
-}) {
-  return (
-    <section className="rounded border border-zinc-200 bg-white p-3">
-      <h3 className="text-xs font-semibold uppercase text-zinc-500">Flow</h3>
-      <div className="mt-2 grid gap-3 md:grid-cols-2">
-        <NodeLinkList
-          title="Upstream"
-          items={upstreamDependencies}
-          emptyLabel="None"
-          labelsById={labelsById}
-          onNodeSelect={onNodeSelect}
-        />
-        <NodeLinkList
-          title="Downstream"
-          items={downstreamDependencies}
-          emptyLabel="None"
-          labelsById={labelsById}
-          onNodeSelect={onNodeSelect}
-        />
-      </div>
-    </section>
-  );
-}
-
-function NodeLinkList({
-  title,
-  items,
-  emptyLabel,
-  labelsById,
-  onNodeSelect,
-}: {
-  title: string;
-  items: string[];
-  emptyLabel: string;
-  labelsById: Record<string, string>;
-  onNodeSelect: (nodeId: string) => void;
-}) {
-  return (
-    <div>
-      <p className="text-[11px] font-medium uppercase text-zinc-500">
-        {title}
-      </p>
-      {items.length === 0
-        ? <p className="mt-1 text-sm text-zinc-400">{emptyLabel}</p>
-        : (
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {items.map((item) => (
-              <NodeIdButton
-                key={item}
-                nodeId={item}
-                label={labelsById[item]}
-                onNodeSelect={onNodeSelect}
-              />
-            ))}
-          </div>
-        )}
-    </div>
-  );
 }
 
 function TraceToggle({
