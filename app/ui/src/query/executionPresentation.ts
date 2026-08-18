@@ -14,6 +14,23 @@ export type RunNotification = {
   destination: RunNotificationDestination;
 };
 
+export function getRunNotificationSummary(
+  notification: RunNotification,
+  nodeLabelsById: Record<string, string>,
+): string {
+  if (
+    notification.tone === "danger" &&
+    notification.destination.kind === "node"
+  ) {
+    const nodeLabel = nodeLabelsById[notification.destination.nodeId];
+    if (nodeLabel) {
+      return `${nodeLabel} failed`;
+    }
+  }
+
+  return notification.summary;
+}
+
 export function createRunNotification(
   response: ExecutionResponse,
   id: number,

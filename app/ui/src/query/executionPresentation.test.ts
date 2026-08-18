@@ -3,6 +3,7 @@ import type { ExecutionResponse } from "../../../../types.ts";
 import {
   createRunNotification,
   getNodeRunVisualStatusFromResponse,
+  getRunNotificationSummary,
 } from "./executionPresentation.ts";
 
 function failedResponse(
@@ -72,8 +73,30 @@ Deno.test("successful partial runs stay attached to their target node", () => {
     error: null,
   };
 
-  assertEquals(createRunNotification(response, 9).destination, {
+  const notification = createRunNotification(response, 9);
+  assertEquals(notification.destination, {
     kind: "node",
     nodeId: "n_total",
   });
+  assertEquals(
+    getRunNotificationSummary(notification, { n_total: "Total" }),
+    "Run through completed",
+  );
+});
+
+Deno.test("failed node notifications use the node label in their summary", () => {
+  const notification = createRunNotification(
+    failedResponse({
+      kind: "runtime_error",
+      phase: "node_execution",
+      message: "Failed execution at node n_source",
+      nodeId: "n_source",
+    }),
+    10,
+  );
+
+  assertEquals(
+    getRunNotificationSummary(notification, { n_source: "Source" }),
+    "Source failed",
+  );
 });

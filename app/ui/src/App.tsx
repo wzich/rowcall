@@ -57,7 +57,10 @@ import {
   runToNodeMutationOptions,
 } from "./query/executionMutations.ts";
 import { useExecutionSession } from "./query/useExecutionSession.ts";
-import type { RunNotification } from "./query/executionPresentation.ts";
+import {
+  getRunNotificationSummary,
+  type RunNotification,
+} from "./query/executionPresentation.ts";
 import {
   type PythonSyntaxLocation,
   pythonSyntaxLocationFromOffset,
@@ -2023,10 +2026,7 @@ function RunNotificationCard({
   onDismiss: () => void;
 }) {
   const isDanger = notification.tone === "danger";
-  const nodeLabel = notification.destination.kind === "node"
-    ? nodeLabelsById[notification.destination.nodeId]
-    : null;
-  const summary = nodeLabel ? `${nodeLabel} failed` : notification.summary;
+  const summary = getRunNotificationSummary(notification, nodeLabelsById);
 
   return (
     <div

@@ -1016,7 +1016,7 @@ function GraphOutputTabs({
           </span>
         )}
       </div>
-      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-700">
+      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 pb-2 [scrollbar-gutter:stable] dark:border-zinc-700">
         {options.map((option) => (
           <button
             key={option.key}
