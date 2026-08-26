@@ -20,7 +20,13 @@ import {
   loadDocumentStatus,
   type LoadDocumentSuccess,
 } from "./api/documents.ts";
-import { loadPythonRuntime } from "./api/runtime.ts";
+import {
+  loadProjectEnvironment,
+  loadPythonRuntime,
+  type ProjectEnvironmentInfo,
+  restartPythonRuntime,
+  syncProjectEnvironment,
+} from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
   coalesceDocumentOperations,
@@ -78,6 +84,7 @@ const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const documentCanvasKey = "document:active";
 const themeStorageKey = "rowcall:theme";
 const documentStatusPollIntervalMs = 4_000;
+const environmentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
 const successfulRunNoticeMs = 3_000;
@@ -214,6 +221,13 @@ export default function App() {
     queryKey: ["runtime", "python"],
     queryFn: loadPythonRuntime,
   });
+  const projectEnvironmentQuery = useQuery({
+    queryKey: ["runtime", "environment"],
+    queryFn: loadProjectEnvironment,
+    enabled: documentQuery.isSuccess,
+    refetchInterval: environmentStatusPollIntervalMs,
+    refetchOnWindowFocus: true,
+  });
   useEffect(() => {
     globalThis.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
@@ -256,6 +270,29 @@ export default function App() {
   const isSelectedNodeRunning = selectedNodeId
     ? executionStateByNodeId[selectedNodeId]?.status === "running"
     : false;
+  const syncEnvironmentMutation = useMutation({
+    mutationFn: syncProjectEnvironment,
+    onMutate: () => {
+      clearExecutionSession();
+    },
+    onSuccess: async () => {
+      await projectEnvironmentQuery.refetch();
+    },
+  });
+  const restartRuntimeMutation = useMutation({
+    mutationFn: restartPythonRuntime,
+    onMutate: () => {
+      clearExecutionSession();
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        pythonRuntimeQuery.refetch(),
+        projectEnvironmentQuery.refetch(),
+      ]);
+    },
+  });
+  const isRuntimeMaintenanceActive = syncEnvironmentMutation.isPending ||
+    restartRuntimeMutation.isPending;
 
   useEffect(() => {
     if (runNotification?.tone !== "success") {
@@ -1443,6 +1480,7 @@ export default function App() {
   }
 
   async function handleRunToNode(nodeId: string) {
+    if (isRuntimeMaintenanceActive) return;
     if (
       !editableGraph || !(await ensureDocumentFreshForWrite()) ||
       !(await flushPendingOperations())
@@ -1466,6 +1504,7 @@ export default function App() {
   }
 
   async function handleRunGraph() {
+    if (isRuntimeMaintenanceActive) return;
     if (
       !editableGraph || !(await ensureDocumentFreshForWrite()) ||
       !(await flushPendingOperations())
@@ -1559,6 +1598,11 @@ export default function App() {
             error={pythonRuntimeQuery.error}
             python={pythonRuntimeQuery.data?.python ?? null}
             documentPath={documentPath}
+            environment={projectEnvironmentQuery.data?.environment ?? null}
+            isRunActive={isRunActive || isRuntimeMaintenanceActive}
+            isRestarting={restartRuntimeMutation.isPending}
+            restartError={restartRuntimeMutation.error}
+            onRestart={() => restartRuntimeMutation.mutate()}
           />
           {saveStatus === "saved" && (
             <span className="text-xs font-medium text-emerald-700">Saved</span>
@@ -1585,11 +1629,14 @@ export default function App() {
             type="button"
             title={saveStatus === "outcome_unknown"
               ? "Save outcome unknown; reload from disk before running"
+              : isRuntimeMaintenanceActive
+              ? "Wait for Python environment maintenance to finish"
               : isRunActive
               ? "A run is already in progress"
               : "Run the full graph"}
             className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
             disabled={!editableGraph || isRunActive ||
+              isRuntimeMaintenanceActive ||
               saveStatus === "outcome_unknown"}
             onClick={() => void handleRunGraph()}
           >
@@ -1772,6 +1819,15 @@ export default function App() {
         </div>
       )}
       {documentQuery.isSuccess && (
+        <RuntimeEnvironmentNotice
+          environment={projectEnvironmentQuery.data?.environment ?? null}
+          isRunActive={isRunActive || isRuntimeMaintenanceActive}
+          isSyncing={syncEnvironmentMutation.isPending}
+          syncError={syncEnvironmentMutation.error}
+          onSync={() => syncEnvironmentMutation.mutate()}
+        />
+      )}
+      {documentQuery.isSuccess && (
         <PreflightPanel
           python={pythonRuntimeQuery.data?.python ?? null}
           pythonError={pythonRuntimeQuery.error}
@@ -1861,7 +1917,8 @@ export default function App() {
                 onVariableSelect={showNodeVariable}
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isRunActive || isSelectedNodeRunning ||
+                runToNodeDisabled={isRunActive || isRuntimeMaintenanceActive ||
+                  isSelectedNodeRunning ||
                   saveStatus === "outcome_unknown"}
                 onSelectionClear={() => setSelectedNodeId(null)}
                 themeMode={themeMode}
@@ -1878,7 +1935,7 @@ export default function App() {
                 ? nodeRunStatuses[selectedNodeId] ?? "idle"
                 : "idle"}
               graphExecutionState={graphExecutionState}
-              isRunActive={isRunActive}
+              isRunActive={isRunActive || isRuntimeMaintenanceActive}
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
@@ -2142,11 +2199,21 @@ function PythonRuntimeBadge({
   isLoading,
   error,
   documentPath,
+  environment,
+  isRunActive,
+  isRestarting,
+  restartError,
+  onRestart,
 }: {
   python: PythonRuntime | null;
   isLoading: boolean;
   error: Error | null;
   documentPath: string;
+  environment: ProjectEnvironmentInfo | null;
+  isRunActive: boolean;
+  isRestarting: boolean;
+  restartError: Error | null;
+  onRestart: () => void;
 }) {
   if (isLoading) {
     return <RuntimeChip label="Python checking..." tone="neutral" />;
@@ -2202,8 +2269,100 @@ function PythonRuntimeBadge({
             : python.rowcallImport.error ?? "not importable"}
           tone={python.rowcallImport.ok ? "default" : "warning"}
         />
+        {environment && (
+          <RuntimeDetail
+            label="Requirements"
+            value={environment.requirementsStatus === "unknown"
+              ? "Managed externally"
+              : environment.requirementsStatus === "changed"
+              ? "Update available"
+              : "Up to date"}
+            tone={environment.requirementsStatus === "changed"
+              ? "warning"
+              : "default"}
+          />
+        )}
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+          <span className="min-w-0 text-zinc-500 dark:text-zinc-400">
+            {restartError?.message ??
+              "Replace the Python process without restarting Rowcall."}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            disabled={isRunActive || isRestarting}
+            title={isRunActive
+              ? "Wait for the active run to finish before restarting Python"
+              : "Restart the Python runtime"}
+            onClick={onRestart}
+          >
+            {isRestarting ? "Restarting..." : "Restart Python runtime"}
+          </button>
+        </div>
       </div>
     </details>
+  );
+}
+
+function RuntimeEnvironmentNotice({
+  environment,
+  isRunActive,
+  isSyncing,
+  syncError,
+  onSync,
+}: {
+  environment: ProjectEnvironmentInfo | null;
+  isRunActive: boolean;
+  isSyncing: boolean;
+  syncError: Error | null;
+  onSync: () => void;
+}) {
+  const updateAvailable = environment?.canSync &&
+    environment.requirementsStatus === "changed";
+  const relevantSyncError = updateAvailable ? syncError : null;
+  if (!updateAvailable && !relevantSyncError) {
+    return null;
+  }
+
+  const error = relevantSyncError;
+  const message = error
+    ? error.message
+    : "requirements.txt changed. Updating will restart Python and clear current results.";
+
+  return (
+    <section
+      className={[
+        "border-b px-5 py-2 text-xs",
+        error
+          ? "border-red-200 bg-red-50 text-red-900 dark:border-red-900/70 dark:bg-red-950 dark:text-red-100"
+          : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100",
+      ].join(" ")}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-h-28 min-w-0 flex-1 overflow-auto whitespace-pre-wrap">
+          {message}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          {updateAvailable && (
+            <button
+              type="button"
+              className="rounded border border-amber-300 bg-white px-2.5 py-1 font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-50 dark:hover:bg-amber-800"
+              disabled={isRunActive || isSyncing}
+              title={isRunActive
+                ? "Wait for the active run to finish before updating dependencies"
+                : undefined}
+              onClick={onSync}
+            >
+              {isSyncing
+                ? "Updating..."
+                : syncError
+                ? "Retry update"
+                : "Update environment"}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -287,28 +287,17 @@ export class PythonWorkerClient {
   async shutdown(): Promise<void> {
     const release = await this.acquire();
     try {
-      if (this.activeQueue) {
-        this.activeQueue.fail(new Error("Python worker was shut down"));
-        this.activeQueue = null;
-      }
+      await this.shutdownAcquiredWorker();
+    } finally {
+      release();
+    }
+  }
 
-      const child = this.child;
-      const writer = this.writer;
-      this.child = null;
-      this.writer = null;
-
-      const writerClosed = writer?.close().catch(() => {});
-      if (child) {
-        await terminateWorkerProcess(child);
-      }
-      if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
-
-      await settleWithDeadline([
-        this.stdoutDone ?? Promise.resolve(),
-        this.stderrDone ?? Promise.resolve(),
-      ]);
-      this.stdoutDone = null;
-      this.stderrDone = null;
+  async withWorkerStopped<T>(operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquire();
+    try {
+      await this.shutdownAcquiredWorker();
+      return await operation();
     } finally {
       release();
     }
@@ -325,6 +314,31 @@ export class PythonWorkerClient {
     );
     await previous;
     return release;
+  }
+
+  private async shutdownAcquiredWorker(): Promise<void> {
+    if (this.activeQueue) {
+      this.activeQueue.fail(new Error("Python worker was shut down"));
+      this.activeQueue = null;
+    }
+
+    const child = this.child;
+    const writer = this.writer;
+    this.child = null;
+    this.writer = null;
+
+    const writerClosed = writer?.close().catch(() => {});
+    if (child) {
+      await terminateWorkerProcess(child);
+    }
+    if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
+
+    await settleWithDeadline([
+      this.stdoutDone ?? Promise.resolve(),
+      this.stderrDone ?? Promise.resolve(),
+    ]);
+    this.stdoutDone = null;
+    this.stderrDone = null;
   }
 
   private async startOperation(

@@ -6,6 +6,13 @@ import {
   type LauncherPaths,
 } from "./launcher_paths.ts";
 import { getActiveEnvironmentPythonCandidates } from "./runtime_config.ts";
+import {
+  projectEnvironmentSetupPath,
+  projectRequirementsFingerprint,
+  readOptionalTextFile,
+  readProjectEnvironmentSetupState,
+  writeCompleteProjectEnvironmentSetup,
+} from "./project_environment.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { rowcallVersion } from "./version.ts";
 
@@ -1089,69 +1096,6 @@ async function finishProjectEnvironmentCreation(
       `Created project environment could not run Python 3.10 or newer: ${venvDirectory}\n` +
         "Rowcall will retry creation on the next open or run.",
     );
-  }
-}
-
-function projectEnvironmentSetupPath(venvDirectory: string): string {
-  return `${venvDirectory}/.rowcall-setup`;
-}
-
-type ProjectEnvironmentSetupState = {
-  status: "creating" | "incomplete" | "complete";
-  requirementsFingerprint?: string;
-};
-
-async function readProjectEnvironmentSetupState(
-  path: string,
-): Promise<ProjectEnvironmentSetupState | null> {
-  const text = await readOptionalTextFile(path);
-  if (text === null) return null;
-  const lines = text.trim().split("\n");
-  const status = lines[0];
-  const requirementsLine = lines.find((line) =>
-    line.startsWith("requirements-sha256=")
-  );
-  const requirementsFingerprint = requirementsLine?.slice(
-    "requirements-sha256=".length,
-  );
-  return {
-    status: status === "creating" || status === "complete"
-      ? status
-      : "incomplete",
-    ...(requirementsFingerprint ? { requirementsFingerprint } : {}),
-  };
-}
-
-async function writeCompleteProjectEnvironmentSetup(
-  path: string,
-  requirementsFingerprint: string,
-): Promise<void> {
-  await Deno.writeTextFile(
-    path,
-    `complete\nrequirements-sha256=${requirementsFingerprint}\n`,
-  );
-}
-
-async function projectRequirementsFingerprint(path: string): Promise<string> {
-  let contents: Uint8Array<ArrayBuffer>;
-  try {
-    contents = await Deno.readFile(path);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return "absent";
-    throw error;
-  }
-  const digest = await crypto.subtle.digest("SHA-256", contents);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function readOptionalTextFile(path: string): Promise<string | null> {
-  try {
-    return await Deno.readTextFile(path);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
-    throw error;
   }
 }
 

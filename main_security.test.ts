@@ -2,6 +2,7 @@ import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   app,
   buildRowcallUrl,
+  resolveDocumentLaunchPath,
   type RowcallServerSecurity,
   setActiveDocumentPathForTests,
   validateLocalRequest,
@@ -11,6 +12,8 @@ import {
   setBeforeDocumentWriteForTests,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
+import { getVenvPythonPath } from "./launcher_paths.ts";
+import { configurePythonRuntime } from "./runtime_config.ts";
 
 const security: RowcallServerSecurity = {
   hostname: "127.0.0.1",
@@ -112,6 +115,23 @@ Deno.test("validateLocalRequest requires a token for result queries", () => {
   );
 });
 
+Deno.test("validateLocalRequest requires a token for environment updates", () => {
+  assertEquals(
+    validateLocalRequest(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+      }),
+      security,
+    ),
+    {
+      ok: false,
+      status: 401,
+      message: "Missing or invalid Rowcall authorization token.",
+    },
+  );
+});
+
 Deno.test("PUT /document is no longer a document write route", async () => {
   const response = await app.fetch(
     request("/document", {
@@ -139,6 +159,19 @@ Deno.test("cache compatibility route explicitly reports caching disabled", async
     clearedEntries: 0,
     cachingDisabled: true,
   });
+});
+
+Deno.test("runtime restart route replaces the Python worker independently", async () => {
+  const response = await app.fetch(
+    request("/runtime/python/restart", {
+      method: "POST",
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), { ok: true });
 });
 
 Deno.test("GET /document/status returns document status revisions", async () => {
@@ -582,6 +615,140 @@ Deno.test("validateLocalRequest allows loopback dev-server origins", () => {
     ),
     { ok: true },
   );
+});
+
+Deno.test("environment sync is exclusive and current syncs are no-ops", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/graph.py`;
+  const venvDirectory = `${directory}/.venv`;
+  const pythonPath = getVenvPythonPath(venvDirectory);
+  await Deno.mkdir(
+    Deno.build.os === "windows"
+      ? `${venvDirectory}/Scripts`
+      : `${venvDirectory}/bin`,
+    { recursive: true },
+  );
+  await Deno.writeTextFile(documentPath, "print('rowcall')\n");
+  await Deno.writeTextFile(
+    `${venvDirectory}/.rowcall-setup`,
+    "complete\nrequirements-sha256=outdated\n",
+  );
+  setActiveDocumentPathForTests(documentPath);
+  configurePythonRuntime({ command: pythonPath });
+
+  try {
+    const syncResponsePromise = app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    const overlappingSyncResponse = await app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(overlappingSyncResponse.status, 409);
+
+    const runDuringSyncResponse = await app.fetch(
+      jsonRequest("/run-graph", {}),
+    );
+    assertEquals(runDuringSyncResponse.status, 409);
+    assertEquals(
+      (await runDuringSyncResponse.json()).error.kind,
+      "environment_sync_in_progress",
+    );
+
+    const syncResponse = await syncResponsePromise;
+    assertEquals(syncResponse.status, 200);
+    assertEquals(
+      (await syncResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+
+    const statusResponse = await app.fetch(
+      request("/runtime/environment", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(
+      (await statusResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+
+    const noOpSyncResponse = await app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(noOpSyncResponse.status, 200);
+    assertEquals(
+      (await noOpSyncResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+  } finally {
+    configurePythonRuntime({});
+  }
+});
+
+Deno.test("environment inspection keeps the project beside a document symlink", async () => {
+  const directory = await Deno.makeTempDir();
+  const projectDirectory = `${directory}/project`;
+  const sourceDirectory = `${directory}/source`;
+  await Deno.mkdir(projectDirectory);
+  await Deno.mkdir(sourceDirectory);
+  const targetPath = `${sourceDirectory}/graph.py`;
+  const launchPath = `${projectDirectory}/graph.py`;
+  await Deno.writeTextFile(targetPath, "print('rowcall')\n");
+  await Deno.symlink(targetPath, launchPath, { type: "file" });
+  await Deno.writeTextFile(`${projectDirectory}/requirements.txt`, "");
+
+  const venvDirectory = `${projectDirectory}/.venv`;
+  const pythonPath = getVenvPythonPath(venvDirectory);
+  await Deno.mkdir(
+    Deno.build.os === "windows"
+      ? `${venvDirectory}/Scripts`
+      : `${venvDirectory}/bin`,
+    { recursive: true },
+  );
+  await Deno.writeTextFile(
+    `${venvDirectory}/.rowcall-setup`,
+    "complete\nrequirements-sha256=outdated\n",
+  );
+
+  const preservedLaunchPath = await resolveDocumentLaunchPath(launchPath);
+  const resolvedProjectDirectory = await Deno.realPath(projectDirectory);
+  assertEquals(preservedLaunchPath, `${resolvedProjectDirectory}/graph.py`);
+  setActiveDocumentPathForTests(
+    await Deno.realPath(launchPath),
+    preservedLaunchPath,
+  );
+  configurePythonRuntime({ command: pythonPath });
+
+  try {
+    const response = await app.fetch(
+      request("/runtime/environment", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(response.status, 200);
+    const environment = (await response.json()).environment;
+    assertEquals(environment.ownership, "rowcall");
+    assertEquals(environment.requirementsStatus, "changed");
+    assertEquals(
+      environment.requirementsPath,
+      `${resolvedProjectDirectory}/requirements.txt`,
+    );
+  } finally {
+    configurePythonRuntime({});
+  }
 });
 
 function statusOf(

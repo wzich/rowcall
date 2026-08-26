@@ -230,6 +230,12 @@ export async function shutdownSourceRuntimeSession(): Promise<void> {
   await sourceRuntimeWorker.shutdown();
 }
 
+export async function withStoppedSourceRuntimeSession<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  return await sourceRuntimeWorker.withWorkerStopped(operation);
+}
+
 export function printNodeRunResult(result: NodeRunResult): void {
   console.log(result.ok ? "OK" : "FAILED");
   if (result.stdout) console.log(result.stdout);

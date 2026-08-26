@@ -18,13 +18,21 @@ import {
   clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   querySourceRuntimeTable,
+  resolvePythonCommand,
   runSourceGraph,
   runSourceSingleNode,
   runSourceToNode,
+  shutdownSourceRuntimeSession,
   streamSourceRunGraph,
   streamSourceRunSingleNode,
   streamSourceRunToNode,
+  withStoppedSourceRuntimeSession,
 } from "./executor.ts";
+import {
+  inspectProjectEnvironment,
+  ProjectEnvironmentSyncError,
+  syncProjectEnvironment,
+} from "./project_environment.ts";
 import { configurePythonRuntime } from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
@@ -32,6 +40,8 @@ import { parseStartupOptions } from "./startup_args.ts";
 export const app = new Hono();
 let uiDistPath: string | URL = "app/ui/dist";
 let activeDocumentPath = "";
+let activeEnvironmentDocumentPath = "";
+let activeEnvironmentSync: Promise<unknown> | null = null;
 let serverSecurity: RowcallServerSecurity = {
   hostname: "127.0.0.1",
   port: 8000,
@@ -51,8 +61,12 @@ def start():
     return {}
 `;
 
-export function setActiveDocumentPathForTests(path: string): void {
+export function setActiveDocumentPathForTests(
+  path: string,
+  environmentPath = path,
+): void {
   activeDocumentPath = path;
+  activeEnvironmentDocumentPath = environmentPath;
 }
 export type RowcallServerOptions = {
   uiDistPath?: string | URL;
@@ -97,6 +111,9 @@ export async function startRowcallServer(
   await ensureActiveDocumentExists(startupOptions.documentPath, {
     createIfMissing: createActiveDocumentIfMissing,
   });
+  activeEnvironmentDocumentPath = await resolveDocumentLaunchPath(
+    startupOptions.documentPath,
+  );
   activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
   console.info(`Rowcall document: ${activeDocumentPath}`);
   console.info(
@@ -136,6 +153,10 @@ type ApiError = {
     | "invalid_json"
     | "invalid_request"
     | "node_not_found"
+    | "environment_not_managed"
+    | "environment_sync_error"
+    | "environment_sync_in_progress"
+    | "runtime_restart_error"
     | "runtime_inspection_error"
     | "document_decode_error"
     | "document_write_error"
@@ -242,6 +263,7 @@ function requiresAuthToken(method: string, pathname: string): boolean {
     "/run-graph",
     "/results",
     "/runtime/python",
+    "/runtime/environment",
     "/runtime-session/clear-cache",
   ].some((apiPath) =>
     pathname === apiPath || pathname.startsWith(`${apiPath}/`)
@@ -393,6 +415,14 @@ function graphPayloadWithoutSourceError(): ApiErrorResponse {
   });
 }
 
+function environmentSyncInProgressError(): ApiErrorResponse {
+  return errorResponse({
+    kind: "environment_sync_in_progress",
+    message:
+      "The project environment is being updated. Try again when the update finishes.",
+  });
+}
+
 function hasGraphPayloadWithoutSource(body: unknown): boolean {
   if (!body || typeof body !== "object") {
     return false;
@@ -412,6 +442,18 @@ function getParentDirectory(path: string): string | undefined {
     return "/";
   }
   return path.slice(0, separatorIndex);
+}
+
+export async function resolveDocumentLaunchPath(path: string): Promise<string> {
+  const normalizedPath = path.replaceAll("\\", "/");
+  const filename = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1);
+  const parent = getParentDirectory(path) ?? ".";
+  const parentPath = /^[A-Za-z]:$/u.test(parent) ? `${parent}/` : parent;
+  const resolvedParent = (await Deno.realPath(parentPath)).replace(
+    /[\\/]+$/u,
+    "",
+  );
+  return `${resolvedParent}/${filename}`;
 }
 
 function wantsExecutionStream(
@@ -751,6 +793,109 @@ app.get("/runtime/python", async (c) => {
   }
 });
 
+app.get("/runtime/environment", async (c) => {
+  try {
+    const environment = await inspectProjectEnvironment(
+      activeEnvironmentDocumentPath,
+      await resolvePythonCommand(),
+    );
+    return c.json({
+      ok: true,
+      environment,
+    });
+  } catch (error) {
+    console.error("Failed to inspect the project environment:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "runtime_inspection_error",
+        message: "Unable to inspect the project Python environment.",
+      }),
+      500,
+    );
+  }
+});
+
+app.post("/runtime/environment/sync", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
+
+  const sync = (async () => {
+    const pythonCommand = await resolvePythonCommand();
+    const environment = await inspectProjectEnvironment(
+      activeEnvironmentDocumentPath,
+      pythonCommand,
+    );
+    if (!environment.canSync) {
+      throw new ProjectEnvironmentSyncError(
+        "not_managed",
+        "Rowcall only installs dependencies into project environments it created.",
+      );
+    }
+    if (environment.requirementsStatus === "current") {
+      return { environment, updated: false };
+    }
+
+    return await withStoppedSourceRuntimeSession(() =>
+      syncProjectEnvironment(activeEnvironmentDocumentPath, pythonCommand)
+    );
+  })();
+  activeEnvironmentSync = sync;
+  try {
+    const result = await sync;
+    return c.json({
+      ok: true,
+      environment: result.environment,
+    });
+  } catch (error) {
+    if (error instanceof ProjectEnvironmentSyncError) {
+      return c.json(
+        errorResponse({
+          kind: error.kind === "install_failed"
+            ? "environment_sync_error"
+            : "environment_not_managed",
+          message: [error.message, error.output].filter(Boolean).join("\n\n"),
+        }),
+        error.kind === "install_failed" ? 422 : 409,
+      );
+    }
+    console.error("Failed to update the project environment:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "environment_sync_error",
+        message: "Unable to update the project Python environment.",
+      }),
+      500,
+    );
+  } finally {
+    if (activeEnvironmentSync === sync) {
+      activeEnvironmentSync = null;
+    }
+  }
+});
+
+app.post("/runtime/python/restart", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
+  try {
+    await shutdownSourceRuntimeSession();
+    return c.json({ ok: true });
+  } catch (error) {
+    console.error("Failed to restart the Python runtime:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "runtime_restart_error",
+        message: "Unable to restart the Python runtime.",
+      }),
+      500,
+    );
+  }
+});
+
 app.post("/document/operations", async (c) => {
   let body: unknown;
   try {
@@ -833,6 +978,9 @@ app.post("/document/operations", async (c) => {
 });
 
 app.post("/run-node", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   const body = await c.req.json();
   if (hasGraphPayloadWithoutSource(body)) {
     return c.json(graphPayloadWithoutSourceError(), 422);
@@ -898,6 +1046,9 @@ app.post("/run-node", async (c) => {
 });
 
 app.post("/run-to-node", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   const body = await c.req.json();
   if (hasGraphPayloadWithoutSource(body)) {
     return c.json(graphPayloadWithoutSourceError(), 422);
@@ -960,6 +1111,9 @@ app.post("/run-to-node", async (c) => {
 });
 
 app.post("/run-graph", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   const body = await c.req.json();
   if (hasGraphPayloadWithoutSource(body)) {
     return c.json(graphPayloadWithoutSourceError(), 422);
@@ -1007,6 +1161,9 @@ app.post("/run-graph", async (c) => {
 });
 
 app.post("/results/table", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   let body: unknown;
   try {
     body = await c.req.json();
@@ -1065,6 +1222,9 @@ app.post("/results/table", async (c) => {
 });
 
 app.post("/runtime-session/clear-cache", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   return c.json(await clearSourceRuntimeSessionCache());
 });
 

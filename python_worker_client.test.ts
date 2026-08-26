@@ -355,3 +355,80 @@ exec deno run --allow-read '${workerPath}' "$@"
     }
   },
 );
+
+Deno.test(
+  "PythonWorkerClient keeps requests queued while maintenance holds the stopped worker",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const workerPath = `${directory}/fake_worker.ts`;
+    const commandPath = `${directory}/fake_python_worker`;
+
+    await Deno.writeTextFile(
+      workerPath,
+      `
+const decoder = new TextDecoder();
+let buffer = "";
+
+for await (const chunk of Deno.stdin.readable) {
+  buffer += decoder.decode(chunk, { stream: true });
+  const lineEnd = buffer.indexOf("\\n");
+  if (lineEnd < 0) continue;
+  buffer = buffer.slice(lineEnd + 1);
+  console.log(JSON.stringify({ type: "validate_source_completed", ok: true }));
+}
+`,
+    );
+    await Deno.writeTextFile(
+      commandPath,
+      `#!/bin/sh
+exec deno run --allow-read '${workerPath}' "$@"
+`,
+    );
+    await Deno.chmod(commandPath, 0o755);
+
+    configurePythonRuntime({ command: commandPath });
+    const client = new PythonWorkerClient();
+    let releaseMaintenance!: () => void;
+    const maintenanceReleased = new Promise<void>((resolve) => {
+      releaseMaintenance = resolve;
+    });
+    let maintenanceStarted!: () => void;
+    const maintenanceStart = new Promise<void>((resolve) => {
+      maintenanceStarted = resolve;
+    });
+
+    try {
+      await client.requestFinalEvent("validate_source", {
+        source: "",
+        documentPath: "/tmp/before-maintenance.py",
+      });
+
+      const maintenance = client.withWorkerStopped(async () => {
+        maintenanceStarted();
+        await maintenanceReleased;
+      });
+      await maintenanceStart;
+
+      let requestSettled = false;
+      const queuedRequest = client.requestFinalEvent("validate_source", {
+        source: "",
+        documentPath: "/tmp/after-maintenance.py",
+      }).finally(() => {
+        requestSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertEquals(requestSettled, false);
+
+      releaseMaintenance();
+      await maintenance;
+      assertEquals(
+        (await queuedRequest).type,
+        "validate_source_completed",
+      );
+    } finally {
+      releaseMaintenance();
+      await client.shutdown();
+      configurePythonRuntime({});
+    }
+  },
+);
