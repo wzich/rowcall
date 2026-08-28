@@ -10,7 +10,7 @@ import type {
 import { python } from "@codemirror/lang-python";
 import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { AlertTriangle, Play, Trash2, X } from "lucide-react";
+import { AlertTriangle, Maximize2, Play, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -395,23 +395,151 @@ function CellValue({ value }: { value: TableCellPreview }) {
 function ImagePreviewBlock({
   image,
   alt,
+  expandable = false,
 }: {
   image: ImagePreview;
   alt: string;
+  expandable?: boolean;
 }) {
+  const [expandedImage, setExpandedImage] = useState<
+    {
+      image: ImagePreview;
+      alt: string;
+    } | null
+  >(null);
+  const expandButtonRef = useRef<HTMLButtonElement>(null);
+  const imageSource = `data:${image.mimeType};base64,${image.dataBase64}`;
+  const closeExpandedImage = () => {
+    setExpandedImage(null);
+    requestAnimationFrame(() => expandButtonRef.current?.focus());
+  };
+
   return (
-    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
-      <div className="flex max-h-[32rem] justify-center overflow-auto p-3">
-        <img
-          src={`data:${image.mimeType};base64,${image.dataBase64}`}
-          alt={alt}
-          className="h-auto max-w-full object-contain"
-        />
+    <>
+      <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+        <div className="flex max-h-[32rem] justify-center overflow-auto">
+          {expandable
+            ? (
+              <button
+                ref={expandButtonRef}
+                type="button"
+                className="group relative flex w-full cursor-zoom-in justify-center p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+                aria-label={`Expand ${alt}`}
+                title={`Expand ${alt}`}
+                onClick={() => setExpandedImage({ image, alt })}
+              >
+                <img
+                  src={imageSource}
+                  alt={alt}
+                  className="h-auto max-w-full object-contain"
+                />
+                <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded bg-zinc-950/75 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  Expand
+                </span>
+              </button>
+            )
+            : (
+              <div className="flex justify-center p-3">
+                <img
+                  src={imageSource}
+                  alt={alt}
+                  className="h-auto max-w-full object-contain"
+                />
+              </div>
+            )}
+        </div>
+        <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+          {image.width} × {image.height} px · {formatImageSize(image.sizeBytes)}
+        </p>
       </div>
-      <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-        {image.width} × {image.height} px · {formatImageSize(image.sizeBytes)}
-      </p>
-    </div>
+      {expandedImage && (
+        <ExpandedImageDialog
+          image={expandedImage.image}
+          alt={expandedImage.alt}
+          onClose={closeExpandedImage}
+        />
+      )}
+    </>
+  );
+}
+
+function ExpandedImageDialog({
+  image,
+  alt,
+  onClose,
+}: {
+  image: ImagePreview;
+  alt: string;
+  onClose: () => void;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.showModal();
+    closeButtonRef.current?.focus();
+    return () => {
+      if (dialogRef.current?.open) {
+        dialogRef.current.close();
+      }
+      if (
+        previouslyFocused instanceof HTMLElement &&
+        previouslyFocused.isConnected
+      ) {
+        previouslyFocused.focus();
+      }
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-label={`${alt} expanded image`}
+      className="m-auto w-[min(64rem,calc(100vw-3rem))] max-w-none rounded-lg bg-transparent p-0 backdrop:bg-black/45"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onMouseDown={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left || event.clientX > bounds.right ||
+          event.clientY < bounds.top || event.clientY > bounds.bottom
+        ) {
+          onClose();
+        }
+      }}
+    >
+      <div className="flex max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-950 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+        <div className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">{alt}</h2>
+            <p className="mt-0.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+              {image.width} × {image.height} px ·{" "}
+              {formatImageSize(image.sizeBytes)}
+            </p>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="shrink-0 rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            aria-label="Close expanded image"
+            onClick={onClose}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 overflow-auto p-4">
+          <img
+            src={`data:${image.mimeType};base64,${image.dataBase64}`}
+            alt={alt}
+            className="mx-auto block h-auto max-h-[calc(100vh-10rem)] max-w-full object-contain"
+          />
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -420,7 +548,13 @@ function formatImageSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024).toFixed(1)} KiB`;
 }
 
-function PreviewCard({ preview }: { preview: ValuePreview }) {
+function PreviewCard({
+  preview,
+  imageExpandable = false,
+}: {
+  preview: ValuePreview;
+  imageExpandable?: boolean;
+}) {
   const typeLabel = formatPythonType(preview.type);
 
   return (
@@ -437,7 +571,13 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
         </span>
       </div>
       {preview.image
-        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        ? (
+          <ImagePreviewBlock
+            image={preview.image}
+            alt={preview.name}
+            expandable={imageExpandable}
+          />
+        )
         : preview.table
         ? <TablePreviewBlock table={preview.table} />
         : <JsonPreview preview={preview} />}
@@ -454,6 +594,7 @@ function FlatPreview({
   preview,
   metadataSuffix,
   interactiveTable,
+  imageExpandable = false,
 }: {
   preview: ValuePreview;
   metadataSuffix?: ReactNode;
@@ -462,6 +603,7 @@ function FlatPreview({
     nodeId: string;
     outputName: string;
   };
+  imageExpandable?: boolean;
 }) {
   const typeLabel = formatPythonType(preview.type);
 
@@ -494,7 +636,13 @@ function FlatPreview({
         )}
       </div>
       {preview.image
-        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        ? (
+          <ImagePreviewBlock
+            image={preview.image}
+            alt={preview.name}
+            expandable={imageExpandable}
+          />
+        )
         : preview.table
         ? interactiveTable
           ? (
@@ -525,7 +673,7 @@ function DisplayResults({ displays }: { displays: ValuePreview[] }) {
       </h4>
       <div className="mt-3 space-y-3">
         {displays.map((display, index) => (
-          <PreviewCard key={index} preview={display} />
+          <PreviewCard key={index} preview={display} imageExpandable />
         ))}
       </div>
     </section>
@@ -1038,6 +1186,7 @@ function GraphOutputTabs({
       <div className="py-3">
         <FlatPreview
           preview={{ ...selected.preview, name: selected.name }}
+          imageExpandable={selected.kind === "display"}
           interactiveTable={response.finalOutputsByNode[selected.nodeId]?.[
               selected.name
             ] &&
