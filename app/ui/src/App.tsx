@@ -4,6 +4,7 @@ import { parser as pythonParser } from "@lezer/python";
 import {
   AlertTriangle,
   CheckCircle2,
+  FileUp,
   Moon,
   Play,
   Save,
@@ -16,9 +17,11 @@ import {
   DocumentApiRequestError,
   type DocumentOperation,
   type DocumentValidationIssue,
+  importDocumentFile,
   loadDocument,
   loadDocumentStatus,
   type LoadDocumentSuccess,
+  maxImportedFileBytes,
 } from "./api/documents.ts";
 import {
   loadProjectEnvironment,
@@ -78,6 +81,10 @@ import {
   shouldAutoReloadDocument,
   shouldPreserveExecutionSessionOnReload,
 } from "./documentReload.ts";
+import {
+  createImportedFileNode,
+  importAutoPreviewSkipReason,
+} from "./importedFile.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
@@ -89,6 +96,7 @@ const environmentStatusPollIntervalMs = 4_000;
 const invalidExternalDocumentGraceMs = 4_000;
 const updatedFromDiskNoticeMs = 3_500;
 const successfulRunNoticeMs = 3_000;
+const importNoticeMs = 7_000;
 
 export type ThemeMode = "light" | "dark";
 
@@ -114,6 +122,13 @@ export type PythonEditorErrorTarget = PythonSyntaxLocation & {
 };
 
 type ConnectionWarning = {
+  title: string;
+  detail: string;
+};
+
+type ImportNotification = {
+  id: number;
+  tone: "info" | "warning" | "danger";
   title: string;
   detail: string;
 };
@@ -173,6 +188,12 @@ export default function App() {
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
+  const [importNotification, setImportNotification] = useState<
+    ImportNotification | null
+  >(null);
+  const [importingFileName, setImportingFileName] = useState<string | null>(
+    null,
+  );
   const [documentPath, setDocumentPath] = useState("Active document");
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [firstUnsavedEditAt, setFirstUnsavedEditAt] = useState<number | null>(
@@ -200,6 +221,8 @@ export default function App() {
   const pendingOperationsRef = useRef<DocumentOperation[]>([]);
   const flushPromiseRef = useRef<Promise<boolean> | null>(null);
   const saveAttemptGenerationRef = useRef(0);
+  const importNotificationIdRef = useRef(0);
+  const importInFlightRef = useRef(false);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
     reservedNames: new Set(),
     nextIndex: 1,
@@ -293,6 +316,24 @@ export default function App() {
   });
   const isRuntimeMaintenanceActive = syncEnvironmentMutation.isPending ||
     restartRuntimeMutation.isPending;
+  const activeRunTypeRef = useRef(activeRunType);
+  const runtimeMaintenanceActiveRef = useRef(isRuntimeMaintenanceActive);
+  const runtimeReadyRef = useRef(
+    pythonRuntimeQuery.isSuccess &&
+      pythonRuntimeQuery.data.python.rowcallImport.ok,
+  );
+
+  useEffect(() => {
+    activeRunTypeRef.current = activeRunType;
+    runtimeMaintenanceActiveRef.current = isRuntimeMaintenanceActive;
+    runtimeReadyRef.current = pythonRuntimeQuery.isSuccess &&
+      pythonRuntimeQuery.data.python.rowcallImport.ok;
+  }, [
+    activeRunType,
+    isRuntimeMaintenanceActive,
+    pythonRuntimeQuery.data,
+    pythonRuntimeQuery.isSuccess,
+  ]);
 
   useEffect(() => {
     if (runNotification?.tone !== "success") {
@@ -305,6 +346,19 @@ export default function App() {
     );
     return () => clearTimeout(timeoutId);
   }, [dismissRunNotification, runNotification]);
+
+  useEffect(() => {
+    if (!importNotification || importNotification.tone === "danger") {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setImportNotification((current) =>
+        current?.id === importNotification.id ? null : current
+      );
+    }, importNoticeMs);
+    return () => clearTimeout(timeoutId);
+  }, [importNotification]);
 
   useEffect(() => {
     editableDocumentRef.current = editableDocument;
@@ -794,6 +848,201 @@ export default function App() {
     queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+
+  async function handleImportFiles(
+    files: File[],
+    position: { x: number; y: number },
+  ) {
+    if (files.length !== 1) {
+      showImportNotification({
+        tone: "warning",
+        title: "Drop one file at a time",
+        detail: "No files were imported.",
+      });
+      return;
+    }
+    if (importInFlightRef.current) {
+      showImportNotification({
+        tone: "warning",
+        title: "An import is already in progress",
+        detail: "Wait for it to finish before dropping another file.",
+      });
+      return;
+    }
+
+    const file = files[0];
+    const current = editableDocumentRef.current;
+    if (!current || current.readOnly) {
+      showImportNotification({
+        tone: "warning",
+        title: "This document is read-only",
+        detail: `${file.name} was not copied into the project.`,
+      });
+      return;
+    }
+    if (saveOutcomeUnknownRef.current) {
+      showImportNotification({
+        tone: "danger",
+        title: "Import unavailable",
+        detail:
+          "Reload from disk to resolve the unknown save outcome before importing a file.",
+      });
+      return;
+    }
+    if (activeRunTypeRef.current !== null) {
+      showImportNotification({
+        tone: "warning",
+        title: "A run is in progress",
+        detail:
+          `Wait for it to finish before importing ${file.name}. The file was not copied.`,
+      });
+      return;
+    }
+    if (file.size > maxImportedFileBytes) {
+      showImportNotification({
+        tone: "danger",
+        title: "File is too large",
+        detail: `${file.name} exceeds the 100 MiB import limit.`,
+      });
+      return;
+    }
+
+    const hadUnsavedWork = pendingOperationsRef.current.length > 0 ||
+      flushPromiseRef.current !== null;
+    const startingEditGeneration = editGenerationRef.current;
+    const hadRuntimeMaintenance = runtimeMaintenanceActiveRef.current;
+    const runtimeWasReady = runtimeReadyRef.current;
+
+    importInFlightRef.current = true;
+    setImportingFileName(file.name);
+    try {
+      if (flushPromiseRef.current && !(await flushPromiseRef.current)) {
+        showImportNotification({
+          tone: "danger",
+          title: "Import paused",
+          detail:
+            "The active save did not finish successfully, so no file was copied.",
+        });
+        return;
+      }
+      if (!(await ensureDocumentFreshForWrite())) {
+        return;
+      }
+
+      const imported = await importDocumentFile(file);
+      const latest = editableDocumentRef.current;
+      if (!latest || latest.readOnly || saveOutcomeUnknownRef.current) {
+        showImportNotification({
+          tone: "danger",
+          title: `Copied ${imported.storedName}, but could not add its node`,
+          detail:
+            "The file remains in the project’s data folder. Resolve the document state, then add its reader node manually.",
+        });
+        return;
+      }
+
+      const nodeId = createNextNodeId(latest);
+      const importedNode = createImportedFileNode({
+        id: nodeId,
+        storedName: imported.storedName,
+        relativePath: imported.relativePath,
+        position,
+        existingFunctionNames: latest.nodes.flatMap((node) =>
+          node.functionName ? [node.functionName] : []
+        ),
+      });
+      const nextDocument = {
+        ...latest,
+        nodes: [...latest.nodes, importedNode.node],
+      };
+      const documentChangedDuringImport =
+        editGenerationRef.current !== startingEditGeneration;
+
+      if (activeRunTypeRef.current !== null) {
+        showImportNotification({
+          tone: "warning",
+          title: `Copied ${imported.storedName}, but did not add its node`,
+          detail:
+            "A run started while the import was in progress. The file remains in the project’s data folder.",
+        });
+        return;
+      }
+
+      markDocumentEdited();
+      queueOperation({
+        type: "add_node",
+        node: toAddNodeOperationNode(importedNode.node),
+      });
+      commitEditableDocument(nextDocument);
+      setSelectedNodeId(nodeId);
+
+      const renamed = imported.storedName !== file.name;
+      if (importedNode.kind === "unsupported") {
+        showImportNotification({
+          tone: "warning",
+          title: `Copied ${imported.storedName}`,
+          detail:
+            "Rowcall does not know this format. Choose a reader in the generated file node.",
+        });
+        return;
+      }
+
+      const autoPreviewSkipReason = importAutoPreviewSkipReason({
+        hadUnsavedWork: hadUnsavedWork || documentChangedDuringImport,
+        hadRuntimeMaintenance,
+        runtimeMaintenanceNow: runtimeMaintenanceActiveRef.current,
+        runtimeWasReady,
+        runtimeIsReady: runtimeReadyRef.current,
+      });
+      if (autoPreviewSkipReason === "unsaved_work") {
+        showImportNotification({
+          tone: "warning",
+          title: `Imported ${imported.storedName}`,
+          detail:
+            "Auto-preview was skipped to avoid saving your other edits. Run the node when you’re ready.",
+        });
+        return;
+      }
+      if (autoPreviewSkipReason === "runtime_unavailable") {
+        showImportNotification({
+          tone: "warning",
+          title: `Imported ${imported.storedName}`,
+          detail:
+            "Auto-preview was skipped because the Python runtime is not ready. Run the node when it becomes available.",
+        });
+        return;
+      }
+
+      if (renamed) {
+        showImportNotification({
+          tone: "info",
+          title: `Imported as ${imported.storedName}`,
+          detail:
+            `${file.name} already existed or required a safe project filename.`,
+        });
+      }
+      await handleRunToNode(nodeId, { allowDuringImport: true });
+    } catch (error) {
+      showImportNotification({
+        tone: "danger",
+        title: `Couldn’t import ${file.name}`,
+        detail: error instanceof Error
+          ? error.message
+          : "The file could not be copied into the project.",
+      });
+    } finally {
+      importInFlightRef.current = false;
+      setImportingFileName(null);
+    }
+  }
+
+  function handleImportDirectoryRejected() {
+    showImportNotification({
+      tone: "warning",
+      title: "Folders aren’t supported",
+      detail: "Drop one file at a time instead.",
+    });
+  }
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
     const current = editableDocumentRef.current;
@@ -1498,17 +1747,24 @@ export default function App() {
     return undefined;
   }
 
-  async function handleRunToNode(nodeId: string) {
-    if (isRuntimeMaintenanceActive) return;
+  async function handleRunToNode(
+    nodeId: string,
+    options: { allowDuringImport?: boolean } = {},
+  ) {
+    const importBlocksRun = () =>
+      importInFlightRef.current && !options.allowDuringImport;
+    if (isRuntimeMaintenanceActive || importBlocksRun()) return;
     if (
       !editableGraph || !(await ensureDocumentFreshForWrite()) ||
       !(await flushPendingOperations())
     ) {
       return;
     }
+    if (importBlocksRun()) return;
     const runSourceValue = executionSourceValueRef.current;
 
     const abortController = startRunAbortController();
+    activeRunTypeRef.current = "run_to_node";
     markNodeExecutionRunning(nodeId, "run_to_node");
     runToNodeMutation.mutate({
       nodeId,
@@ -1523,19 +1779,21 @@ export default function App() {
   }
 
   async function handleRunGraph() {
-    if (isRuntimeMaintenanceActive) return;
+    if (isRuntimeMaintenanceActive || importInFlightRef.current) return;
     if (
       !editableGraph || !(await ensureDocumentFreshForWrite()) ||
       !(await flushPendingOperations())
     ) {
       return;
     }
+    if (importInFlightRef.current) return;
     const runSourceValue = executionSourceValueRef.current;
 
     if (selectedNodeId === null) {
       showInspectorTarget("run_result");
     }
     const abortController = startRunAbortController();
+    activeRunTypeRef.current = "run_graph";
     markGraphExecutionRunning();
     runGraphMutation.mutate({
       source: getCurrentPythonSourceForRun(),
@@ -1571,6 +1829,16 @@ export default function App() {
         ? "document_globals"
         : "run_result",
     );
+  }
+
+  function showImportNotification(
+    notification: Omit<ImportNotification, "id">,
+  ) {
+    importNotificationIdRef.current += 1;
+    setImportNotification({
+      ...notification,
+      id: importNotificationIdRef.current,
+    });
   }
 
   function showInspectorTarget(target: "document_globals" | "run_result") {
@@ -1657,12 +1925,15 @@ export default function App() {
               ? "Save outcome unknown; reload from disk before running"
               : isRuntimeMaintenanceActive
               ? "Wait for Python environment maintenance to finish"
+              : importingFileName
+              ? "Wait for the file import to finish"
               : isRunActive
               ? "A run is already in progress"
               : "Run the full graph"}
             className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
             disabled={!editableGraph || isRunActive ||
               isRuntimeMaintenanceActive ||
+              importingFileName !== null ||
               saveStatus === "outcome_unknown"}
             onClick={() => void handleRunGraph()}
           >
@@ -1722,13 +1993,23 @@ export default function App() {
           </button>
         </div>
       </header>
-      {runNotification && (
-        <RunNotificationCard
-          notification={runNotification}
-          nodeLabelsById={graphInspectorDetails?.nodeLabelsById ?? {}}
-          onOpen={() => handleRunNotificationClick(runNotification)}
-          onDismiss={() => dismissRunNotification(runNotification.id)}
-        />
+      {(runNotification || importNotification) && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
+          {importNotification && (
+            <ImportNotificationCard
+              notification={importNotification}
+              onDismiss={() => setImportNotification(null)}
+            />
+          )}
+          {runNotification && (
+            <RunNotificationCard
+              notification={runNotification}
+              nodeLabelsById={graphInspectorDetails?.nodeLabelsById ?? {}}
+              onOpen={() => handleRunNotificationClick(runNotification)}
+              onDismiss={() => dismissRunNotification(runNotification.id)}
+            />
+          )}
+        </div>
       )}
       {connectionWarning && (
         <div
@@ -1922,6 +2203,9 @@ export default function App() {
                 nodeInputPreviews={nodeInputPreviews}
                 nodeOutputOptions={nodeOutputOptions}
                 onAddNode={canEditStructure ? handleAddNode : undefined}
+                onImportFiles={handleImportFiles}
+                onImportDirectoryRejected={handleImportDirectoryRejected}
+                importingFileName={importingFileName}
                 onAutoLayout={canEditStructure ? handleAutoLayout : undefined}
                 onAddChildNode={canEditStructure
                   ? handleAddChildNode
@@ -1944,6 +2228,7 @@ export default function App() {
                 onSaveDocument={handleSaveDocument}
                 outputsReadOnly={!canEditOutputs}
                 runToNodeDisabled={isRunActive || isRuntimeMaintenanceActive ||
+                  importingFileName !== null ||
                   isSelectedNodeRunning ||
                   saveStatus === "outcome_unknown"}
                 onSelectionClear={() => setSelectedNodeId(null)}
@@ -1961,7 +2246,8 @@ export default function App() {
                 ? nodeRunStatuses[selectedNodeId] ?? "idle"
                 : "idle"}
               graphExecutionState={graphExecutionState}
-              isRunActive={isRunActive || isRuntimeMaintenanceActive}
+              isRunActive={isRunActive || isRuntimeMaintenanceActive ||
+                importingFileName !== null}
               traceEnabled={traceEnabled}
               readOnly={!canEditOutputs}
               onNodeSelect={setSelectedNodeId}
@@ -2116,7 +2402,7 @@ function RunNotificationCard({
       role={isDanger ? "alert" : "status"}
       aria-live={isDanger ? "assertive" : "polite"}
       className={[
-        "fixed bottom-4 right-4 z-50 flex w-[min(20rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
+        "flex w-[min(20rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
         isDanger
           ? "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
           : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100",
@@ -2155,6 +2441,68 @@ function RunNotificationCard({
       <button
         type="button"
         aria-label="Dismiss run notification"
+        title="Dismiss"
+        className="m-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-black/10 focus:outline-none focus:ring-2 focus:ring-current"
+        onClick={onDismiss}
+      >
+        <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+    </div>
+  );
+}
+
+function ImportNotificationCard({
+  notification,
+  onDismiss,
+}: {
+  notification: ImportNotification;
+  onDismiss: () => void;
+}) {
+  const isDanger = notification.tone === "danger";
+  const isWarning = notification.tone === "warning";
+  const toneClass = isDanger
+    ? "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
+    : isWarning
+    ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    : "border-blue-300 bg-blue-50 text-blue-950 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100";
+
+  return (
+    <div
+      role={isDanger ? "alert" : "status"}
+      aria-live={isDanger ? "assertive" : "polite"}
+      className={[
+        "flex w-[min(22rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
+        toneClass,
+      ].join(" ")}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5">
+        {isDanger || isWarning
+          ? (
+            <AlertTriangle
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )
+          : (
+            <FileUp
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )}
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">
+            {notification.title}
+          </span>
+          <span className="mt-0.5 block text-xs leading-4 opacity-80">
+            {notification.detail}
+          </span>
+        </span>
+      </div>
+      <button
+        type="button"
+        aria-label="Dismiss import notification"
         title="Dismiss"
         className="m-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-black/10 focus:outline-none focus:ring-2 focus:ring-current"
         onClick={onDismiss}

@@ -2,8 +2,10 @@ import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   app,
   buildRowcallUrl,
+  maxImportedFileBytes,
   resolveDocumentLaunchPath,
   type RowcallServerSecurity,
+  sanitizeImportedFileName,
   setActiveDocumentPathForTests,
   validateLocalRequest,
 } from "./main.ts";
@@ -85,6 +87,80 @@ Deno.test("validateLocalRequest requires a token for document operations", () =>
     ),
     { ok: true },
   );
+});
+
+Deno.test("sanitizeImportedFileName keeps a safe basename and extension", () => {
+  assertEquals(
+    sanitizeImportedFileName("../../Customer Orders.CSV"),
+    "Customer Orders.CSV",
+  );
+  assertEquals(
+    sanitizeImportedFileName("survey:final?.csv"),
+    "survey_final_.csv",
+  );
+  assertEquals(sanitizeImportedFileName(".."), "imported-file");
+});
+
+Deno.test("POST /document/files creates data and never overwrites", async () => {
+  const documentPath = await writeRouteTestDocument("file_import.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const firstResponse = await app.fetch(
+    fileRequest("Customer Orders.csv", "customer_id,total\n1,12.50\n"),
+  );
+  assertEquals(firstResponse.status, 200);
+  const first = await firstResponse.json();
+  assertEquals(first.file, {
+    originalName: "Customer Orders.csv",
+    storedName: "Customer Orders.csv",
+    relativePath: "data/Customer Orders.csv",
+    size: 26,
+  });
+  assertEquals(
+    await Deno.readTextFile(
+      `${
+        documentPath.slice(0, documentPath.lastIndexOf("/"))
+      }/${first.file.relativePath}`,
+    ),
+    "customer_id,total\n1,12.50\n",
+  );
+
+  const secondResponse = await app.fetch(
+    fileRequest("Customer Orders.csv", "replacement\n"),
+  );
+  assertEquals(secondResponse.status, 200);
+  const second = await secondResponse.json();
+  assertEquals(second.file.storedName, "Customer Orders-2.csv");
+  assertEquals(second.file.relativePath, "data/Customer Orders-2.csv");
+});
+
+Deno.test("POST /document/files rejects missing names and oversized files", async () => {
+  const documentPath = await writeRouteTestDocument("file_import_errors.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const missingNameResponse = await app.fetch(
+    request("/document/files", {
+      method: "POST",
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+  assertEquals(missingNameResponse.status, 422);
+
+  const oversizedResponse = await app.fetch(
+    new Request("http://127.0.0.1:8000/document/files?name=large.csv", {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:8000",
+        "content-length": String(maxImportedFileBytes + 1),
+        "content-type": "application/octet-stream",
+        "x-rowcall-token": "secret-token",
+      },
+      body: new Uint8Array(),
+    }),
+  );
+  assertEquals(oversizedResponse.status, 413);
+  assertEquals((await oversizedResponse.json()).error.kind, "file_too_large");
 });
 
 Deno.test("validateLocalRequest requires a token for result queries", () => {
@@ -808,6 +884,21 @@ function jsonRequest(path: string, body: unknown): Request {
     headers,
     body: JSON.stringify(body),
   });
+}
+
+function fileRequest(filename: string, contents: string): Request {
+  return new Request(
+    `http://127.0.0.1:8000/document/files?name=${encodeURIComponent(filename)}`,
+    {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:8000",
+        "content-type": "application/octet-stream",
+        "x-rowcall-token": "secret-token",
+      },
+      body: contents,
+    },
+  );
 }
 
 async function writeRouteTestDocument(filename: string): Promise<string> {

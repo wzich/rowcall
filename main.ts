@@ -47,6 +47,7 @@ let serverSecurity: RowcallServerSecurity = {
   port: 8000,
   authToken: "secret-token",
 };
+export const maxImportedFileBytes = 100 * 1024 * 1024;
 // Padded SSE comments keep small fetch-stream chunks moving through browsers
 // and intermediaries while a long-running node is not producing real events.
 const executionStreamInitialPaddingBytes = 2048;
@@ -160,6 +161,8 @@ type ApiError = {
     | "runtime_inspection_error"
     | "document_decode_error"
     | "document_write_error"
+    | "file_too_large"
+    | "file_write_error"
     | "stale_document"
     | "validation_error";
   message: string;
@@ -442,6 +445,124 @@ function getParentDirectory(path: string): string | undefined {
     return "/";
   }
   return path.slice(0, separatorIndex);
+}
+
+export function sanitizeImportedFileName(name: string): string {
+  const basename = name
+    .normalize("NFC")
+    .replaceAll("\\", "/")
+    .split("/")
+    .at(-1) ?? "";
+  const sanitized = Array.from(basename, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ||
+        '<>:"|?*'.includes(character)
+      ? "_"
+      : character;
+  }).join("")
+    .replace(/[. ]+$/gu, "")
+    .trim();
+  const fallback = sanitized === "" || sanitized === "." || sanitized === ".."
+    ? "imported-file"
+    : sanitized;
+  const characters = Array.from(fallback);
+  if (characters.length <= 180) {
+    return fallback;
+  }
+
+  const extensionIndex = fallback.lastIndexOf(".");
+  const extension = extensionIndex > 0 && fallback.length - extensionIndex <= 20
+    ? fallback.slice(extensionIndex)
+    : "";
+  const maximumStemLength = Math.max(1, 180 - Array.from(extension).length);
+  const stem = extension ? fallback.slice(0, extensionIndex) : fallback;
+  return `${Array.from(stem).slice(0, maximumStemLength).join("")}${extension}`;
+}
+
+class ImportedFileTooLargeError extends Error {
+  constructor() {
+    super("Imported file exceeds the 100 MiB limit.");
+    this.name = "ImportedFileTooLargeError";
+  }
+}
+
+async function readImportedFileBytes(request: Request): Promise<Uint8Array> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredLength) && declaredLength > maxImportedFileBytes
+  ) {
+    throw new ImportedFileTooLargeError();
+  }
+
+  if (!request.body) {
+    return new Uint8Array();
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxImportedFileBytes) {
+      await reader.cancel();
+      throw new ImportedFileTooLargeError();
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function writeImportedFile(
+  requestedName: string,
+  bytes: Uint8Array,
+): Promise<{ storedName: string; relativePath: string }> {
+  const documentDirectory = getParentDirectory(activeDocumentPath) ?? ".";
+  const dataDirectory = `${documentDirectory}/data`;
+  await Deno.mkdir(dataDirectory, { recursive: true });
+
+  const sanitizedName = sanitizeImportedFileName(requestedName);
+  const extensionIndex = sanitizedName.lastIndexOf(".");
+  const stem = extensionIndex > 0
+    ? sanitizedName.slice(0, extensionIndex)
+    : sanitizedName;
+  const extension = extensionIndex > 0
+    ? sanitizedName.slice(extensionIndex)
+    : "";
+
+  for (let index = 1; index <= 10_000; index += 1) {
+    const storedName = index === 1
+      ? sanitizedName
+      : `${stem}-${index}${extension}`;
+    const targetPath = `${dataDirectory}/${storedName}`;
+    try {
+      await Deno.writeFile(targetPath, bytes, { createNew: true });
+      return {
+        storedName,
+        relativePath: `data/${storedName}`,
+      };
+    } catch (error) {
+      if (error instanceof Deno.errors.AlreadyExists) {
+        continue;
+      }
+      try {
+        await Deno.remove(targetPath);
+      } catch {
+        // The failed write may not have created a partial file.
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("Unable to find an available imported filename.");
 }
 
 export async function resolveDocumentLaunchPath(path: string): Promise<string> {
@@ -769,6 +890,67 @@ app.get("/document/status", async (c) => {
       errorResponse({
         kind: "file_read_error",
         message: `Unable to read Rowcall document: ${activeDocumentPath}`,
+      }),
+      500,
+    );
+  }
+});
+
+app.post("/document/files", async (c) => {
+  const requestedName = c.req.query("name");
+  if (!requestedName?.trim()) {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "File imports require a filename.",
+      }),
+      422,
+    );
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await readImportedFileBytes(c.req.raw);
+  } catch (error) {
+    if (error instanceof ImportedFileTooLargeError) {
+      return c.json(
+        errorResponse({
+          kind: "file_too_large",
+          message: error.message,
+        }),
+        413,
+      );
+    }
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "Unable to read the imported file upload.",
+      }),
+      400,
+    );
+  }
+
+  try {
+    const stored = await writeImportedFile(requestedName, bytes);
+    return c.json({
+      ok: true,
+      file: {
+        originalName: requestedName,
+        storedName: stored.storedName,
+        relativePath: stored.relativePath,
+        size: bytes.byteLength,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `Failed to import ${requestedName} beside ${activeDocumentPath}:`,
+    );
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "file_write_error",
+        message:
+          `Unable to copy ${requestedName} into the project's data folder.`,
       }),
       500,
     );

@@ -507,6 +507,7 @@ Deno.test({
       await Deno.readTextFile(`${folder}/requirements.txt`),
       "pandas\npolars\nmatplotlib\n",
     );
+    assertEquals((await Deno.stat(`${folder}/data`)).isDirectory, true);
     const agentInstructions = await Deno.readTextFile(`${folder}/AGENTS.md`);
     assertStringIncludes(agentInstructions, "rowcall help format");
     assertStringIncludes(agentInstructions, "rowcall validate .");
@@ -537,6 +538,28 @@ Deno.test({
     assertEquals(
       await Deno.readTextFile(`${folder}/requirements.txt`),
       "duckdb\n",
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "createNewDocument rejects a conflicting data file before writing graph.py",
+  permissions: { read: true, write: true },
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const folder = `${dir}/existing-project`;
+    await Deno.mkdir(folder);
+    await Deno.writeTextFile(`${folder}/data`, "existing data\n");
+
+    await assertRejects(
+      () => createNewDocument(folder),
+      Deno.errors.AlreadyExists,
+    );
+    assertEquals(await Deno.readTextFile(`${folder}/data`), "existing data\n");
+    await assertRejects(
+      () => Deno.stat(`${folder}/graph.py`),
+      Deno.errors.NotFound,
     );
   },
 });

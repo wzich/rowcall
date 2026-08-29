@@ -19,12 +19,14 @@ import {
 } from "@xyflow/react";
 import { LayoutDashboard, Plus } from "lucide-react";
 import {
+  type DragEvent,
   type KeyboardEvent,
   type MutableRefObject,
   useCallback,
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import type { GraphPosition } from "../graph/runtimeTypes.ts";
 import type { RuntimeGraph } from "../graph/runtimeTypes.ts";
@@ -38,6 +40,7 @@ import {
   toReactFlowGraph,
 } from "../graph/toReactFlow.ts";
 import { getCanvasDeletionIntent } from "./canvasDeletion.ts";
+import { containsDroppedDirectory } from "./fileDrop.ts";
 import { PythonNode } from "./PythonNode.tsx";
 
 const nodeTypes = {
@@ -67,6 +70,9 @@ type CanvasProps = {
   nodeInputPreviews: Record<string, Array<{ name: string; type?: string }>>;
   nodeOutputOptions: Record<string, PythonNodeOutputOption[]>;
   onAddNode?: (position: GraphPosition) => void;
+  onImportFiles?: (files: File[], position: GraphPosition) => void;
+  onImportDirectoryRejected?: () => void;
+  importingFileName?: string | null;
   onAutoLayout?: (dimensions: NodeDimensionsById) => void;
   onAddChildNode?: (nodeId: string) => void;
   onCodeChange?: (nodeId: string, code: string) => void;
@@ -98,6 +104,9 @@ export function Canvas({
   nodeInputPreviews,
   nodeOutputOptions,
   onAddNode,
+  onImportFiles,
+  onImportDirectoryRejected,
+  importingFileName,
   onAutoLayout,
   onAddChildNode,
   onCodeChange,
@@ -117,8 +126,14 @@ export function Canvas({
   const flowGraph = useMemo(() => toReactFlowGraph(graph), [graph]);
   const [nodes, setNodes, onNodesChange] = useNodesState(flowGraph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(flowGraph.edges);
+  const [isFileDragActive, setIsFileDragActive] = useState(false);
   const shortcutScopeRef = useRef<HTMLDivElement>(null);
   const addNodeAtCanvasCenterRef = useRef<() => void>(() => {});
+  const screenToFlowPositionRef = useRef<
+    (position: GraphPosition) => GraphPosition
+  >(
+    (position) => position,
+  );
   const pendingConnectionRef = useRef<
     {
       fromNode: string;
@@ -347,14 +362,62 @@ export function Canvas({
     selectedNodeId,
     runToNodeDisabled,
   ]);
+  const handleFileDragEnter = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!hasDraggedFiles(event)) return;
+      event.preventDefault();
+      setIsFileDragActive(true);
+    },
+    [],
+  );
+  const handleFileDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsFileDragActive(true);
+  }, []);
+  const handleFileDragLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof Node && event.currentTarget.contains(nextTarget)
+      ) {
+        return;
+      }
+      setIsFileDragActive(false);
+    },
+    [],
+  );
+  const handleFileDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event)) return;
+    event.preventDefault();
+    setIsFileDragActive(false);
+    if (containsDroppedDirectory(event.dataTransfer.items)) {
+      onImportDirectoryRejected?.();
+      return;
+    }
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    onImportFiles?.(
+      files,
+      screenToFlowPositionRef.current({
+        x: event.clientX,
+        y: event.clientY,
+      }),
+    );
+  }, [onImportDirectoryRejected, onImportFiles]);
 
   return (
     <div
       data-shortcut-scope="canvas"
       ref={shortcutScopeRef}
       tabIndex={0}
-      className="h-full outline-none"
+      className="relative h-full outline-none"
       onKeyDown={handleCanvasKeyDown}
+      onDragEnter={handleFileDragEnter}
+      onDragOver={handleFileDragOver}
+      onDragLeave={handleFileDragLeave}
+      onDrop={handleFileDrop}
     >
       <ReactFlow
         nodes={renderedNodes}
@@ -384,6 +447,7 @@ export function Canvas({
       >
         <CanvasShortcutBridge
           addNodeAtCanvasCenterRef={addNodeAtCanvasCenterRef}
+          screenToFlowPositionRef={screenToFlowPositionRef}
           onAddNode={onAddNode}
         />
         <InitialFitView nodeCount={renderedNodes.length} />
@@ -400,8 +464,32 @@ export function Canvas({
           />
         )}
       </ReactFlow>
+      {(isFileDragActive || importingFileName) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-blue-400 bg-blue-50/90 text-blue-950 shadow-lg backdrop-blur-sm dark:border-blue-500 dark:bg-blue-950/90 dark:text-blue-100"
+        >
+          <div className="max-w-sm px-6 py-5 text-center">
+            <p className="text-base font-semibold">
+              {importingFileName
+                ? `Importing ${importingFileName}…`
+                : "Drop to import and preview"}
+            </p>
+            <p className="mt-1 text-sm opacity-75">
+              {importingFileName
+                ? "Copying the file into the project’s data folder."
+                : "One local file at a time."}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function hasDraggedFiles(event: DragEvent<HTMLDivElement>): boolean {
+  return event.dataTransfer.types.includes("Files");
 }
 
 function getConnectionEndPoint(
@@ -491,14 +579,19 @@ function getRemovedNodeIds(changes: NodeChange<PythonFlowNode>[]): string[] {
 
 function CanvasShortcutBridge({
   addNodeAtCanvasCenterRef,
+  screenToFlowPositionRef,
   onAddNode,
 }: {
   addNodeAtCanvasCenterRef: MutableRefObject<() => void>;
+  screenToFlowPositionRef: MutableRefObject<
+    (position: GraphPosition) => GraphPosition
+  >;
   onAddNode?: (position: GraphPosition) => void;
 }) {
   const { screenToFlowPosition } = useReactFlow();
 
   useEffect(() => {
+    screenToFlowPositionRef.current = screenToFlowPosition;
     addNodeAtCanvasCenterRef.current = () => {
       if (!onAddNode) {
         return;
@@ -516,7 +609,12 @@ function CanvasShortcutBridge({
 
       onAddNode(screenToFlowPosition({ x, y }));
     };
-  }, [addNodeAtCanvasCenterRef, onAddNode, screenToFlowPosition]);
+  }, [
+    addNodeAtCanvasCenterRef,
+    onAddNode,
+    screenToFlowPosition,
+    screenToFlowPositionRef,
+  ]);
 
   return null;
 }

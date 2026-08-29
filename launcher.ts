@@ -778,6 +778,9 @@ export async function createNewDocument(targetPath: string): Promise<string> {
     }
   }
 
+  if (folderPath) {
+    await Deno.mkdir(`${folderPath}/data`, { recursive: true });
+  }
   await Deno.writeTextFile(documentPath, defaultDocumentSource);
   if (folderPath) {
     await writeDefaultProjectFiles(folderPath);

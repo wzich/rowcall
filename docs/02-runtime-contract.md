@@ -247,6 +247,28 @@ Future runtime configurations may expose explicit isolation modes:
   namespaces and copied routed values
 - no isolation, where Nodes intentionally share the same execution namespace
 
+## Local File Imports
+
+The app may copy one browser-dropped local file into the `data/` directory
+beside the active Python document. The server creates that directory when it is
+missing, sanitizes the supplied basename, and uses an exclusive write with a
+numeric suffix rather than overwriting an existing file. Imported Nodes refer to
+the returned project-relative path such as `data/orders.csv`; app and CLI
+execution scope the process working directory to the document directory.
+
+CSV, TSV, and Parquet suffixes generate ordinary editable Polars reader Nodes.
+Other suffixes generate ordinary editable Nodes that expose the copied file path
+for the author to replace with a reader. There is no runtime-level
+`rowcall.read_file` abstraction. Deleting an imported Node does not delete its
+data file.
+
+Drops are rejected without copying while another Run is active. Recognized
+imports auto-run only when the document was clean and the runtime was ready when
+the import began and remained ready. Otherwise the app creates and selects the
+Node without implicitly saving other work. File copying and document editing are
+deliberately separate operations; if adding or saving the Node later fails, the
+copied file remains in `data/`.
+
 ## Streaming Execution
 
 Execution endpoints return the normal JSON `ExecutionResponse` by default. If a

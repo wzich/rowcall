@@ -2,6 +2,7 @@ import type { RowcallDocumentV1 } from "../graph/documentTypes.ts";
 import { rowcallFetch } from "./auth.ts";
 
 const activeDocumentPath = "/document";
+export const maxImportedFileBytes = 100 * 1024 * 1024;
 
 export type DocumentValidationIssue = {
   kind: string;
@@ -102,6 +103,17 @@ export type ApplyDocumentOperationsResult =
   | LoadDocumentSuccess
   | DocumentApiError;
 
+export type ImportedDocumentFile = {
+  originalName: string;
+  storedName: string;
+  relativePath: string;
+  size: number;
+};
+
+export type ImportDocumentFileResult =
+  | { ok: true; file: ImportedDocumentFile }
+  | DocumentApiError;
+
 export class DocumentApiRequestError extends Error {
   readonly kind: string;
   readonly issues: DocumentValidationIssue[];
@@ -186,4 +198,39 @@ export async function applyDocumentOperations(
   }
 
   return result;
+}
+
+export async function importDocumentFile(
+  file: File,
+): Promise<ImportedDocumentFile> {
+  if (file.size > maxImportedFileBytes) {
+    throw new DocumentApiRequestError(
+      "Imported file exceeds the 100 MiB limit.",
+      { kind: "file_too_large", status: 413 },
+    );
+  }
+
+  const query = new URLSearchParams({ name: file.name });
+  const response = await rowcallFetch(
+    `${activeDocumentPath}/files?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    },
+  );
+  const result = await response.json() as ImportDocumentFileResult;
+
+  if (!result.ok) {
+    throw new DocumentApiRequestError(
+      result.error.message,
+      {
+        kind: result.error.kind,
+        issues: result.error.issues,
+        status: response.status,
+      },
+    );
+  }
+
+  return result.file;
 }

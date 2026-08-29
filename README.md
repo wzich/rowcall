@@ -73,6 +73,7 @@ This creates:
 my-work/
   .gitignore
   AGENTS.md
+  data/
   graph.py
   requirements.txt
 ```
@@ -108,6 +109,12 @@ rowcall new graph.py
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
+
+Drop one local file at a time onto the canvas to copy it into the project's
+`data/` folder and create a source Node at the drop position. CSV, TSV, and
+Parquet files receive editable Polars reader code. Other file types receive an
+editable file-path Node. Rowcall never overwrites an existing data file and adds
+a numeric suffix when needed.
 
 ### Python Environments
 
