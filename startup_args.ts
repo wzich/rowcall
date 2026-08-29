@@ -14,7 +14,10 @@ export const defaultDocumentPath = "examples/ecommerce/analysis.py";
 export const defaultPort = 8000;
 export const defaultHostname = "127.0.0.1";
 
-export function parseStartupOptions(args: string[]): StartupOptions {
+export function parseStartupOptions(
+  args: string[],
+  parserOptions: { allowDirectoryInput?: boolean } = {},
+): StartupOptions {
   let documentPath: string | undefined;
   let create = false;
   let pythonCommand: string | undefined;
@@ -105,7 +108,10 @@ export function parseStartupOptions(args: string[]): StartupOptions {
   }
 
   const resolvedDocumentPath = documentPath ?? defaultDocumentPath;
-  if (!resolvedDocumentPath.endsWith(".py")) {
+  if (
+    !parserOptions.allowDirectoryInput &&
+    !resolvedDocumentPath.endsWith(".py")
+  ) {
     throw new Error("Rowcall document path must end with .py");
   }
 

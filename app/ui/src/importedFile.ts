@@ -31,6 +31,18 @@ export function importedFileKind(storedName: string): ImportedFileKind {
   return "unsupported";
 }
 
+export function ensurePolarsGlobalsImport(globalsCode: string): string {
+  if (hasPolarsGlobalsImport(globalsCode)) return globalsCode;
+  if (!globalsCode) return "import polars as pl";
+
+  const separator = globalsCode.endsWith("\n\n")
+    ? ""
+    : globalsCode.endsWith("\n")
+    ? "\n"
+    : "\n\n";
+  return `${globalsCode}${separator}import polars as pl`;
+}
+
 export function createImportedFileNode(options: {
   id: string;
   storedName: string;
@@ -87,11 +99,23 @@ function readerCode(
     ? `pl.read_csv(source_path, separator="\\t", try_parse_dates=True)`
     : `pl.read_csv(source_path, try_parse_dates=True)`;
   return [
-    "import polars as pl",
-    "",
     `source_path = ${pathLiteral}`,
     `${outputName} = ${readExpression}`,
   ].join("\n");
+}
+
+function hasPolarsGlobalsImport(globalsCode: string): boolean {
+  for (const line of globalsCode.split(/\r?\n/u)) {
+    const importList = /^\s*import\s+([^#]+?)(?:\s*#.*)?$/u.exec(line)?.[1];
+    if (
+      importList?.split(",").some((entry) =>
+        /^polars\s+as\s+pl$/u.test(entry.trim())
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function identifierFromStoredName(

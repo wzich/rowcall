@@ -1,5 +1,11 @@
+import { resolveExistingDocumentPath } from "../document_path.ts";
+import { getLauncherPaths, type LauncherPaths } from "../launcher_paths.ts";
 import { parseStartupOptions } from "../startup_args.ts";
-import { resolveProjectPython } from "../launcher.ts";
+import {
+  ensureManagedEnvironment,
+  resolveProjectPython,
+  validatePythonRuntime,
+} from "../launcher.ts";
 
 const viteHostname = "127.0.0.1";
 const defaultVitePort = 5173;
@@ -7,10 +13,13 @@ const defaultVitePort = 5173;
 type DevOptions = ReturnType<typeof parseDevOptions>;
 
 async function main(): Promise<void> {
-  const options = await resolveDevRuntime(parseDevOptions(Deno.args));
+  const options = await resolveDevRuntime(
+    await resolveDevDocumentPath(parseDevOptions(Deno.args)),
+  );
   const authToken = crypto.randomUUID();
   const apiOrigin = buildOrigin(options.hostname, options.port);
   const viteOrigin = buildOrigin(viteHostname, options.uiPort);
+  const appUrl = buildAuthenticatedUrl(viteOrigin, authToken);
 
   ensurePortAvailable(options.hostname, options.port, "API");
   ensurePortAvailable(viteHostname, options.uiPort, "UI");
@@ -23,6 +32,7 @@ async function main(): Promise<void> {
       "--allow-write",
       "--allow-net",
       "--allow-run",
+      "--allow-env",
       "main.ts",
       ...buildServerArgs(options, authToken),
     ],
@@ -33,7 +43,6 @@ async function main(): Promise<void> {
     args: ["task", "--cwd", "app/ui", "dev"],
     env: {
       ROWCALL_DEV_API_ORIGIN: apiOrigin,
-      ROWCALL_DEV_AUTH_TOKEN: authToken,
       ROWCALL_DEV_UI_PORT: String(options.uiPort),
     },
     stdout: "inherit",
@@ -61,9 +70,9 @@ async function main(): Promise<void> {
       waitForServer(viteOrigin, "UI", uiStatus),
     ]);
 
-    console.info(`Rowcall development server: ${viteOrigin}`);
+    console.info(`Rowcall development server: ${appUrl}`);
     if (options.openBrowser) {
-      await openBrowser(viteOrigin);
+      await openBrowser(appUrl);
     }
 
     const firstExit = await Promise.race([
@@ -93,28 +102,77 @@ type ProjectPythonResolver = (
   options: { bootstrap: boolean },
 ) => Promise<string>;
 
-export async function resolveDevRuntime(
+type DevRuntimeDependencies = {
+  resolveProjectPython: ProjectPythonResolver;
+  ensureManagedEnvironment: (paths: LauncherPaths) => Promise<string>;
+  validatePythonRuntime: (
+    pythonCommand: string,
+    pythonPathEntries?: string[],
+  ) => Promise<void>;
+  launcherPaths: LauncherPaths;
+};
+
+export async function resolveDevDocumentPath(
   options: DevOptions,
-  resolvePython: ProjectPythonResolver = resolveProjectPython,
+  resolveDocument: (path: string) => Promise<string> =
+    resolveExistingDocumentPath,
 ): Promise<DevOptions> {
-  if (options.pythonCommand) return options;
+  if (options.create) return options;
   return {
     ...options,
-    pythonCommand: await resolvePython(options.documentPath, {
-      bootstrap: true,
-    }),
+    documentPath: await resolveDocument(options.documentPath),
+  };
+}
+
+export async function resolveDevRuntime(
+  options: DevOptions,
+  dependencies: Partial<DevRuntimeDependencies> = {},
+): Promise<DevOptions> {
+  const ensureManaged = dependencies.ensureManagedEnvironment ??
+    ensureManagedEnvironment;
+  const resolvePython = dependencies.resolveProjectPython ??
+    resolveProjectPython;
+  const validatePython = dependencies.validatePythonRuntime ??
+    validatePythonRuntime;
+
+  if (options.managedEnv) {
+    return {
+      ...options,
+      pythonCommand: await ensureManaged(
+        dependencies.launcherPaths ?? getLauncherPaths(),
+      ),
+      runtimeMode: "managed",
+    };
+  }
+
+  const pythonCommand = options.pythonCommand ?? await resolvePython(
+    options.documentPath,
+    { bootstrap: true },
+  );
+  const rowcallPythonPackagePath = options.rowcallPythonPackagePath ?? ".";
+  await validatePython(pythonCommand, [rowcallPythonPackagePath]);
+  return {
+    ...options,
+    pythonCommand,
+    rowcallPythonPackagePath,
+    runtimeMode: "user",
   };
 }
 
 export function parseDevOptions(args: string[]) {
   const serverArgs: string[] = [];
   let openBrowser = true;
+  let managedEnv = false;
   let uiPort = defaultVitePort;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--no-open") {
       openBrowser = false;
+      continue;
+    }
+    if (arg === "--managed-env") {
+      managedEnv = true;
       continue;
     }
     if (arg === "--ui-port") {
@@ -129,9 +187,22 @@ export function parseDevOptions(args: string[]) {
     serverArgs.push(arg);
   }
 
+  const startupOptions = parseStartupOptions(serverArgs, {
+    allowDirectoryInput: true,
+  });
+  if (managedEnv && startupOptions.pythonCommand) {
+    throw new Error("--python cannot be combined with --managed-env");
+  }
+  if (startupOptions.create && !startupOptions.documentPath.endsWith(".py")) {
+    throw new Error(
+      "Development --create requires a .py path. Use `rowcall new <folder>` to create a folder project.",
+    );
+  }
+
   return {
-    ...parseStartupOptions(serverArgs),
+    ...startupOptions,
     openBrowser,
+    managedEnv,
     uiPort,
   };
 }
@@ -161,6 +232,15 @@ function buildOrigin(hostname: string, port: number): string {
     ? `[${hostname}]`
     : hostname;
   return `http://${host}:${port}`;
+}
+
+export function buildAuthenticatedUrl(
+  origin: string,
+  authToken: string,
+): string {
+  const url = new URL(origin);
+  url.searchParams.set("token", authToken);
+  return url.toString();
 }
 
 function parsePort(value: string, flag: string): number {

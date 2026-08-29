@@ -52,6 +52,18 @@ Deno.test("parseStartupOptions accepts explicit document flag", () => {
   );
 });
 
+Deno.test("parseStartupOptions can defer folder resolution to a launcher", () => {
+  assertEquals(
+    parseStartupOptions(["my-project"], { allowDirectoryInput: true }),
+    {
+      documentPath: "my-project",
+      create: false,
+      port: defaultPort,
+      hostname: defaultHostname,
+    },
+  );
+});
+
 Deno.test("parseStartupOptions accepts packaged server paths", () => {
   assertEquals(
     parseStartupOptions([

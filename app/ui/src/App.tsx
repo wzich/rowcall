@@ -83,6 +83,7 @@ import {
 } from "./documentReload.ts";
 import {
   createImportedFileNode,
+  ensurePolarsGlobalsImport,
   importAutoPreviewSkipReason,
 } from "./importedFile.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
@@ -951,8 +952,14 @@ export default function App() {
           node.functionName ? [node.functionName] : []
         ),
       });
+      const currentGlobalsCode = latest.globalsCode ?? "";
+      const nextGlobalsCode = importedNode.kind === "unsupported"
+        ? currentGlobalsCode
+        : ensurePolarsGlobalsImport(currentGlobalsCode);
+      const globalsChanged = nextGlobalsCode !== currentGlobalsCode;
       const nextDocument = {
         ...latest,
+        ...(globalsChanged ? { globalsCode: nextGlobalsCode } : {}),
         nodes: [...latest.nodes, importedNode.node],
       };
       const documentChangedDuringImport =
@@ -969,6 +976,9 @@ export default function App() {
       }
 
       markDocumentEdited();
+      if (globalsChanged) {
+        queueOperation({ type: "update_globals", code: nextGlobalsCode });
+      }
       queueOperation({
         type: "add_node",
         node: toAddNodeOperationNode(importedNode.node),

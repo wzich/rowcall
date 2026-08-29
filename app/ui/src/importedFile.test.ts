@@ -1,6 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import {
   createImportedFileNode,
+  ensurePolarsGlobalsImport,
   importAutoPreviewSkipReason,
   importedFileKind,
 } from "./importedFile.ts";
@@ -31,11 +32,35 @@ Deno.test("CSV imports generate a readable Polars source node", () => {
   assertEquals(
     result.node.code,
     [
-      "import polars as pl",
-      "",
       'source_path = "data/Customer Orders.csv"',
       "customer_orders = pl.read_csv(source_path, try_parse_dates=True)",
     ].join("\n"),
+  );
+});
+
+Deno.test("Polars imports are added to globals once", () => {
+  assertEquals(
+    ensurePolarsGlobalsImport("from pathlib import Path"),
+    "from pathlib import Path\n\nimport polars as pl",
+  );
+  assertEquals(
+    ensurePolarsGlobalsImport("import pandas as pd\nimport polars as pl"),
+    "import pandas as pd\nimport polars as pl",
+  );
+  assertEquals(
+    ensurePolarsGlobalsImport("import os, polars as pl  # shared alias"),
+    "import os, polars as pl  # shared alias",
+  );
+});
+
+Deno.test("comments and strings do not satisfy the Polars globals import", () => {
+  const globalsCode = [
+    "# import polars as pl",
+    'example = "import polars as pl"',
+  ].join("\n");
+  assertEquals(
+    ensurePolarsGlobalsImport(globalsCode),
+    `${globalsCode}\n\nimport polars as pl`,
   );
 });
 

@@ -257,10 +257,11 @@ the returned project-relative path such as `data/orders.csv`; app and CLI
 execution scope the process working directory to the document directory.
 
 CSV, TSV, and Parquet suffixes generate ordinary editable Polars reader Nodes.
-Other suffixes generate ordinary editable Nodes that expose the copied file path
-for the author to replace with a reader. There is no runtime-level
-`rowcall.read_file` abstraction. Deleting an imported Node does not delete its
-data file.
+Their Node bodies use the `pl` alias, while `import polars as pl` is added to
+document globals only when that import is not already present. Other suffixes
+generate ordinary editable Nodes that expose the copied file path for the author
+to replace with a reader. There is no runtime-level `rowcall.read_file`
+abstraction. Deleting an imported Node does not delete its data file.
 
 Drops are rejected without copying while another Run is active. Recognized
 imports auto-run only when the document was clean and the runtime was ready when

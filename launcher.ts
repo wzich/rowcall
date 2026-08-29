@@ -1,4 +1,5 @@
 import { parseArgs } from "@std/cli/parse-args";
+import { resolveExistingDocumentPath } from "./document_path.ts";
 import { buildRowcallUrl, startRowcallServer } from "./main.ts";
 import {
   getLauncherPaths,
@@ -15,6 +16,8 @@ import {
 } from "./project_environment.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { rowcallVersion } from "./version.ts";
+
+export { resolveExistingDocumentPath } from "./document_path.ts";
 
 export type LauncherCommand =
   | { kind: "help"; topic?: string }
@@ -699,45 +702,6 @@ export function helpTextForTopic(topic: string | undefined): string {
   }
 }
 
-export async function resolveExistingDocumentPath(
-  path: string,
-): Promise<string> {
-  try {
-    const stat = await Deno.stat(path);
-    if (stat.isDirectory) {
-      const documentPath = `${path.replace(/\/+$/, "")}/graph.py`;
-      const documentStat = await Deno.stat(documentPath).catch((error) => {
-        if (error instanceof Deno.errors.NotFound) return null;
-        throw error;
-      });
-      if (!documentStat?.isFile) {
-        throw new Error(
-          `Rowcall folder does not contain graph.py: ${path}\n\nCreate it with:\n  rowcall new ${path}`,
-        );
-      }
-      return documentPath;
-    }
-    if (!stat.isFile) {
-      throw new Error(`Rowcall path is not a file or directory: ${path}`);
-    }
-    if (!path.endsWith(".py")) {
-      throw new Error(
-        "Rowcall document path must be a .py file or a folder containing graph.py.",
-      );
-    }
-    return path;
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) {
-      throw error;
-    }
-  }
-
-  const noun = path.endsWith(".py") ? "Rowcall document" : "Rowcall folder";
-  throw new Error(
-    `Path not found: ${path}\n\nCreate a new ${noun}:\n  rowcall new ${path}\n\nCreate and open it:\n  rowcall new ${path} --open`,
-  );
-}
-
 export async function createNewDocument(targetPath: string): Promise<string> {
   const standaloneFile = targetPath.endsWith(".py");
   const folderPath = standaloneFile
@@ -890,6 +854,17 @@ async function resolveRuntimeSelection(
   await ensureBundledAssets(paths);
   const pythonCommand = selection.pythonCommand ??
     await findCompatibleUserPython();
+  await validatePythonRuntime(pythonCommand, [paths.bundledPythonPackageDir]);
+  return {
+    mode: "user",
+    pythonCommand,
+  };
+}
+
+export async function validatePythonRuntime(
+  pythonCommand: string,
+  pythonPathEntries: string[] = [],
+): Promise<void> {
   if (!await isCompatiblePython(pythonCommand)) {
     throw new Error(
       `Selected Python must be Python 3.10 or newer: ${pythonCommand}`,
@@ -899,7 +874,7 @@ async function resolveRuntimeSelection(
     !await commandWorks(
       pythonCommand,
       ["-c", "import rowcall.runtime.worker"],
-      pythonRuntimeEnv(paths),
+      pythonPathEnvironment(pythonPathEntries),
     )
   ) {
     throw new Error(
@@ -907,10 +882,6 @@ async function resolveRuntimeSelection(
         "Try --managed-env to use Rowcall's starter environment, or pass a different Python with --python.",
     );
   }
-  return {
-    mode: "user",
-    pythonCommand,
-  };
 }
 
 async function resolveLaunchRuntime(
@@ -1397,24 +1368,25 @@ async function launchServer(
   const stdoutDone = teeProcessOutput(server.stdout, Deno.stdout, paths);
   const stderrDone = teeProcessOutput(server.stderr, Deno.stderr, paths);
   const serverStatus = server.status;
+  const stopServer = () => stopChild(server);
+  const signalHandlers = registerSignalHandlers(stopServer);
   const url = buildRowcallUrl(command.hostname, command.port, authToken);
   try {
     await waitForServer(url, serverStatus);
-  } catch (error) {
-    try {
-      server.kill("SIGTERM");
-    } catch {
-      // The server may already have exited.
+    console.info(`Rowcall is running at ${url}`);
+    if (command.openBrowser) {
+      await openBrowser(url);
     }
+    const status = await serverStatus;
+    await Promise.allSettled([stdoutDone, stderrDone]);
+    return { code: status.code };
+  } catch (error) {
+    stopServer();
+    await Promise.allSettled([serverStatus, stdoutDone, stderrDone]);
     throw error;
+  } finally {
+    unregisterSignalHandlers(signalHandlers);
   }
-  console.info(`Rowcall is running at ${url}`);
-  if (command.openBrowser) {
-    await openBrowser(url);
-  }
-  const status = await serverStatus;
-  await Promise.allSettled([stdoutDone, stderrDone]);
-  return { code: status.code };
 }
 
 export function buildLauncherInvocation(
@@ -1655,13 +1627,47 @@ async function commandWorks(
 }
 
 function pythonRuntimeEnv(paths: LauncherPaths): Record<string, string> {
+  return pythonPathEnvironment([paths.bundledPythonPackageDir]);
+}
+
+function pythonPathEnvironment(
+  entries: string[],
+): Record<string, string> {
   const existingPythonPath = Deno.env.get("PYTHONPATH");
   return {
     PYTHONPATH: [
-      paths.bundledPythonPackageDir,
+      ...entries,
       ...(existingPythonPath ? [existingPythonPath] : []),
     ].join(Deno.build.os === "windows" ? ";" : ":"),
   };
+}
+
+function registerSignalHandlers(
+  handler: () => void,
+): Array<{ signal: Deno.Signal; handler: () => void }> {
+  const signals: Deno.Signal[] = Deno.build.os === "windows"
+    ? ["SIGINT"]
+    : ["SIGINT", "SIGTERM"];
+  return signals.map((signal) => {
+    Deno.addSignalListener(signal, handler);
+    return { signal, handler };
+  });
+}
+
+function unregisterSignalHandlers(
+  handlers: Array<{ signal: Deno.Signal; handler: () => void }>,
+): void {
+  for (const { signal, handler } of handlers) {
+    Deno.removeSignalListener(signal, handler);
+  }
+}
+
+function stopChild(child: Deno.ChildProcess): void {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // The process may already have exited.
+  }
 }
 
 async function runChecked(

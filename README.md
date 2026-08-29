@@ -239,14 +239,24 @@ deno task dev
 
 This starts the watched Deno API and the Vite development server, then opens the
 app at `http://127.0.0.1:5173/`. Vite hot-reloads UI changes and proxies API
-requests with a development-session authorization token, so API restarts do not
-require opening a new tokenized URL.
+requests. The browser receives the development-session authorization token in
+the launch URL and sends it through the same client code used by a compiled
+launcher.
 
 By default Rowcall edits `examples/ecommerce/analysis.py`. To edit another local
-document during development, pass a `.py` path through the task:
+document during development, pass either a project folder containing `graph.py`
+or a `.py` path through the task:
 
 ```sh
+deno task dev path/to/project
 deno task dev path/to/analysis.py
+```
+
+Pass `--managed-env` to exercise the launcher's managed Python environment
+instead of the document project's environment:
+
+```sh
+deno task dev --managed-env path/to/project
 ```
 
 To create a new document and start the API against it, pass `--create` with the
@@ -352,6 +362,17 @@ deno task launcher:compile
 
 The task builds the UI first. The compiled binary is written to `dist/rowcall`
 and embeds the built UI, the Python package, and `requirements-alpha.txt`.
+
+Run the compiled-binary smoke test before a release or after changing launcher,
+runtime, authentication, or asset-packaging behavior:
+
+```sh
+deno task smoke:binary
+```
+
+The smoke task rebuilds the binary, launches it against an isolated folder and
+home directory, verifies the production UI assets and authenticated document
+API, and then shuts it down.
 
 For release hosting, publish platform-specific binaries such as:
 
