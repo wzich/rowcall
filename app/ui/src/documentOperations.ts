@@ -1,6 +1,19 @@
 import type { DocumentOperation } from "./api/documents.ts";
 import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 
+export function documentOperationAffectsExecution(
+  operation: DocumentOperation,
+): boolean {
+  switch (operation.type) {
+    case "move_node":
+    case "update_node_title":
+    case "update_node_description":
+      return false;
+    default:
+      return true;
+  }
+}
+
 export function coalesceDocumentOperations(
   operations: DocumentOperation[],
 ): DocumentOperation[] {

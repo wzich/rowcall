@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   applyPythonDocumentOperations,
   loadPythonDocument,
@@ -853,6 +853,8 @@ Deno.test("applyPythonDocumentOperations writes sidecar metadata", async () => {
   assertEquals(applied.document.nodes[0].position, { x: 30, y: 40 });
   assertEquals(applied.document.nodes[0].title, "Make X");
   assertEquals(applied.document.nodes[0].description, "Create a value.");
+  assertEquals(applied.sourceRevision, loaded.sourceRevision);
+  assertNotEquals(applied.document.revision, loaded.document.revision);
 
   const sidecar = JSON.parse(
     await Deno.readTextFile(sidecarPathForPythonDocument(documentPath)),

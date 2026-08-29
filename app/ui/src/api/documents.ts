@@ -26,6 +26,7 @@ export type DocumentApiError = {
 export type LoadDocumentSuccess = {
   ok: true;
   document: RowcallDocumentV1;
+  sourceRevision: string;
   path: string;
 };
 

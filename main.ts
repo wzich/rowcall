@@ -740,6 +740,7 @@ app.get("/document", async (c) => {
     return c.json({
       ok: true,
       document: formatDocument(decoded.document),
+      sourceRevision: decoded.sourceRevision,
       path: activeDocumentPath,
     });
   } catch (_error) {
@@ -960,6 +961,7 @@ app.post("/document/operations", async (c) => {
     return c.json({
       ok: true,
       document: formatDocument(saved.document),
+      sourceRevision: saved.sourceRevision,
       path: activeDocumentPath,
     });
   } catch (error) {

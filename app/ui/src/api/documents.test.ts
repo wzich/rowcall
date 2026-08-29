@@ -11,6 +11,7 @@ Deno.test("document operation request contains no automatic replay identifier", 
         JSON.stringify({
           ok: true,
           path: "/tmp/example.py",
+          sourceRevision: "source-next",
           document: {
             version: 1,
             revision: "next",

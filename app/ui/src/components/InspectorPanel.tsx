@@ -1363,6 +1363,7 @@ function NodeInspector({
   onTraceEnabledChange,
   onDeleteNode,
   onShowDocumentGlobals,
+  onOpenCode,
   pythonEditorError,
   errorFocusRequestId,
   selectedVariableName,
@@ -1386,6 +1387,7 @@ function NodeInspector({
   onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
   onShowDocumentGlobals?: () => void;
+  onOpenCode: () => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
   selectedVariableName: string;
@@ -1427,6 +1429,7 @@ function NodeInspector({
         onViewError={isBlockedByDocumentGlobals
           ? onShowDocumentGlobals
           : undefined}
+        onOpenCode={runStatus === "failed" ? onOpenCode : undefined}
         traceEnabled={traceEnabled}
         onTraceEnabledChange={onTraceEnabledChange}
         selectedVariableName={selectedVariableName}
@@ -1610,6 +1613,7 @@ function NodeResults({
   runStatus,
   runSummary,
   onViewError,
+  onOpenCode,
   traceEnabled,
   onTraceEnabledChange,
   selectedVariableName,
@@ -1620,6 +1624,7 @@ function NodeResults({
   runStatus: NodeRunVisualStatus;
   runSummary: NodeRunSummary;
   onViewError?: () => void;
+  onOpenCode?: () => void;
   traceEnabled: boolean;
   onTraceEnabledChange: (value: boolean) => void;
   selectedVariableName: string;
@@ -1670,6 +1675,7 @@ function NodeResults({
         <NodeRunBanner
           summary={runSummary}
           onViewError={onViewError}
+          onOpenCode={onOpenCode}
         />
         {executionState?.status === "completed" &&
           executionState.freshness === "failed_run" && (
@@ -1896,10 +1902,12 @@ function NodeRunBanner({
   summary,
   inputStatus,
   onViewError,
+  onOpenCode,
 }: {
   summary: NodeRunSummary;
   inputStatus?: string;
   onViewError?: () => void;
+  onOpenCode?: () => void;
 }) {
   const variant = summary.variant;
   const styles = {
@@ -1933,6 +1941,15 @@ function NodeRunBanner({
               onClick={onViewError}
             >
               View Document Globals
+            </button>
+          )}
+          {onOpenCode && (
+            <button
+              type="button"
+              className="mt-2 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
+              onClick={onOpenCode}
+            >
+              Open Code
             </button>
           )}
         </div>
@@ -2522,6 +2539,7 @@ export function InspectorPanel({
                 onTraceEnabledChange={onTraceEnabledChange}
                 onDeleteNode={onDeleteNode}
                 onShowDocumentGlobals={onShowDocumentGlobals}
+                onOpenCode={() => setInspectorMode("code")}
                 pythonEditorError={pythonEditorError}
                 errorFocusRequestId={navigationRequest?.target === "node_code"
                   ? navigationRequest.requestId

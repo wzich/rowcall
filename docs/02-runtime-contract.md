@@ -212,7 +212,9 @@ returning an earlier snapshot that the save could subsequently replace.
 The app-visible document revision includes both Python source and normalized
 sidecar metadata so UI-only edits such as node position changes participate in
 stale-write detection. The lower-level Python parser revision remains the source
-hash used by CLI/runtime code.
+hash used by CLI/runtime code. Successful document load and operation responses
+include that lower-level `sourceRevision` separately so the app can preserve
+execution results across sidecar-only saves and external metadata reloads.
 
 ## Document Status
 

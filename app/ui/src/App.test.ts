@@ -3,10 +3,43 @@ import type { DocumentOperation } from "./api/documents.ts";
 import {
   coalesceDocumentOperations,
   deriveRoutedOutputs,
+  documentOperationAffectsExecution,
   hasCustomManagedDownstream,
 } from "./documentOperations.ts";
 import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 import { detectPureOutputRename } from "./graph/outputRename.ts";
+
+Deno.test("only executable document operations invalidate results", () => {
+  assertEquals(
+    [
+      {
+        type: "move_node",
+        nodeId: "n_test",
+        position: { x: 10, y: 20 },
+      },
+      { type: "update_node_title", nodeId: "n_test", title: "Test" },
+      {
+        type: "update_node_description",
+        nodeId: "n_test",
+        description: "A test step.",
+      },
+    ].map((operation) =>
+      documentOperationAffectsExecution(operation as DocumentOperation)
+    ),
+    [false, false, false],
+  );
+
+  assertEquals(
+    [
+      { type: "update_globals", code: "value = 1" },
+      { type: "update_node_body", nodeId: "n_test", code: "value = 2" },
+      { type: "delete_node", nodeId: "n_test" },
+    ].map((operation) =>
+      documentOperationAffectsExecution(operation as DocumentOperation)
+    ),
+    [true, true, true],
+  );
+});
 
 Deno.test("coalesceDocumentOperations cancels a new node deleted before save", () => {
   const operations: DocumentOperation[] = [

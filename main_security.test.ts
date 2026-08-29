@@ -174,6 +174,27 @@ Deno.test("runtime restart route replaces the Python worker independently", asyn
   assertEquals(await response.json(), { ok: true });
 });
 
+Deno.test("GET /document reports the executable source revision separately", async () => {
+  const documentPath = await writeRouteTestDocument("document_revision.py");
+  setActiveDocumentPathForTests(documentPath);
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const response = await app.fetch(
+    request("/document", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.sourceRevision, loaded.sourceRevision);
+  assertEquals(body.document.revision, loaded.document.revision);
+});
+
 Deno.test("GET /document/status returns document status revisions", async () => {
   const documentPath = await writeRouteTestDocument("status_success.py");
   setActiveDocumentPathForTests(documentPath);
@@ -376,6 +397,7 @@ Deno.test("POST /document/operations applies operations", async () => {
   assertEquals(body.document.nodes[0].code, "x = 2");
   assertEquals(body.document.nodes[0].position, { x: 12, y: 34 });
   assertExists(body.document.revision);
+  assertExists(body.sourceRevision);
 
   assertEquals(
     await Deno.readTextFile(documentPath),

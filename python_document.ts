@@ -10,11 +10,21 @@ import {
 } from "./python_worker_client.ts";
 
 export type LoadPythonDocumentResult =
-  | { ok: true; document: RowcallDocumentV1; issues: [] }
+  | {
+    ok: true;
+    document: RowcallDocumentV1;
+    sourceRevision: string;
+    issues: [];
+  }
   | { ok: false; issues: ValidationIssue[] };
 
 export type ApplyPythonDocumentOperationsResult =
-  | { ok: true; document: RowcallDocumentV1; issues: [] }
+  | {
+    ok: true;
+    document: RowcallDocumentV1;
+    sourceRevision: string;
+    issues: [];
+  }
   | { ok: false; issues: ValidationIssue[] };
 
 export type PythonDocumentStatus = {
@@ -148,7 +158,13 @@ export async function loadPythonDocument(
       event["document"],
       snapshot.sidecar,
     );
-    return { ok: true, document: documentWithSidecar, issues: [] };
+    return {
+      ok: true,
+      document: documentWithSidecar,
+      sourceRevision: event["document"].revision ??
+        await sha256Text(snapshot.source),
+      issues: [],
+    };
   } catch (error) {
     return {
       ok: false,
@@ -386,7 +402,13 @@ async function inspectPythonDocumentSnapshot(
       event["document"],
       snapshot.sidecar,
     );
-    return { ok: true, document: documentWithSidecar, issues: [] };
+    return {
+      ok: true,
+      document: documentWithSidecar,
+      sourceRevision: event["document"].revision ??
+        await sha256Text(snapshot.source),
+      issues: [],
+    };
   } catch (error) {
     return {
       ok: false,

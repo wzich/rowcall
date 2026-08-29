@@ -76,6 +76,7 @@ import {
   canApplyLoadedDocument,
   canEditDocument,
   shouldAutoReloadDocument,
+  shouldPreserveExecutionSessionOnReload,
 } from "./documentReload.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
@@ -123,11 +124,8 @@ type ExternalDocumentNotice =
   | { kind: "waiting_readable"; detectedAt: number; detail?: string }
   | { kind: "updated"; updatedAt: number };
 
-function getDocumentSourceValue(
-  baseRevision: string,
-  editGeneration: number,
-): string {
-  return `document:${baseRevision}:${editGeneration}`;
+function getExecutionSourceValue(executionGeneration: number): string {
+  return `execution-source:${executionGeneration}`;
 }
 
 function getInitialThemeMode(): ThemeMode {
@@ -185,17 +183,19 @@ export default function App() {
     ExternalDocumentNotice
   >({ kind: "idle" });
   const editGenerationRef = useRef(0);
+  const executionGenerationRef = useRef(0);
   const editableDocumentRef = useRef<RowcallDocumentV1 | null>(null);
   const baseRevisionRef = useRef("");
+  const baseSourceRevisionRef = useRef("");
   const saveOutcomeUnknownRef = useRef(false);
   const firstUnsavedEditAtRef = useRef<number | null>(null);
   const invalidExternalDocumentSinceRef = useRef<number | null>(null);
   const isReloadingExternalDocumentRef = useRef(false);
-  const documentSourceValueRef = useRef(
-    getDocumentSourceValue(baseRevisionRef.current, editGenerationRef.current),
+  const executionSourceValueRef = useRef(
+    getExecutionSourceValue(executionGenerationRef.current),
   );
-  const [documentSourceValue, setDocumentSourceValue] = useState(() =>
-    documentSourceValueRef.current
+  const [executionSourceValue, setExecutionSourceValue] = useState(() =>
+    executionSourceValueRef.current
   );
   const pendingOperationsRef = useRef<DocumentOperation[]>([]);
   const flushPromiseRef = useRef<Promise<boolean> | null>(null);
@@ -231,13 +231,13 @@ export default function App() {
   useEffect(() => {
     globalThis.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
-  const syncDocumentSourceValue = useCallback(() => {
-    const sourceValue = getDocumentSourceValue(
-      baseRevisionRef.current,
-      editGenerationRef.current,
+  const advanceExecutionSourceValue = useCallback(() => {
+    executionGenerationRef.current += 1;
+    const sourceValue = getExecutionSourceValue(
+      executionGenerationRef.current,
     );
-    documentSourceValueRef.current = sourceValue;
-    setDocumentSourceValue(sourceValue);
+    executionSourceValueRef.current = sourceValue;
+    setExecutionSourceValue(sourceValue);
     return sourceValue;
   }, []);
   const {
@@ -263,8 +263,8 @@ export default function App() {
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
-  } = useExecutionSession(documentSourceValue, {
-    getCurrentSourceValue: () => documentSourceValueRef.current,
+  } = useExecutionSession(executionSourceValue, {
+    getCurrentSourceValue: () => executionSourceValueRef.current,
   });
   const isRunActive = activeRunType !== null;
   const isSelectedNodeRunning = selectedNodeId
@@ -311,7 +311,10 @@ export default function App() {
   }, [editableDocument]);
 
   const applyLoadedDocument = useCallback(
-    (loaded: LoadDocumentSuccess) => {
+    (
+      loaded: LoadDocumentSuccess,
+      options: { preserveExecutionSession?: boolean } = {},
+    ) => {
       const graph = loaded.document;
       generatedFunctionNameSessionRef.current =
         createGeneratedFunctionNameSession(graph);
@@ -328,8 +331,12 @@ export default function App() {
       editableDocumentRef.current = nextDocument;
       setEditableDocument(nextDocument);
       setPendingNodeDeletion(null);
-      clearExecutionSession();
+      if (!options.preserveExecutionSession) {
+        clearExecutionSession();
+        advanceExecutionSourceValue();
+      }
       baseRevisionRef.current = graph.revision ?? "";
+      baseSourceRevisionRef.current = loaded.sourceRevision;
       pendingOperationsRef.current = [];
       setPendingOperationCount(0);
       firstUnsavedEditAtRef.current = null;
@@ -339,9 +346,8 @@ export default function App() {
       saveOutcomeUnknownRef.current = false;
       setSaveError(null);
       editGenerationRef.current = 0;
-      syncDocumentSourceValue();
     },
-    [syncDocumentSourceValue],
+    [advanceExecutionSourceValue],
   );
 
   useEffect(() => {
@@ -399,7 +405,7 @@ export default function App() {
       .then((result) => {
         setDocumentPath(result.path);
         baseRevisionRef.current = result.document.revision ?? "";
-        syncDocumentSourceValue();
+        baseSourceRevisionRef.current = result.sourceRevision;
         if (editGeneration === editGenerationRef.current) {
           editableDocumentRef.current = result.document;
           setEditableDocument(result.document);
@@ -543,6 +549,7 @@ export default function App() {
     if (status.valid && status.revision) {
       invalidExternalDocumentSinceRef.current = null;
       if (status.revision === baseRevisionRef.current) {
+        baseSourceRevisionRef.current = status.sourceRevision;
         setExternalDocumentNotice((current) =>
           current.kind === "dirty" || current.kind === "waiting_readable"
             ? { kind: "idle" }
@@ -729,23 +736,27 @@ export default function App() {
     selectedNodeId,
   ]);
 
-  const markDocumentEdited = useCallback(() => {
+  const markDocumentEdited = useCallback((
+    impact: "execution" | "metadata" = "execution",
+  ) => {
     if (saveOutcomeUnknownRef.current) {
       return;
     }
-    prepareForDocumentEdit();
+    if (impact === "execution") {
+      prepareForDocumentEdit();
+      advanceExecutionSourceValue();
+    }
     if (firstUnsavedEditAtRef.current === null) {
       const now = Date.now();
       firstUnsavedEditAtRef.current = now;
       setFirstUnsavedEditAt(now);
     }
     editGenerationRef.current += 1;
-    syncDocumentSourceValue();
     if (!saveOutcomeUnknownRef.current) {
       setSaveStatus("idle");
       setSaveError(null);
     }
-  }, [prepareForDocumentEdit, syncDocumentSourceValue]);
+  }, [advanceExecutionSourceValue, prepareForDocumentEdit]);
 
   const commitEditableDocument = useCallback(
     (nextDocument: RowcallDocumentV1) => {
@@ -1075,7 +1086,7 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
+    markDocumentEdited("metadata");
     if (metadata.description !== undefined) {
       queueOperation({
         type: "update_node_description",
@@ -1293,7 +1304,7 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
+    markDocumentEdited("metadata");
     queueOperation({ type: "move_node", nodeId, position });
     commitEditableDocument(nextDocument);
   }, [commitEditableDocument, markDocumentEdited, queueOperation]);
@@ -1321,7 +1332,7 @@ export default function App() {
       })),
     };
 
-    markDocumentEdited();
+    markDocumentEdited("metadata");
     for (const { nodeId, position } of changedPositions) {
       queueOperation({ type: "move_node", nodeId, position });
     }
@@ -1382,6 +1393,7 @@ export default function App() {
       pendingOperationCount: pendingOperationsRef.current.length,
       saveAttemptGeneration: saveAttemptGenerationRef.current,
     };
+    const startedPendingOperations = [...pendingOperationsRef.current];
     isReloadingExternalDocumentRef.current = true;
     setIsExternalReloading(true);
     try {
@@ -1405,7 +1417,13 @@ export default function App() {
         return false;
       }
 
-      applyLoadedDocument(loaded);
+      applyLoadedDocument(loaded, {
+        preserveExecutionSession: shouldPreserveExecutionSessionOnReload({
+          currentSourceRevision: baseSourceRevisionRef.current,
+          loadedSourceRevision: loaded.sourceRevision,
+          pendingOperations: startedPendingOperations,
+        }),
+      });
       invalidExternalDocumentSinceRef.current = null;
       setExternalDocumentNotice(
         options.showUpdatedNotice
@@ -1458,6 +1476,7 @@ export default function App() {
     }
 
     if (status.revision === baseRevisionRef.current) {
+      baseSourceRevisionRef.current = status.sourceRevision;
       return true;
     }
 
@@ -1487,7 +1506,7 @@ export default function App() {
     ) {
       return;
     }
-    const runSourceValue = documentSourceValueRef.current;
+    const runSourceValue = executionSourceValueRef.current;
 
     const abortController = startRunAbortController();
     markNodeExecutionRunning(nodeId, "run_to_node");
@@ -1511,7 +1530,7 @@ export default function App() {
     ) {
       return;
     }
-    const runSourceValue = documentSourceValueRef.current;
+    const runSourceValue = executionSourceValueRef.current;
 
     if (selectedNodeId === null) {
       showInspectorTarget("run_result");
@@ -1537,9 +1556,16 @@ export default function App() {
         nodeId: destination.nodeId,
         requestId: (current?.requestId ?? 0) + 1,
       }));
+      setInspectorNavigationRequest((current) => ({
+        target: "node_results",
+        nodeId: destination.nodeId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      dismissRunNotification(notification.id);
       return;
     }
 
+    dismissRunNotification(notification.id);
     showInspectorTarget(
       destination.kind === "document_globals"
         ? "document_globals"
