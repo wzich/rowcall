@@ -262,6 +262,68 @@ double.depends_on(load.output("x"))
         assert deleted.parse_result.document is not None
         self.assertEqual([node.id for node in deleted.parse_result.document.nodes], ["load", "format"])
         self.assertEqual(deleted.parse_result.document.edges, ())
+        self.assertIn('@node(id="load", outputs=[])', deleted.source)
+        self.assertIn("    return {}", deleted.source)
+
+    def test_delete_node_demotes_only_outputs_whose_final_route_was_removed(self) -> None:
+        source = """
+from rowcall import node
+
+@node(id="source", outputs=["shared", "removed"])
+def source():
+    shared = 1
+    removed = 2
+    return {"shared": shared, "removed": removed}
+
+@node(id="other_source", outputs=["other"])
+def other_source():
+    other = 3
+    return {"other": other}
+
+@node(id="deleted", outputs=[])
+def deleted(shared, removed, other):
+    pass
+    return {}
+
+@node(id="survivor", outputs=[])
+def survivor(shared):
+    pass
+    return {}
+
+deleted.depends_on(
+    source.output("shared"),
+    source.output("removed"),
+    other_source.output("other"),
+)
+survivor.depends_on(source.output("shared"))
+""".lstrip()
+
+        result = apply_document_operations(
+            source,
+            DOCUMENT_PATH,
+            [{"type": "delete_node", "nodeId": "deleted"}],
+        )
+
+        self.assertTrue(result.ok, [issue.to_dict() for issue in result.issues])
+        assert result.source is not None
+        assert result.parse_result.document is not None
+        nodes_by_id = {
+            node.id: node
+            for node in result.parse_result.document.nodes
+        }
+        self.assertEqual(nodes_by_id["source"].outputs, ("shared",))
+        self.assertEqual(nodes_by_id["other_source"].outputs, ())
+        self.assertEqual(
+            [
+                (edge.from_node, edge.from_output, edge.to_node, edge.to_input)
+                for edge in result.parse_result.document.edges
+            ],
+            [("source", "shared", "survivor", "shared")],
+        )
+        self.assertIn('@node(id="source", outputs=["shared"])', result.source)
+        self.assertIn('    return {"shared": shared}', result.source)
+        self.assertIn('@node(id="other_source", outputs=[])', result.source)
+        self.assertIn("def other_source():\n    other = 3\n    return {}", result.source)
 
     def test_apply_operations_can_replace_every_node_after_deleting_them_first(self) -> None:
         source = """

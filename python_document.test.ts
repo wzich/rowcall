@@ -1,4 +1,9 @@
-import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertStringIncludes,
+} from "@std/assert";
 import {
   applyPythonDocumentOperations,
   loadPythonDocument,
@@ -740,7 +745,11 @@ Deno.test("applyPythonDocumentOperations removes deleted node incident edges", a
   }
 
   assertEquals(applied.document.nodes.map((node) => node.id), ["n_a"]);
+  assertEquals(applied.document.nodes[0].outputs, []);
   assertEquals(applied.document.edges, []);
+  const rewrittenSource = await Deno.readTextFile(documentPath);
+  assertStringIncludes(rewrittenSource, '@node(id="n_a", outputs=[])');
+  assertStringIncludes(rewrittenSource, "    return {}");
 });
 
 Deno.test("applyPythonDocumentOperations appends added Python node blocks", async () => {

@@ -34,7 +34,9 @@ import { Canvas } from "./components/Canvas.tsx";
 import {
   coalesceDocumentOperations,
   deriveRoutedOutputs,
+  getChangedOutputNodeIds,
   hasCustomManagedDownstream,
+  removeNodeAndIncidentEdges,
 } from "./documentOperations.ts";
 import {
   type ExecutionDisplayState,
@@ -1500,17 +1502,15 @@ export default function App() {
 
     const descendants = getDescendants(toRuntimeGraph(current), nodeId);
     const shouldClearSelection = selectedNodeId === nodeId;
-    const nextDocument = {
-      ...current,
-      nodes: current.nodes.filter((node) => node.id !== nodeId),
-      edges: current.edges.filter((edge) =>
-        edge.fromNode !== nodeId && edge.toNode !== nodeId
-      ),
-    };
+    const nextDocument = removeNodeAndIncidentEdges(current, nodeId);
+    const staleNodeIds = new Set([
+      ...descendants,
+      ...getChangedOutputNodeIds(current, nextDocument),
+    ]);
 
     markDocumentEdited();
     queueOperation({ type: "delete_node", nodeId });
-    markNodesStale(descendants);
+    markNodesStale(staleNodeIds);
     forgetNodes([nodeId]);
     if (shouldClearSelection) {
       setSelectedNodeId(null);

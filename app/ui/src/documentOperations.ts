@@ -118,6 +118,56 @@ export function deriveRoutedOutputs(
   ];
 }
 
+export function removeNodeAndIncidentEdges(
+  document: RowcallDocumentV1,
+  nodeId: string,
+): RowcallDocumentV1 {
+  if (!document.nodes.some((node) => node.id === nodeId)) return document;
+
+  const affectedSourceNodeIds = new Set(
+    document.edges
+      .filter((edge) => edge.toNode === nodeId && edge.fromNode !== nodeId)
+      .map((edge) => edge.fromNode),
+  );
+  const nextDocument = {
+    ...document,
+    nodes: document.nodes.filter((node) => node.id !== nodeId),
+    edges: document.edges.filter((edge) =>
+      edge.fromNode !== nodeId && edge.toNode !== nodeId
+    ),
+  };
+
+  return {
+    ...nextDocument,
+    nodes: nextDocument.nodes.map((node) =>
+      node.editable !== false && affectedSourceNodeIds.has(node.id)
+        ? {
+          ...node,
+          outputs: deriveRoutedOutputs(nextDocument, node.id),
+          runtimeCode: undefined,
+        }
+        : node
+    ),
+  };
+}
+
+export function getChangedOutputNodeIds(
+  previous: RowcallDocumentV1,
+  next: RowcallDocumentV1,
+): string[] {
+  const nextNodesById = new Map(next.nodes.map((node) => [node.id, node]));
+  return previous.nodes.flatMap((node) => {
+    const nextNode = nextNodesById.get(node.id);
+    return nextNode &&
+        (node.outputs.length !== nextNode.outputs.length ||
+          node.outputs.some((output, index) =>
+            output !== nextNode.outputs[index]
+          ))
+      ? [node.id]
+      : [];
+  });
+}
+
 function getStructuralOperationKey(
   operation: DocumentOperation,
 ): string | null {
