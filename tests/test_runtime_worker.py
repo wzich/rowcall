@@ -460,7 +460,7 @@ def frame():
         )
         self.assertTrue(by_value["ok"])
         self.assertEqual([row[0] for row in by_value["table"]["rows"][:3]], [0, 1, 2])
-        self.assertEqual(by_value["table"]["index"][:3], [54, 53, 52])
+        self.assertNotIn("index", by_value["table"])
 
         by_source_row = session.query_table(
             run_id="polars-run",
@@ -470,7 +470,7 @@ def frame():
             offset=0,
             sort={"kind": "index", "descending": True},
         )
-        self.assertEqual(by_source_row["table"]["index"][:3], [54, 53, 52])
+        self.assertNotIn("index", by_source_row["table"])
         self.assertEqual([row[0] for row in by_source_row["table"]["rows"][:3]], [0, 1, 2])
 
     def test_worker_run_to_node_emits_fresh_upstream_events(self) -> None:

@@ -9,38 +9,30 @@ import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 
 const statusStyles: Record<
   NodeRunVisualStatus,
-  { dot: string; label: string }
+  { label: string }
 > = {
   idle: {
-    dot: "bg-zinc-300",
     label: "Not run",
   },
   stale: {
-    dot: "bg-amber-400",
     label: "Code, outputs, or inputs changed since the last run",
   },
   queued: {
-    dot: "bg-zinc-400",
     label: "Queued to run",
   },
   running: {
-    dot: "bg-blue-500",
     label: "Running",
   },
   blocked: {
-    dot: "bg-zinc-300",
     label: "Did not run because an upstream step failed",
   },
   blocked_globals: {
-    dot: "bg-zinc-300",
     label: "Did not run because Document Globals failed",
   },
   completed: {
-    dot: "bg-emerald-500",
     label: "Ran successfully",
   },
   failed: {
-    dot: "bg-red-500",
     label: "Run failed",
   },
 };
@@ -62,18 +54,21 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
 
   return (
     <article
-      title={data.functionName ?? data.label}
+      title={`${data.functionName ?? data.label} · ${status.label}`}
       data-node-id={id}
       data-run-status={data.runStatus}
+      data-selected={selected || undefined}
       className={[
         "relative",
         "python-node-card",
-        "w-[360px] rounded-md border bg-white shadow-sm dark:bg-zinc-900",
-        selected
-          ? "border-zinc-900 shadow-md dark:border-zinc-100"
-          : "border-zinc-200 dark:border-zinc-700",
+        "w-[360px] rounded-md bg-white shadow-sm dark:bg-zinc-900",
       ].join(" ")}
     >
+      {isRunning && (
+        <svg className="node-running-border" aria-hidden="true">
+          <rect x="1" y="1" rx="5" pathLength="100" />
+        </svg>
+      )}
       <Handle
         id="node-input"
         type="target"
@@ -116,29 +111,7 @@ export function PythonNode({ data, id, selected }: NodeProps<PythonFlowNode>) {
                 />
               </button>
             )}
-            <span
-              key={`${id}:${data.runStatus}`}
-              className="node-run-status-indicator"
-            >
-              {isRunning
-                ? (
-                  <span
-                    aria-label={status.label}
-                    title={status.label}
-                    className="node-run-spinner h-3.5 w-3.5 shrink-0 rounded-full border-2"
-                  />
-                )
-                : (
-                  <span
-                    className={[
-                      "h-2.5 w-2.5 shrink-0 rounded-full",
-                      status.dot,
-                    ].join(" ")}
-                    title={status.label}
-                    aria-label={status.label}
-                  />
-                )}
-            </span>
+            <span className="sr-only">{status.label}</span>
           </div>
         </div>
       </div>
