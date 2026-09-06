@@ -19,21 +19,6 @@ import {
 } from "./python_worker_client.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 
-type WorkerNodeEvent = {
-  type: "node_started" | "node_completed" | "node_failed";
-  index: number;
-  nodeId: string;
-  dependsOn: string[];
-  result?: NodeRunResult;
-};
-
-type WorkerFinalEvent = {
-  type: "run_completed" | "run_failed";
-  response: ExecutionResponse;
-};
-
-type WorkerRunEvent = WorkerNodeEvent | WorkerFinalEvent;
-
 export { getPythonEnvironmentInfo, resolvePythonCommand };
 export type { PythonEnvironmentInfo };
 
@@ -53,25 +38,6 @@ export async function runSourceToNode(
     source,
     documentPath,
     "run_to_node",
-    nodeId,
-    trace,
-  );
-}
-
-export async function runSourceSingleNode(
-  source: string,
-  documentPath: string,
-  nodeId: string,
-  inputs: Record<string, unknown> = {},
-  trace: boolean = false,
-): Promise<ExecutionResponse> {
-  if (hasExplicitRunInputs(inputs)) {
-    return sourceBackedInputsNotSupportedResponse("run_node", nodeId, trace);
-  }
-  return await executeSourceRun(
-    source,
-    documentPath,
-    "run_node",
     nodeId,
     trace,
   );
@@ -100,35 +66,6 @@ export async function* streamSourceRunToNode(
     source,
     documentPath,
     "run_to_node",
-    nodeId,
-    trace,
-    signal,
-  );
-}
-
-export async function* streamSourceRunSingleNode(
-  runId: string,
-  source: string,
-  documentPath: string,
-  nodeId: string,
-  inputs: Record<string, unknown> = {},
-  trace: boolean = false,
-  signal?: AbortSignal,
-): AsyncGenerator<ExecutionStreamEvent> {
-  if (hasExplicitRunInputs(inputs)) {
-    yield* streamSourceBackedInputsNotSupported(
-      runId,
-      "run_node",
-      nodeId,
-      trace,
-    );
-    return;
-  }
-  yield* streamSourceRun(
-    runId,
-    source,
-    documentPath,
-    "run_node",
     nodeId,
     trace,
     signal,
@@ -183,32 +120,6 @@ export async function* streamSourceRunGraph(
     trace,
     signal,
   );
-}
-
-export type RuntimeCacheCompatibilityStatus = {
-  ok: true;
-  clearedEntries: 0;
-  cachingDisabled: true;
-};
-
-export async function clearSourceRuntimeSessionCache(): Promise<
-  RuntimeCacheCompatibilityStatus
-> {
-  const event = await sourceRuntimeWorker.requestFinalEvent(
-    "clear_session_cache",
-  );
-  if (
-    event.type !== "session_cache_cleared" || event.ok !== true ||
-    event.clearedEntries !== 0 || event.cachingDisabled !== true
-  ) {
-    throw new Error(
-      workerErrorMessage(
-        event,
-        "Python worker returned an invalid cache-disabled compatibility status",
-      ),
-    );
-  }
-  return { ok: true, clearedEntries: 0, cachingDisabled: true };
 }
 
 export async function querySourceRuntimeTable(

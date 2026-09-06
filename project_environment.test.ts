@@ -50,6 +50,25 @@ Deno.test("project environment status never manages a different interpreter", as
   assertEquals(status.canSync, false);
 });
 
+Deno.test("sync rejects unmarked or unselected environments without modifying them", async () => {
+  const project = await createProjectEnvironment("do-not-install\n");
+  await assertRejects(
+    () => syncProjectEnvironment(project.documentPath, project.pythonPath),
+    ProjectEnvironmentSyncError,
+    "only installs dependencies into project environments it created",
+  );
+  await assertRejects(() => Deno.stat(project.setupPath), Deno.errors.NotFound);
+
+  const marker = "incomplete\n";
+  await Deno.writeTextFile(project.setupPath, marker);
+  await assertRejects(
+    () => syncProjectEnvironment(project.documentPath, "/user/python"),
+    ProjectEnvironmentSyncError,
+    "only installs dependencies into project environments it created",
+  );
+  assertEquals(await Deno.readTextFile(project.setupPath), marker);
+});
+
 Deno.test("sync records an absent requirements file without running pip", async () => {
   const project = await createProjectEnvironment(null);
   await Deno.writeTextFile(project.setupPath, "complete\n");
@@ -92,7 +111,52 @@ Deno.test("sync skips pip when the requirements fingerprint is current", async (
 });
 
 Deno.test({
-  name: "failed sync keeps the previous successful requirements fingerprint",
+  name: "sync resolves relative document and dependency paths from the project",
+  ignore: Deno.build.os === "windows",
+  permissions: { read: true, write: true, run: true },
+  async fn() {
+    const project = await createProjectEnvironment("./local-dependency.txt\n");
+    const projectDirectory = project.documentPath.slice(0, -"/graph.py".length);
+    await Deno.writeTextFile(
+      `${projectDirectory}/local-dependency.txt`,
+      "local",
+    );
+    await Deno.writeTextFile(project.setupPath, "incomplete\n");
+    // Check both paths the installer consumes, without network or a real pip
+    // install: its requirements argument and a project-relative dependency.
+    await Deno.writeTextFile(
+      project.pythonPath,
+      `#!/bin/sh
+set -eu
+test "$1" = "-m"
+test "$2" = "pip"
+test "$3" = "install"
+test "$4" = "-r"
+test "$(cat "$(cat "$5")")" = "local"
+`,
+      { mode: 0o700 },
+    );
+
+    const originalDirectory = Deno.cwd();
+    const separator = projectDirectory.lastIndexOf("/");
+    const relativeDirectory = projectDirectory.slice(separator + 1);
+    try {
+      Deno.chdir(projectDirectory.slice(0, separator));
+      const synced = await syncProjectEnvironment(
+        `${relativeDirectory}/graph.py`,
+        getVenvPythonPath(`${relativeDirectory}/.venv`),
+      );
+      assertEquals(synced.updated, true);
+      assertEquals(synced.environment.requirementsStatus, "current");
+    } finally {
+      Deno.chdir(originalDirectory);
+      await Deno.remove(projectDirectory, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "failed sync marks the environment incomplete",
   permissions: { read: true, write: true, run: true },
   async fn() {
     const project = await createProjectEnvironment(
@@ -106,7 +170,49 @@ Deno.test({
       ProjectEnvironmentSyncError,
     );
     assert(error.message.length > 0);
-    assertEquals(await Deno.readTextFile(project.setupPath), previousSetup);
+    assertEquals(await Deno.readTextFile(project.setupPath), "incomplete\n");
+  },
+});
+
+Deno.test({
+  name:
+    "failed install retries after requirements revert and edits during install stay changed",
+  ignore: Deno.build.os === "windows",
+  permissions: { read: true, write: true, run: true },
+  async fn() {
+    const project = await createProjectEnvironment("original\n");
+    await writeCompleteProjectEnvironmentSetup(
+      project.setupPath,
+      await projectRequirementsFingerprint(project.requirementsPath),
+    );
+    await Deno.writeTextFile(
+      project.pythonPath,
+      `#!/bin/sh
+set -eu
+if [ "$(cat "$5")" = "broken" ]; then exit 1; fi
+printf 'changed-during-install\\n' > "$5"
+`,
+      { mode: 0o700 },
+    );
+    await Deno.writeTextFile(project.requirementsPath, "broken\n");
+    await assertRejects(
+      () => syncProjectEnvironment(project.documentPath, project.pythonPath),
+      ProjectEnvironmentSyncError,
+    );
+    await Deno.writeTextFile(project.requirementsPath, "original\n");
+    const startingHash = await projectRequirementsFingerprint(
+      project.requirementsPath,
+    );
+    const result = await syncProjectEnvironment(
+      project.documentPath,
+      project.pythonPath,
+    );
+    assertEquals(result.updated, true);
+    assertEquals(result.environment.requirementsStatus, "changed");
+    assertEquals(
+      await Deno.readTextFile(project.setupPath),
+      `complete\nrequirements-sha256=${startingHash}\n`,
+    );
   },
 });
 

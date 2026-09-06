@@ -19,7 +19,9 @@
     "release:publish": "deno run --allow-read --allow-write --allow-run --allow-env tools/release.ts publish",
     "cli": "deno run --allow-read --allow-run tools/cli.ts",
     "ui:check": "cd app/ui && deno task check",
-    "ui:test": "cd app/ui && deno task test"
+    "ui:test": "cd app/ui && deno task test",
+    "browser:install": "cd e2e && npm ci && npx playwright install chromium",
+    "test:browser": "deno task build && cd e2e && npm test"
   },
   "fmt": {
     "exclude": [

@@ -75,7 +75,6 @@ type CanvasProps = {
   importingFileName?: string | null;
   onAutoLayout?: (dimensions: NodeDimensionsById) => void;
   onAddChildNode?: (nodeId: string) => void;
-  onCodeChange?: (nodeId: string, code: string) => void;
   onConnectNodes?: (
     fromNode: string,
     fromOutput: string,
@@ -109,7 +108,6 @@ export function Canvas({
   importingFileName,
   onAutoLayout,
   onAddChildNode,
-  onCodeChange,
   onConnectNodes,
   onDeleteEdges,
   onDeleteNode,
@@ -156,15 +154,12 @@ export function Canvas({
         data: {
           ...node.data,
           runStatus: nodeRunStatuses[node.id] ?? "idle",
-          preview: nodePreviews[node.id],
           inputs: nodeInputPreviews[node.id] ?? node.data.inputs,
           outputPreviews: getOutputTypePreviews(nodePreviews[node.id]),
           outputOptions: nodeOutputOptions[node.id] ?? [],
-          onCodeChange: node.data.editable ? onCodeChange : undefined,
           onOutputsChange,
           onRunToNode,
           onVariableSelect,
-          onSaveDocument,
           outputsReadOnly,
           runToNodeDisabled,
         },
@@ -176,13 +171,10 @@ export function Canvas({
       nodePreviews,
       nodeInputPreviews,
       nodeOutputOptions,
-      onCodeChange,
-      onDeleteNode,
       selectedNodeId,
       onOutputsChange,
       onRunToNode,
       onVariableSelect,
-      onSaveDocument,
       outputsReadOnly,
       runToNodeDisabled,
     ],

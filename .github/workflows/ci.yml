@@ -22,7 +22,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install -e .
+          python3 -m pip install -r requirements-alpha.txt
 
       - name: Check
         run: deno task check
@@ -30,5 +30,20 @@ jobs:
       - name: Test
         run: deno task test
 
-      - name: Build UI
-        run: deno task build
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install browser
+        run: deno task browser:install --with-deps
+
+      - name: Browser regression
+        run: deno task test:browser
+
+      - name: Upload browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure
+          path: output/playwright/
+          if-no-files-found: ignore

@@ -220,23 +220,6 @@ Deno.test("PUT /document is no longer a document write route", async () => {
   assertEquals(response.status === 404 || response.status === 405, true);
 });
 
-Deno.test("cache compatibility route explicitly reports caching disabled", async () => {
-  const response = await app.fetch(
-    request("/runtime-session/clear-cache", {
-      method: "POST",
-      host: "127.0.0.1:8000",
-      token: "secret-token",
-    }),
-  );
-
-  assertEquals(response.status, 200);
-  assertEquals(await response.json(), {
-    ok: true,
-    clearedEntries: 0,
-    cachingDisabled: true,
-  });
-});
-
 Deno.test("runtime restart route replaces the Python worker independently", async () => {
   const response = await app.fetch(
     request("/runtime/python/restart", {
@@ -641,7 +624,7 @@ Deno.test("HTTP run routes reject graph-only payloads", async () => {
     edges: [],
   };
 
-  for (const route of ["/run-node", "/run-to-node", "/run-graph"]) {
+  for (const route of ["/run-to-node", "/run-graph"]) {
     const response = await app.fetch(
       jsonRequest(route, {
         graph,

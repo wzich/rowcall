@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rowcall.document import ParseResult, apply_document_operations, load_document, parse_source
+from rowcall.document import ParseResult, apply_document_operations, parse_source
 
 from .executor import NodeEventCallback, build_plan, execute_source
 from .previews import query_table_preview, run_with_captured_stdio
@@ -32,37 +32,7 @@ class RuntimeSession:
     def __init__(self) -> None:
         self._latest_result_store: LatestResultStore | None = None
 
-    def load_document(self, document_path: str | Path) -> dict[str, Any]:
-        resolved_path = self._resolve_document_path(document_path)
-        try:
-            parse_result = load_document(resolved_path)
-        except OSError as exc:
-            return self._document_error_result(resolved_path, str(exc))
-        return self._app_document_result(parse_result, resolved_path)
-
-    def validate_source(self, source: str, document_path: str | Path) -> dict[str, Any]:
-        parse_result = parse_source(source, self._resolve_document_path(document_path))
-        return {
-            "ok": parse_result.ok,
-            "issues": [issue.to_dict() for issue in parse_result.issues],
-            "documentPath": str(self._resolve_document_path(document_path)),
-            "revision": parse_result.document.revision if parse_result.document is not None else None,
-        }
-
     def inspect_source(self, source: str, document_path: str | Path) -> dict[str, Any]:
-        resolved_path = self._resolve_document_path(document_path)
-        parse_result = parse_source(source, resolved_path)
-        return self._app_document_result(parse_result, resolved_path)
-
-    def render_source(self, source: str, document_path: str | Path) -> dict[str, Any]:
-        resolved_path = self._resolve_document_path(document_path)
-        parse_result = parse_source(source, resolved_path)
-        result = self._app_document_result(parse_result, resolved_path)
-        if result["ok"]:
-            result["source"] = source
-        return result
-
-    def validate_candidate_source(self, source: str, document_path: str | Path) -> dict[str, Any]:
         resolved_path = self._resolve_document_path(document_path)
         parse_result = parse_source(source, resolved_path)
         return self._app_document_result(parse_result, resolved_path)
@@ -167,28 +137,6 @@ class RuntimeSession:
             run_id=run_id,
         )
 
-    def run_node(
-        self,
-        source: str,
-        document_path: str | Path,
-        target: str,
-        *,
-        trace: bool = False,
-        inputs: dict[str, Any] | None = None,
-        on_node_event: NodeEventCallback | None = None,
-        run_id: str | None = None,
-    ) -> dict[str, Any]:
-        return self._execute_and_publish(
-            source,
-            document_path,
-            target=target,
-            trace=trace,
-            run_type="run_node",
-            inputs=inputs,
-            on_node_event=on_node_event,
-            run_id=run_id,
-        )
-
     def query_table(
         self,
         *,
@@ -288,10 +236,6 @@ class RuntimeSession:
     def _table_query_error(kind: str, message: str) -> dict[str, Any]:
         return {"ok": False, "error": {"kind": kind, "message": message}}
 
-    def clear_session_cache(self) -> dict[str, Any]:
-        """Compatibility response; result inspection is not computation caching."""
-        return {"ok": True, "clearedEntries": 0, "cachingDisabled": True}
-
     def _resolve_document_path(self, document_path: str | Path) -> Path:
         return Path(document_path).expanduser().resolve()
 
@@ -307,11 +251,4 @@ class RuntimeSession:
             "ok": False,
             "documentPath": str(document_path),
             "issues": [issue.to_dict() for issue in parse_result.issues],
-        }
-
-    def _document_error_result(self, document_path: Path, message: str) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "documentPath": str(document_path),
-            "issues": [{"kind": "invalid_python", "message": message}],
         }

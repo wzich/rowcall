@@ -174,7 +174,7 @@ export type ExecutionStepTrace = {
 
 export type ExecutionResponse = {
   ok: boolean;
-  runType: "run_node" | "run_to_node" | "run_graph";
+  runType: "run_to_node" | "run_graph";
   targetNodeId?: string;
   finalNodeIds: string[];
   executedNodeIds: string[];

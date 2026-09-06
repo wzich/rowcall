@@ -79,6 +79,10 @@ export async function inspectProjectEnvironment(
 export async function syncProjectEnvironment(
   documentPath: string,
   pythonCommand: string,
+  options: {
+    onInstall?: (requirementsPath: string) => void;
+    installerOutput?: "capture" | "stderr";
+  } = {},
 ): Promise<ProjectEnvironmentSyncResult> {
   const status = await inspectProjectEnvironment(documentPath, pythonCommand);
   if (!status.canSync) {
@@ -98,15 +102,30 @@ export async function syncProjectEnvironment(
   );
 
   if (requirementsFingerprint !== "absent") {
-    const command = new Deno.Command(getVenvPythonPath(venvDirectory), {
-      args: ["-m", "pip", "install", "-r", status.requirementsPath],
-      cwd: projectDirectory,
+    const absoluteProjectDirectory = await Deno.realPath(projectDirectory);
+    const absoluteVenvDirectory = await Deno.realPath(venvDirectory);
+    const absoluteRequirementsPath = await Deno.realPath(
+      status.requirementsPath,
+    );
+    // pip can partly change an environment before failing. Invalidate the old
+    // success marker first, even if requirements are later reverted.
+    await Deno.writeTextFile(
+      projectEnvironmentSetupPath(venvDirectory),
+      "incomplete\n",
+    );
+    options.onInstall?.(absoluteRequirementsPath);
+    const command = new Deno.Command(getVenvPythonPath(absoluteVenvDirectory), {
+      args: ["-m", "pip", "install", "-r", absoluteRequirementsPath],
+      cwd: absoluteProjectDirectory,
       stdout: "piped",
       stderr: "piped",
     });
     let output: BoundedCommandOutput;
     try {
-      output = await runCommandWithBoundedOutput(command);
+      output = await runCommandWithBoundedOutput(
+        command,
+        options.installerOutput === "stderr",
+      );
     } catch (error) {
       throw new ProjectEnvironmentSyncError(
         "install_failed",
@@ -229,12 +248,13 @@ type BoundedCommandOutput = {
 
 async function runCommandWithBoundedOutput(
   command: Deno.Command,
+  forwardToStderr: boolean,
 ): Promise<BoundedCommandOutput> {
   const child = command.spawn();
   const [status, stdout, stderr] = await Promise.all([
     child.status,
-    readTextTail(child.stdout, installerDiagnosticLimit),
-    readTextTail(child.stderr, installerDiagnosticLimit),
+    readTextTail(child.stdout, installerDiagnosticLimit, forwardToStderr),
+    readTextTail(child.stderr, installerDiagnosticLimit, forwardToStderr),
   ]);
   return {
     success: status.success,
@@ -249,10 +269,12 @@ async function runCommandWithBoundedOutput(
 async function readTextTail(
   stream: ReadableStream<Uint8Array>,
   limit: number,
+  forwardToStderr: boolean,
 ): Promise<string> {
   const decoder = new TextDecoder();
   let tail = "";
   for await (const chunk of stream) {
+    if (forwardToStderr) await Deno.stderr.write(chunk);
     tail = `${tail}${decoder.decode(chunk, { stream: true })}`.slice(-limit);
   }
   return `${tail}${decoder.decode()}`.slice(-limit);

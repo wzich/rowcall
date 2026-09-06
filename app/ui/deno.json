@@ -2,7 +2,7 @@
   "nodeModulesDir": "auto",
   "tasks": {
     "check": "deno check src/main.tsx",
-    "test": "deno test --allow-read src",
+    "test": "deno test --allow-read --allow-env=NODE_ENV src",
     "dev": "deno run -A npm:vite@7.3.2 --host 127.0.0.1",
     "build": "deno run -A npm:vite@7.3.2 build"
   },

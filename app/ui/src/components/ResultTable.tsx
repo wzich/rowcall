@@ -196,7 +196,7 @@ export function ResultTable({
           <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header, columnPosition) => {
+                {headerGroup.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
                   const isIndex =
                     header.column.id === RESULT_TABLE_INDEX_COLUMN_ID;
@@ -208,6 +208,11 @@ export function ResultTable({
                   return (
                     <th
                       key={header.id}
+                      aria-sort={sorted === "asc"
+                        ? "ascending"
+                        : sorted === "desc"
+                        ? "descending"
+                        : "none"}
                       className={[
                         "whitespace-nowrap border-b border-r border-zinc-200 bg-zinc-100 last:border-r-0 dark:border-zinc-700 dark:bg-zinc-800",
                         isIndex ? "sticky left-0 z-20" : "",
@@ -234,7 +239,7 @@ export function ResultTable({
                             : "↕"}
                         </span>
                       </button>
-                      {dtype && columnPosition > 0 && (
+                      {dtype && (
                         <div className="max-w-44 truncate px-2 pb-1 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
                           {String(dtype)}
                         </div>

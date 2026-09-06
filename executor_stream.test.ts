@@ -5,7 +5,6 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import {
-  clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   querySourceRuntimeTable,
   resolvePythonCommand,
@@ -13,7 +12,6 @@ import {
   runSourceToNode,
   shutdownSourceRuntimeSession,
   streamSourceRunGraph,
-  streamSourceRunSingleNode,
   streamSourceRunToNode,
 } from "./executor.ts";
 import type { ExecutionStreamEvent } from "./types.ts";
@@ -33,7 +31,6 @@ function sourceRuntimeTest(
   fn: () => Promise<void>,
 ): void {
   Deno.test(name, async () => {
-    await clearSourceRuntimeSessionCache();
     try {
       await fn();
     } finally {
@@ -283,13 +280,13 @@ sourceRuntimeTest(
 );
 
 sourceRuntimeTest(
-  "runSourceSingleNode executes fresh through upstream dependencies",
+  "runSourceToNode executes fresh through upstream dependencies",
   async () => {
     const documentPath = `${await Deno.makeTempDir()}/target_source.py`;
     const source = targetSource(40);
 
     const events = await collectEvents(
-      streamSourceRunSingleNode(
+      streamSourceRunToNode(
         "source-run-fresh-target",
         source,
         documentPath,

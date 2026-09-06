@@ -243,7 +243,7 @@ def load():
                 if name == helper_name or name.startswith(f"{helper_name}."):
                     sys.modules.pop(name, None)
 
-    def test_run_node_is_fresh_across_document_roots_and_symlinked_helpers(self) -> None:
+    def test_run_to_node_is_fresh_across_document_roots_and_symlinked_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             external = root / "external"
@@ -268,10 +268,10 @@ def load():
 '''.lstrip()
             session = RuntimeSession()
 
-            first = session.run_node(source, first_root / "doc.py", "load")
+            first = session.run_to_node(source, first_root / "doc.py", "load")
             external_helper.write_text("VALUE = 'updated'\n")
-            updated = session.run_node(source, first_root / "doc.py", "load")
-            switched = session.run_node(source, second_root / "doc.py", "load")
+            updated = session.run_to_node(source, first_root / "doc.py", "load")
+            switched = session.run_to_node(source, second_root / "doc.py", "load")
 
         self.assertEqual(first["finalOutputsByNode"]["load"]["value"]["jsonValue"], "first")
         self.assertEqual(updated["finalOutputsByNode"]["load"]["value"]["jsonValue"], "updated")
@@ -469,6 +469,38 @@ def load():
         )
         self.assertEqual(Path.cwd(), previous_cwd)
         self.assertEqual(sys.path, previous_path)
+
+    def test_sibling_imports_take_precedence_when_document_directory_is_already_on_path(self) -> None:
+        helper_name = "rowcall_import_precedence_helper"
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                document_dir = root / "document"
+                other_dir = root / "other"
+                document_dir.mkdir()
+                other_dir.mkdir()
+                (document_dir / f"{helper_name}.py").write_text("VALUE = 'sibling'\n")
+                (other_dir / f"{helper_name}.py").write_text("VALUE = 'other'\n")
+                source = f'''from rowcall import node
+
+@node(id="load", outputs=["value"])
+def load():
+    from {helper_name} import VALUE
+    value = VALUE
+    return {{"value": value}}
+'''
+                original_path = [str(other_dir), *sys.path, str(document_dir)]
+                with patch.object(sys, "path", original_path.copy()):
+                    result = run_source(source, document_dir / "graph.py")
+                    self.assertEqual(sys.path, original_path)
+
+                self.assertTrue(result["ok"])
+                self.assertEqual(
+                    result["finalOutputsByNode"]["load"]["value"]["jsonValue"],
+                    "sibling",
+                )
+        finally:
+            sys.modules.pop(helper_name, None)
 
     def test_document_globals_execute_once_per_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -9,10 +9,10 @@ import {
 import { getActiveEnvironmentPythonCandidates } from "./runtime_config.ts";
 import {
   projectEnvironmentSetupPath,
-  projectRequirementsFingerprint,
+  ProjectEnvironmentSyncError,
   readOptionalTextFile,
   readProjectEnvironmentSetupState,
-  writeCompleteProjectEnvironmentSetup,
+  syncProjectEnvironment,
 } from "./project_environment.ts";
 import { defaultHostname, defaultPort } from "./startup_args.ts";
 import { rowcallVersion } from "./version.ts";
@@ -24,13 +24,11 @@ export type LauncherCommand =
   | { kind: "version" }
   | {
     kind: "doctor";
-    checkUpdates: boolean;
     json: boolean;
     pythonCommand?: string;
     managedEnv: boolean;
   }
   | { kind: "reset-env" }
-  | { kind: "update" }
   | {
     kind: "new";
     targetPath: string;
@@ -159,7 +157,7 @@ def summarize_orders(orders):
         .group_by("category")
         .agg(
             pl.len().alias("orders"),
-            pl.col("amount").sum().alias("revenue"),
+            pl.col("amount").sum().round(2).alias("revenue"),
         )
         .sort("revenue", descending=True)
     )
@@ -167,7 +165,15 @@ def summarize_orders(orders):
     return {"summary": summary}
 
 
+@node(id="n_large_orders", outputs=["large_orders"])
+def find_large_orders(orders):
+    large_orders = orders.filter(pl.col("amount") >= 50).sort("amount", descending=True)
+    display(large_orders, label="Large orders")
+    return {"large_orders": large_orders}
+
+
 summarize_orders.depends_on(load_orders.output("orders"))
+find_large_orders.depends_on(load_orders.output("orders"))
 `;
 
 const exampleOrdersCsv = `order_id,category,amount
@@ -192,7 +198,6 @@ Usage:
   rowcall validate <path>         Validate a document without opening the UI
   rowcall doctor                  Inspect the local Rowcall install
   rowcall reset-env               Recreate the managed Python environment
-  rowcall update                  Check for a launcher update
 
 Options:
   --python <path>                  Use a specific Python 3.10+ interpreter
@@ -208,9 +213,9 @@ Paths:
   my-work runs my-work/graph.py. Passing a .py path uses that exact file.
 
 Try:
+  rowcall example my-example --open
+  rowcall run my-example --to find_large_orders --json=summary
   rowcall new my-work --open
-  rowcall example my-example
-  rowcall run my-example --json
   rowcall help format
 
 Working with coding agents:
@@ -344,12 +349,13 @@ Examples:
 const exampleHelpText = `Usage:
   rowcall example <folder> [--open] [--python <path>] [--managed-env]
 
-Creates a sample Rowcall project with graph.py, data/orders.csv, lightweight
-agent guidance, and starter requirements.
+Creates an orders graph with two branches: revenue by category and large orders.
+Includes graph.py, data/orders.csv, agent guidance, and Polars-only requirements.
+Existing requirements.txt files are preserved. Open with --open to explore it.
 `;
 
 const doctorHelpText = `Usage:
-  rowcall doctor [--updates] [--json] [--python <path>] [--managed-env]
+  rowcall doctor [--json] [--python <path>] [--managed-env]
 
 Inspects the local Rowcall install, selected Python environment, dependency
 availability, and log path without modifying Rowcall state.
@@ -359,13 +365,6 @@ const resetEnvHelpText = `Usage:
   rowcall reset-env
 
 Recreates the managed Python environment used by the launcher.
-`;
-
-const updateHelpText = `Usage:
-  rowcall update
-
-Checks for launcher updates. Update checks are not implemented yet; rerun the
-beta installer to upgrade Rowcall.
 `;
 
 export function parseLauncherCommand(args: string[]): LauncherCommand {
@@ -399,14 +398,13 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
       return { kind: "help", topic: "doctor" };
     }
     const parsed = parseArgs(args.slice(1), {
-      boolean: ["updates", "json", "managed-env"],
+      boolean: ["json", "managed-env"],
       string: ["python"],
       unknown: rejectUnknownOption,
     });
     rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     return {
       kind: "doctor",
-      checkUpdates: Boolean(parsed.updates),
       json: Boolean(parsed.json),
       managedEnv: Boolean(parsed["managed-env"]),
       ...(typeof parsed.python === "string"
@@ -425,19 +423,10 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
     return { kind: "reset-env" };
   }
 
-  if (args[0] === "update") {
+  if (args[0] === "new" || args[0] === "example") {
+    const kind = args[0];
     if (args.includes("--help") || args.includes("-h")) {
-      return { kind: "help", topic: "update" };
-    }
-    if (args.length > 1) {
-      throw new Error("Usage: rowcall update");
-    }
-    return { kind: "update" };
-  }
-
-  if (args[0] === "new") {
-    if (args.includes("--help") || args.includes("-h")) {
-      return { kind: "help", topic: "new" };
+      return { kind: "help", topic: kind };
     }
     const parsed = parseArgs(args.slice(1), {
       boolean: ["open", "managed-env"],
@@ -446,34 +435,11 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
     });
     rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-      throw new Error("Usage: rowcall new <folder-or-document.py> [--open]");
+      const path = kind === "new" ? "<folder-or-document.py>" : "<folder>";
+      throw new Error(`Usage: rowcall ${kind} ${path} [--open]`);
     }
     return {
-      kind: "new",
-      targetPath: parsed._[0],
-      openBrowser: Boolean(parsed.open),
-      managedEnv: Boolean(parsed["managed-env"]),
-      ...(typeof parsed.python === "string"
-        ? { pythonCommand: parsed.python }
-        : {}),
-    };
-  }
-
-  if (args[0] === "example") {
-    if (args.includes("--help") || args.includes("-h")) {
-      return { kind: "help", topic: "example" };
-    }
-    const parsed = parseArgs(args.slice(1), {
-      boolean: ["open", "managed-env"],
-      string: ["python"],
-      unknown: rejectUnknownOption,
-    });
-    rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
-    if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-      throw new Error("Usage: rowcall example <folder> [--open]");
-    }
-    return {
-      kind: "example",
+      kind,
       targetPath: parsed._[0],
       openBrowser: Boolean(parsed.open),
       managedEnv: Boolean(parsed["managed-env"]),
@@ -555,12 +521,6 @@ export async function runLauncherCommand(
       await ensureManagedEnvironment(paths);
       console.info(`Recreated managed Python environment: ${paths.venvDir}`);
       return { code: 0 };
-    case "update":
-      await appendLog(paths, `rowcall ${command.kind}`);
-      console.info(
-        "Update checks are not implemented yet. Rerun the beta installer to upgrade Rowcall.",
-      );
-      return { code: 1 };
     case "new": {
       const documentPath = await createNewDocument(command.targetPath);
       if (!command.openBrowser) return { code: 0 };
@@ -695,8 +655,6 @@ export function helpTextForTopic(topic: string | undefined): string {
       return doctorHelpText;
     case "reset-env":
       return resetEnvHelpText;
-    case "update":
-      return updateHelpText;
     default:
       throw new Error(`Unknown help topic: ${topic}`);
   }
@@ -787,13 +745,16 @@ export async function createExampleProject(
   await Deno.mkdir(`${directory}/data`, { recursive: true });
   await Deno.writeTextFile(documentPath, exampleDocumentSource);
   await Deno.writeTextFile(dataPath, exampleOrdersCsv);
-  await writeDefaultProjectFiles(directory);
+  await writeDefaultProjectFiles(directory, "polars\n");
   console.info(`Created Rowcall example: ${directory}`);
   console.info(`Open it with: rowcall open ${directory}`);
   return documentPath;
 }
 
-async function writeDefaultProjectFiles(directory: string): Promise<void> {
+async function writeDefaultProjectFiles(
+  directory: string,
+  requirements = defaultRequirements,
+): Promise<void> {
   await writeTextFileIfMissing(
     `${directory}/.gitignore`,
     defaultGitignore,
@@ -804,7 +765,7 @@ async function writeDefaultProjectFiles(directory: string): Promise<void> {
   );
   await writeTextFileIfMissing(
     `${directory}/requirements.txt`,
-    defaultRequirements,
+    requirements,
   );
 }
 
@@ -922,7 +883,7 @@ export async function resolveProjectPython(
   if (await isCompatiblePython(venvPython)) {
     if (options.bootstrap) {
       await completeProjectEnvironmentSetup(
-        projectDirectory,
+        documentPath,
         venvDirectory,
       );
     }
@@ -966,7 +927,7 @@ export async function ensureProjectEnvironment(
   const setupPath = projectEnvironmentSetupPath(venvDirectory);
   if (await isCompatiblePython(venvPython)) {
     await completeProjectEnvironmentSetup(
-      projectDirectory,
+      documentPath,
       venvDirectory,
     );
     reportEnvironment(`Using project Python environment: ${venvPython}`);
@@ -984,7 +945,7 @@ export async function ensureProjectEnvironment(
   }
 
   await completeProjectEnvironmentSetup(
-    projectDirectory,
+    documentPath,
     venvDirectory,
   );
   reportEnvironment(`Using project Python environment: ${venvPython}`);
@@ -992,62 +953,42 @@ export async function ensureProjectEnvironment(
 }
 
 async function completeProjectEnvironmentSetup(
-  projectDirectory: string,
+  documentPath: string,
   venvDirectory: string,
 ): Promise<void> {
+  const projectDirectory = getParentDirectory(documentPath) ?? ".";
   const setupPath = projectEnvironmentSetupPath(venvDirectory);
-  let setupState = await readProjectEnvironmentSetupState(setupPath);
-  // A missing marker means the environment belongs to the user. Rowcall only
-  // installs into project environments that it created and marked itself.
+  const setupState = await readProjectEnvironmentSetupState(setupPath);
+  // Unmarked environments belong to the user, and must never be modified.
   if (setupState === null) return;
   if (setupState.status === "creating") {
     await finishProjectEnvironmentCreation(venvDirectory);
     await Deno.writeTextFile(setupPath, "incomplete\n");
-    setupState = { status: "incomplete" };
   }
 
-  const requirementsPath = `${projectDirectory}/requirements.txt`;
-  const requirementsFingerprint = await projectRequirementsFingerprint(
-    requirementsPath,
-  );
-  if (
-    setupState.status === "complete" &&
-    setupState.requirementsFingerprint === requirementsFingerprint
-  ) {
-    return;
-  }
-
-  const hasRequirements = requirementsFingerprint !== "absent";
-  if (hasRequirements) {
-    const absoluteProjectDirectory = await Deno.realPath(projectDirectory);
-    const absoluteRequirementsPath = await Deno.realPath(requirementsPath);
-    const absoluteVenvDirectory = await Deno.realPath(venvDirectory);
-    const absoluteVenvPython = getVenvPythonPath(absoluteVenvDirectory);
-    reportEnvironment(
-      `Installing changed project dependencies from ${absoluteRequirementsPath} (this may take a minute)...`,
+  try {
+    const result = await syncProjectEnvironment(
+      documentPath,
+      getVenvPythonPath(venvDirectory),
+      {
+        onInstall: (requirementsPath) =>
+          reportEnvironment(
+            `Installing changed project dependencies from ${requirementsPath} (this may take a minute)...`,
+          ),
+        installerOutput: "stderr",
+      },
     );
-    try {
-      await runChecked(absoluteVenvPython, [
-        "-m",
-        "pip",
-        "install",
-        "-r",
-        absoluteRequirementsPath,
-      ], { cwd: absoluteProjectDirectory });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Could not install project dependencies from ${absoluteRequirementsPath}.\n` +
-          `Rowcall will retry dependency setup on the next open or run.\n\n${detail}`,
-      );
+    if (result.updated) {
+      reportEnvironment("Project Python environment is ready.");
     }
+  } catch (error) {
+    if (!(error instanceof ProjectEnvironmentSyncError)) throw error;
+    throw new Error(
+      `Could not install project dependencies from ${projectDirectory}/requirements.txt.\n` +
+        `Rowcall will retry dependency setup on the next open or run.\n\n${error.message}` +
+        (error.output ? `\n${error.output}` : ""),
+    );
   }
-
-  await writeCompleteProjectEnvironmentSetup(
-    setupPath,
-    requirementsFingerprint,
-  );
-  reportEnvironment("Project Python environment is ready.");
 }
 
 async function finishProjectEnvironmentCreation(
@@ -1188,7 +1129,6 @@ type DoctorReport = {
       DoctorCheckStatus
     >;
   };
-  updateCheck: "not_requested" | "not_implemented";
 };
 
 export async function buildDoctorReport(
@@ -1250,7 +1190,6 @@ export async function buildDoctorReport(
       },
       imports,
     },
-    updateCheck: command.checkUpdates ? "not_implemented" : "not_requested",
   };
 }
 
@@ -1301,9 +1240,6 @@ async function printDoctor(
   console.info(`pandas: ${report.runtime.imports.pandas}`);
   console.info(`polars: ${report.runtime.imports.polars}`);
   console.info(`matplotlib: ${report.runtime.imports.matplotlib}`);
-  if (command.checkUpdates) {
-    console.info("Update checks are not implemented yet.");
-  }
 
   if (
     command.managedEnv &&

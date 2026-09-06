@@ -7,7 +7,6 @@ const apiOrigin = Deno.env.get("ROWCALL_DEV_API_ORIGIN") ??
 const uiPort = Number(Deno.env.get("ROWCALL_DEV_UI_PORT") ?? "5173");
 const apiRoutes = [
   "/document",
-  "/run-node",
   "/run-to-node",
   "/run-graph",
   "/results",

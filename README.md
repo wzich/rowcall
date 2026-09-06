@@ -55,11 +55,30 @@ Cloudflare upload. The other architecture is cross-built but not executed.
 If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 `export PATH=...` line to your shell profile.
 
-Show command help:
+Try the branching example:
 
 ```sh
-rowcall --help
+rowcall example my-example --open
 ```
+
+One CSV feeds two branches: revenue by category and orders of at least $50. Run
+the graph, inspect both tables, then change the `50` threshold in
+`find_large_orders` and run that branch again. Its input still comes from the
+same source; the category comparison stays separate. Each run currently
+re-executes its upstream dependencies.
+
+The example needs only Polars. Its generated `requirements.txt` contains
+`polars`; Rowcall installs it when creating the project environment on first
+open or run. Existing requirements files and user environments are preserved.
+
+For the same workflow in a terminal:
+
+```sh
+rowcall validate my-example
+rowcall run my-example --to find_large_orders --json=summary
+```
+
+Use `rowcall --help` for commands, or start from the minimal hello graph:
 
 Create and open a new Rowcall folder:
 
@@ -217,6 +236,27 @@ configuration should enter through Python code in the document so runs remain
 reproducible from the file itself.
 
 See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
+
+## Browser Regression Tests
+
+The browser journey exercises the built UI, API, and Python runtime together:
+edit, save, reload, run, recover from invalid Python, and handle external edits
+without overwriting a conflicting draft. Additional cases protect edits during
+pending saves/reloads and recovery when a committed save loses its response. CI
+and release preparation run the suite.
+
+With Node.js 22+ and the development Python environment installed:
+
+```sh
+deno task browser:install
+ROWCALL_TEST_PYTHON="$PWD/.venv/bin/python" deno task test:browser
+```
+
+Install the browser once and after changing the pinned Playwright version. The
+test uses a temporary project under `tmp/`, not your open graph. Failures save a
+screenshot and trace under `output/playwright/`; CI uploads them as an artifact.
+From `e2e/`, use `npx playwright show-trace <trace.zip>` to inspect the steps.
+This is development tooling and is not bundled into the beta CLI.
 
 ## Run Locally For Development
 

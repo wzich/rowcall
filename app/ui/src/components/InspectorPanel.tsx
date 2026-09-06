@@ -13,11 +13,8 @@ import CodeMirror from "@uiw/react-codemirror";
 import { AlertTriangle, Maximize2, Play, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type {
-  NodeNameChangeResult,
-  PythonEditorErrorTarget,
-  ThemeMode,
-} from "../App.tsx";
+import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
+import type { PythonEditorErrorTarget } from "../documentSaveError.ts";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
@@ -835,7 +832,12 @@ function GraphInspector({
           className="inspector-code-editor h-full"
           value={graph.globalsCode}
           height="100%"
-          extensions={[python()]}
+          extensions={[
+            python(),
+            EditorView.contentAttributes.of({
+              "aria-label": "Document globals Python code",
+            }),
+          ]}
           readOnly={readOnly}
           onCreateEditor={(view) => {
             globalsEditorRef.current = view;
@@ -1405,6 +1407,7 @@ function NodeInspector({
     executionState.response.error?.phase === "document_globals";
   const extensions = useMemo(() => [
     python(),
+    EditorView.contentAttributes.of({ "aria-label": "Step Python code" }),
     keymap.of([
       {
         key: "Shift-Enter",
@@ -1546,6 +1549,7 @@ function NodeCode({
             Description
           </label>
           <textarea
+            aria-label="Step description"
             className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
             value={selectedNode.description}
             placeholder="What does this step do?"

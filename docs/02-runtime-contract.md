@@ -175,11 +175,9 @@ context.
 
 The invited beta has no execution cache. Every selected-node run parses the
 current source and freshly executes the complete upstream dependency plan
-through the selected Node. The legacy `POST /run-node` route is a compatibility
-alias for that same plan and retains `run_node` response labeling, but it does
-not execute a distinct single-node plan or reuse prior outputs.
-`POST /runtime-session/clear-cache` likewise remains a compatibility endpoint
-and reports that caching is disabled.
+through the selected Node. The app exposes two execution routes:
+`POST /run-to-node` for a selected Node and its ancestors, and `POST /run-graph`
+for the complete graph. Neither reuses prior outputs.
 
 The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
@@ -270,6 +268,21 @@ Node without implicitly saving other work. File copying and document editing are
 deliberately separate operations; if adding or saving the Node later fails, the
 copied file remains in `data/`.
 
+## Worker Operations
+
+The internal NDJSON protocol exposes six operations, each used by the app:
+
+- `inspect_source`: parse and validate source for document loading and status.
+- `apply_operations`: rewrite a document edit batch.
+- `run_to_node`: freshly execute a target Node and its ancestors.
+- `run_graph`: freshly execute the full graph.
+- `query_table`: inspect routed output from the latest successful run.
+- `shutdown`: terminate the worker.
+
+Run requests emit their plan before node events. Planning remains part of the
+Python runtime and has no separate worker request. Deno owns reading source from
+disk before inspection and execution.
+
 ## Streaming Execution
 
 Execution endpoints return the normal JSON `ExecutionResponse` by default. If a
@@ -278,7 +291,6 @@ SSE-formatted events while the run is executing.
 
 Streaming is supported by:
 
-- `POST /run-node`
 - `POST /run-to-node`
 - `POST /run-graph`
 

@@ -13,14 +13,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  applyDocumentOperations,
   DocumentApiRequestError,
   type DocumentOperation,
-  type DocumentValidationIssue,
   importDocumentFile,
-  loadDocument,
-  loadDocumentStatus,
-  type LoadDocumentSuccess,
   maxImportedFileBytes,
 } from "./api/documents.ts";
 import {
@@ -32,7 +27,6 @@ import {
 } from "./api/runtime.ts";
 import { Canvas } from "./components/Canvas.tsx";
 import {
-  coalesceDocumentOperations,
   deriveRoutedOutputs,
   getChangedOutputNodeIds,
   hasCustomManagedDownstream,
@@ -46,7 +40,7 @@ import {
   type NodeInspectorBadge,
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
-import { getEdgeId, toReactFlowGraph } from "./graph/toReactFlow.ts";
+import { getEdgeId } from "./graph/toReactFlow.ts";
 import type {
   NodeCanvasPreview,
   NodeRunVisualStatus,
@@ -72,17 +66,9 @@ import {
   getRunNotificationSummary,
   type RunNotification,
 } from "./query/executionPresentation.ts";
-import {
-  type PythonSyntaxLocation,
-  pythonSyntaxLocationFromOffset,
-} from "./pythonSyntaxError.ts";
-import { classifySaveFailure } from "./saveOutcome.ts";
-import {
-  canApplyLoadedDocument,
-  canEditDocument,
-  shouldAutoReloadDocument,
-  shouldPreserveExecutionSessionOnReload,
-} from "./documentReload.ts";
+import { canEditDocument } from "./documentReload.ts";
+import { useDocumentSession } from "./useDocumentSession.ts";
+import type { PythonEditorErrorTarget } from "./documentSaveError.ts";
 import {
   createImportedFileNode,
   ensurePolarsGlobalsImport,
@@ -94,10 +80,7 @@ import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const documentCanvasKey = "document:active";
 const themeStorageKey = "rowcall:theme";
-const documentStatusPollIntervalMs = 4_000;
 const environmentStatusPollIntervalMs = 4_000;
-const invalidExternalDocumentGraceMs = 4_000;
-const updatedFromDiskNoticeMs = 3_500;
 const successfulRunNoticeMs = 3_000;
 const importNoticeMs = 7_000;
 
@@ -112,18 +95,6 @@ export type NodeNameChangeResult =
   | { ok: true; functionName: string }
   | { ok: false; message: string };
 
-type SaveErrorMessage = {
-  title: string;
-  detail: string;
-  target?: PythonEditorErrorTarget;
-};
-
-export type PythonEditorErrorTarget = PythonSyntaxLocation & {
-  editor: "globals" | "node";
-  nodeId?: string;
-  message: string;
-};
-
 type ConnectionWarning = {
   title: string;
   detail: string;
@@ -135,12 +106,6 @@ type ImportNotification = {
   title: string;
   detail: string;
 };
-
-type ExternalDocumentNotice =
-  | { kind: "idle" }
-  | { kind: "dirty"; detectedAt: number }
-  | { kind: "waiting_readable"; detectedAt: number; detail?: string }
-  | { kind: "updated"; updatedAt: number };
 
 function getExecutionSourceValue(executionGeneration: number): string {
   return `execution-source:${executionGeneration}`;
@@ -181,13 +146,6 @@ export default function App() {
     { nodeId: string; requestId: number } | null
   >(null);
   const [traceEnabled, setTraceEnabled] = useState(false);
-  const [editableDocument, setEditableDocument] = useState<
-    RowcallDocumentV1 | null
-  >(null);
-  const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "saved" | "error" | "outcome_unknown"
-  >("idle");
-  const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
@@ -197,62 +155,22 @@ export default function App() {
   const [importingFileName, setImportingFileName] = useState<string | null>(
     null,
   );
-  const [documentPath, setDocumentPath] = useState("Active document");
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
-  const [firstUnsavedEditAt, setFirstUnsavedEditAt] = useState<number | null>(
-    null,
-  );
-  const [isExternalReloading, setIsExternalReloading] = useState(false);
-  const [externalDocumentNotice, setExternalDocumentNotice] = useState<
-    ExternalDocumentNotice
-  >({ kind: "idle" });
-  const editGenerationRef = useRef(0);
   const executionGenerationRef = useRef(0);
-  const editableDocumentRef = useRef<RowcallDocumentV1 | null>(null);
-  const baseRevisionRef = useRef("");
-  const baseSourceRevisionRef = useRef("");
-  const saveOutcomeUnknownRef = useRef(false);
-  const firstUnsavedEditAtRef = useRef<number | null>(null);
-  const invalidExternalDocumentSinceRef = useRef<number | null>(null);
-  const isReloadingExternalDocumentRef = useRef(false);
   const executionSourceValueRef = useRef(
     getExecutionSourceValue(executionGenerationRef.current),
   );
   const [executionSourceValue, setExecutionSourceValue] = useState(() =>
     executionSourceValueRef.current
   );
-  const pendingOperationsRef = useRef<DocumentOperation[]>([]);
-  const flushPromiseRef = useRef<Promise<boolean> | null>(null);
-  const saveAttemptGenerationRef = useRef(0);
   const importNotificationIdRef = useRef(0);
   const importInFlightRef = useRef(false);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
     reservedNames: new Set(),
     nextIndex: 1,
   });
-  const documentQuery = useQuery({
-    queryKey: ["rowcall-document", "active"],
-    queryFn: loadDocument,
-    refetchOnWindowFocus: false,
-  });
-  const documentStatusQuery = useQuery({
-    queryKey: ["rowcall-document-status", "active"],
-    queryFn: loadDocumentStatus,
-    enabled: documentQuery.isSuccess,
-    refetchInterval: documentStatusPollIntervalMs,
-    refetchOnWindowFocus: true,
-    retry: false,
-  });
   const pythonRuntimeQuery = useQuery({
     queryKey: ["runtime", "python"],
     queryFn: loadPythonRuntime,
-  });
-  const projectEnvironmentQuery = useQuery({
-    queryKey: ["runtime", "environment"],
-    queryFn: loadProjectEnvironment,
-    enabled: documentQuery.isSuccess,
-    refetchInterval: environmentStatusPollIntervalMs,
-    refetchOnWindowFocus: true,
   });
   useEffect(() => {
     globalThis.localStorage.setItem(themeStorageKey, themeMode);
@@ -291,6 +209,45 @@ export default function App() {
     storeGraphExecutionResponse,
   } = useExecutionSession(executionSourceValue, {
     getCurrentSourceValue: () => executionSourceValueRef.current,
+  });
+  const {
+    documentQuery,
+    editableDocument,
+    documentPath,
+    saveStatus,
+    saveError,
+    pendingOperationCount,
+    firstUnsavedEditAt,
+    isExternalReloading,
+    externalDocumentNotice,
+    editDocument,
+    getSnapshot: getDocumentSnapshot,
+    waitForActiveSave,
+    prepareForWrite,
+    saveDocument: handleSaveDocument,
+    reloadDocument: handleReloadDocumentFromDisk,
+  } = useDocumentSession({
+    onLoaded: (document, preserveExecutionSession) => {
+      generatedFunctionNameSessionRef.current =
+        createGeneratedFunctionNameSession(document);
+      setPendingNodeDeletion(null);
+      if (!preserveExecutionSession) {
+        clearExecutionSession();
+        advanceExecutionSourceValue();
+      }
+    },
+    onExecutionEdit: () => {
+      prepareForDocumentEdit();
+      advanceExecutionSourceValue();
+    },
+    onPythonError: navigateToPythonError,
+  });
+  const projectEnvironmentQuery = useQuery({
+    queryKey: ["runtime", "environment"],
+    queryFn: loadProjectEnvironment,
+    enabled: documentQuery.isSuccess,
+    refetchInterval: environmentStatusPollIntervalMs,
+    refetchOnWindowFocus: true,
   });
   const isRunActive = activeRunType !== null;
   const isSelectedNodeRunning = selectedNodeId
@@ -363,171 +320,6 @@ export default function App() {
     return () => clearTimeout(timeoutId);
   }, [importNotification]);
 
-  useEffect(() => {
-    editableDocumentRef.current = editableDocument;
-  }, [editableDocument]);
-
-  const applyLoadedDocument = useCallback(
-    (
-      loaded: LoadDocumentSuccess,
-      options: { preserveExecutionSession?: boolean } = {},
-    ) => {
-      const graph = loaded.document;
-      generatedFunctionNameSessionRef.current =
-        createGeneratedFunctionNameSession(graph);
-      setDocumentPath(loaded.path);
-      const flowGraph = toReactFlowGraph(graph);
-      const nextDocument = {
-        ...graph,
-        nodes: graph.nodes.map((node) => ({
-          ...node,
-          position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
-            ?.position,
-        })),
-      };
-      editableDocumentRef.current = nextDocument;
-      setEditableDocument(nextDocument);
-      setPendingNodeDeletion(null);
-      if (!options.preserveExecutionSession) {
-        clearExecutionSession();
-        advanceExecutionSourceValue();
-      }
-      baseRevisionRef.current = graph.revision ?? "";
-      baseSourceRevisionRef.current = loaded.sourceRevision;
-      pendingOperationsRef.current = [];
-      setPendingOperationCount(0);
-      firstUnsavedEditAtRef.current = null;
-      setFirstUnsavedEditAt(null);
-      invalidExternalDocumentSinceRef.current = null;
-      setSaveStatus("idle");
-      saveOutcomeUnknownRef.current = false;
-      setSaveError(null);
-      editGenerationRef.current = 0;
-    },
-    [advanceExecutionSourceValue],
-  );
-
-  useEffect(() => {
-    if (!documentQuery.isSuccess) {
-      return;
-    }
-
-    applyLoadedDocument(documentQuery.data);
-  }, [applyLoadedDocument, documentQuery.data, documentQuery.isSuccess]);
-
-  const queueOperation = useCallback((operation: DocumentOperation) => {
-    if (saveOutcomeUnknownRef.current) {
-      return;
-    }
-    const operations = coalesceDocumentOperations([
-      ...pendingOperationsRef.current,
-      operation,
-    ]);
-    pendingOperationsRef.current = operations;
-    setPendingOperationCount(operations.length);
-    if (operations.length === 0) {
-      firstUnsavedEditAtRef.current = null;
-      setFirstUnsavedEditAt(null);
-    }
-    if (!saveOutcomeUnknownRef.current) {
-      setSaveStatus("idle");
-      setSaveError(null);
-    }
-  }, []);
-
-  const flushPendingOperations = useCallback(async (): Promise<boolean> => {
-    if (flushPromiseRef.current) {
-      return await flushPromiseRef.current;
-    }
-    if (pendingOperationsRef.current.length === 0) {
-      return true;
-    }
-    if (!editableDocumentRef.current) {
-      return false;
-    }
-
-    const operations = pendingOperationsRef.current;
-    const baseRevision = baseRevisionRef.current;
-    const editGeneration = editGenerationRef.current;
-
-    pendingOperationsRef.current = [];
-    saveAttemptGenerationRef.current += 1;
-    setSaveStatus("saving");
-    setSaveError(null);
-
-    const promise = applyDocumentOperations(
-      baseRevision,
-      operations,
-    )
-      .then((result) => {
-        setDocumentPath(result.path);
-        baseRevisionRef.current = result.document.revision ?? "";
-        baseSourceRevisionRef.current = result.sourceRevision;
-        if (editGeneration === editGenerationRef.current) {
-          editableDocumentRef.current = result.document;
-          setEditableDocument(result.document);
-          setSaveStatus("saved");
-        } else if (pendingOperationsRef.current.length > 0) {
-          setSaveStatus("idle");
-        } else {
-          setSaveStatus("saved");
-        }
-        setPendingOperationCount(pendingOperationsRef.current.length);
-        if (pendingOperationsRef.current.length === 0) {
-          firstUnsavedEditAtRef.current = null;
-          setFirstUnsavedEditAt(null);
-        }
-        void documentStatusQuery.refetch();
-        return pendingOperationsRef.current.length === 0;
-      })
-      .catch((error) => {
-        pendingOperationsRef.current = coalesceDocumentOperations([
-          ...operations,
-          ...pendingOperationsRef.current,
-        ]);
-        setPendingOperationCount(pendingOperationsRef.current.length);
-        if (classifySaveFailure(error) === "unknown_outcome") {
-          saveOutcomeUnknownRef.current = true;
-          setSaveStatus("outcome_unknown");
-          setSaveError({
-            title: "Save outcome unknown",
-            detail:
-              "Rowcall lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
-          });
-        } else {
-          const formattedError = formatSaveError(error, operations);
-          setSaveStatus("error");
-          setSaveError(formattedError);
-          if (formattedError.target) {
-            navigateToPythonError(formattedError.target);
-          }
-        }
-        return false;
-      })
-      .finally(() => {
-        flushPromiseRef.current = null;
-      });
-
-    flushPromiseRef.current = promise;
-    return await promise;
-  }, [documentStatusQuery]);
-
-  useEffect(() => {
-    if (
-      pendingOperationCount === 0 && saveStatus !== "outcome_unknown"
-    ) {
-      return;
-    }
-
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    globalThis.addEventListener("beforeunload", warnBeforeUnload);
-    return () =>
-      globalThis.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [pendingOperationCount, saveStatus]);
-
   const runToNodeMutation = useMutation({
     ...runToNodeMutationOptions(),
     onSuccess: (response, variables) => {
@@ -594,82 +386,6 @@ export default function App() {
       DocumentApiRequestError
     ? documentQuery.error.issues
     : [];
-  useEffect(() => {
-    const status = documentStatusQuery.data?.status;
-    if (!documentQuery.isSuccess || !status) {
-      return;
-    }
-    if (isReloadingExternalDocumentRef.current) {
-      return;
-    }
-
-    if (status.valid && status.revision) {
-      invalidExternalDocumentSinceRef.current = null;
-      if (status.revision === baseRevisionRef.current) {
-        baseSourceRevisionRef.current = status.sourceRevision;
-        setExternalDocumentNotice((current) =>
-          current.kind === "dirty" || current.kind === "waiting_readable"
-            ? { kind: "idle" }
-            : current
-        );
-        return;
-      }
-
-      if (
-        shouldAutoReloadDocument({
-          pendingOperationCount: pendingOperationsRef.current.length,
-          saveInFlight: flushPromiseRef.current !== null,
-          saveOutcomeUnknown: saveOutcomeUnknownRef.current,
-        })
-      ) {
-        void reloadDocumentFromDisk({ showUpdatedNotice: true });
-        return;
-      }
-
-      setExternalDocumentNotice((current) =>
-        current.kind === "dirty"
-          ? current
-          : { kind: "dirty", detectedAt: Date.now() }
-      );
-      return;
-    }
-
-    const now = Date.now();
-    if (invalidExternalDocumentSinceRef.current === null) {
-      invalidExternalDocumentSinceRef.current = now;
-      return;
-    }
-
-    if (
-      now - invalidExternalDocumentSinceRef.current >=
-        invalidExternalDocumentGraceMs
-    ) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: invalidExternalDocumentSinceRef.current,
-        detail: status.issues[0]?.message,
-      });
-    }
-  }, [
-    documentQuery.isSuccess,
-    documentStatusQuery.data?.status,
-  ]);
-  useEffect(() => {
-    if (externalDocumentNotice.kind !== "updated") {
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      setExternalDocumentNotice((current) =>
-        current.kind === "updated" &&
-          current.updatedAt === externalDocumentNotice.updatedAt
-          ? { kind: "idle" }
-          : current
-      );
-    }, updatedFromDiskNoticeMs);
-
-    return () => clearTimeout(timeoutId);
-  }, [externalDocumentNotice]);
   const editableGraph = useMemo<RuntimeGraph | null>(
     () => editableDocument ? toRuntimeGraph(editableDocument) : null,
     [editableDocument],
@@ -793,42 +509,9 @@ export default function App() {
     selectedNodeId,
   ]);
 
-  const markDocumentEdited = useCallback((
-    impact: "execution" | "metadata" = "execution",
-  ) => {
-    if (saveOutcomeUnknownRef.current) {
-      return;
-    }
-    if (impact === "execution") {
-      prepareForDocumentEdit();
-      advanceExecutionSourceValue();
-    }
-    if (firstUnsavedEditAtRef.current === null) {
-      const now = Date.now();
-      firstUnsavedEditAtRef.current = now;
-      setFirstUnsavedEditAt(now);
-    }
-    editGenerationRef.current += 1;
-    if (!saveOutcomeUnknownRef.current) {
-      setSaveStatus("idle");
-      setSaveError(null);
-    }
-  }, [advanceExecutionSourceValue, prepareForDocumentEdit]);
-
-  const commitEditableDocument = useCallback(
-    (nextDocument: RowcallDocumentV1) => {
-      if (saveOutcomeUnknownRef.current) {
-        return;
-      }
-      editableDocumentRef.current = nextDocument;
-      setEditableDocument(nextDocument);
-    },
-    [],
-  );
-
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const nodeId = createNextNodeId(current);
     const functionName = reserveNextFunctionName(
       current,
@@ -847,10 +530,11 @@ export default function App() {
       nodes: [...current.nodes, node],
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(nextDocument, [{
+      type: "add_node",
+      node: toAddNodeOperationNode(node),
+    }]);
+  }, [editDocument, getDocumentSnapshot]);
 
   async function handleImportFiles(
     files: File[],
@@ -874,7 +558,7 @@ export default function App() {
     }
 
     const file = files[0];
-    const current = editableDocumentRef.current;
+    const current = getDocumentSnapshot().document;
     if (!current || current.readOnly) {
       showImportNotification({
         tone: "warning",
@@ -883,7 +567,7 @@ export default function App() {
       });
       return;
     }
-    if (saveOutcomeUnknownRef.current) {
+    if (getDocumentSnapshot().editingBlocked) {
       showImportNotification({
         tone: "danger",
         title: "Import unavailable",
@@ -910,16 +594,15 @@ export default function App() {
       return;
     }
 
-    const hadUnsavedWork = pendingOperationsRef.current.length > 0 ||
-      flushPromiseRef.current !== null;
-    const startingEditGeneration = editGenerationRef.current;
+    const hadUnsavedWork = getDocumentSnapshot().hasUnsavedWork;
+    const startingEditGeneration = getDocumentSnapshot().editGeneration;
     const hadRuntimeMaintenance = runtimeMaintenanceActiveRef.current;
     const runtimeWasReady = runtimeReadyRef.current;
 
     importInFlightRef.current = true;
     setImportingFileName(file.name);
     try {
-      if (flushPromiseRef.current && !(await flushPromiseRef.current)) {
+      if (!(await waitForActiveSave())) {
         showImportNotification({
           tone: "danger",
           title: "Import paused",
@@ -928,13 +611,13 @@ export default function App() {
         });
         return;
       }
-      if (!(await ensureDocumentFreshForWrite())) {
+      if (!(await prepareForWrite())) {
         return;
       }
 
       const imported = await importDocumentFile(file);
-      const latest = editableDocumentRef.current;
-      if (!latest || latest.readOnly || saveOutcomeUnknownRef.current) {
+      const latest = getDocumentSnapshot().document;
+      if (!latest || latest.readOnly || getDocumentSnapshot().editingBlocked) {
         showImportNotification({
           tone: "danger",
           title: `Copied ${imported.storedName}, but could not add its node`,
@@ -965,7 +648,7 @@ export default function App() {
         nodes: [...latest.nodes, importedNode.node],
       };
       const documentChangedDuringImport =
-        editGenerationRef.current !== startingEditGeneration;
+        getDocumentSnapshot().editGeneration !== startingEditGeneration;
 
       if (activeRunTypeRef.current !== null) {
         showImportNotification({
@@ -977,15 +660,15 @@ export default function App() {
         return;
       }
 
-      markDocumentEdited();
+      const operations: DocumentOperation[] = [];
       if (globalsChanged) {
-        queueOperation({ type: "update_globals", code: nextGlobalsCode });
+        operations.push({ type: "update_globals", code: nextGlobalsCode });
       }
-      queueOperation({
+      operations.push({
         type: "add_node",
         node: toAddNodeOperationNode(importedNode.node),
       });
-      commitEditableDocument(nextDocument);
+      editDocument(nextDocument, operations);
       setSelectedNodeId(nodeId);
 
       const renamed = imported.storedName !== file.name;
@@ -1057,8 +740,8 @@ export default function App() {
   }
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const parentNode = current.nodes.find((node) => node.id === parentNodeId);
     if (!parentNode) return;
     const nodeId = createNextNodeId(current);
@@ -1083,15 +766,16 @@ export default function App() {
       nodes: [...current.nodes, node],
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
+    editDocument(nextDocument, [{
+      type: "add_node",
+      node: toAddNodeOperationNode(node),
+    }]);
     setSelectedNodeId(node.id);
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || node.code === code) return;
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
@@ -1127,33 +811,33 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "update_node_body", nodeId, code });
+    const operations: DocumentOperation[] = [
+      { type: "update_node_body", nodeId, code },
+    ];
     if (renamedOutput) {
       for (const edge of renamedEdges) {
-        queueOperation({ type: "remove_edge", ...edge });
+        operations.push({ type: "remove_edge", ...edge });
       }
       for (const edge of renamedEdges) {
-        queueOperation({
+        operations.push({
           type: "add_edge",
           ...edge,
           fromOutput: renamedOutput.toOutput,
         });
       }
     }
+    editDocument(nextDocument, operations);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleGlobalsCodeChange = useCallback((globalsCode: string) => {
-    const current = editableDocumentRef.current;
+    const current = getDocumentSnapshot().document;
     if (
-      !current || saveOutcomeUnknownRef.current ||
+      !current || getDocumentSnapshot().editingBlocked ||
       (current.globalsCode ?? "") === globalsCode
     ) {
       return;
@@ -1164,23 +848,20 @@ export default function App() {
       globalsCode,
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "update_globals", code: globalsCode });
+    editDocument(nextDocument, [{ type: "update_globals", code: globalsCode }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleOutputsChange = useCallback((
     nodeId: string,
     outputs: string[],
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || areStringArraysEqual(node.outputs, outputs)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
@@ -1211,38 +892,37 @@ export default function App() {
       edges: nextEdges,
     };
 
-    markDocumentEdited();
+    const operations: DocumentOperation[] = [];
     for (const edge of removedEdges) {
-      queueOperation({ type: "remove_edge", ...edge });
+      operations.push({ type: "remove_edge", ...edge });
     }
     if (removedEdges.length === 0) {
       // Legacy documents may contain an unconnected declared output. Routes
       // normally derive this return plumbing, but keep the inline cleanup
       // action capable of removing that old declaration.
-      queueOperation({ type: "update_node_outputs", nodeId, outputs });
+      operations.push({ type: "update_node_outputs", nodeId, outputs });
     }
     for (const edge of renamedEdges) {
-      queueOperation({
+      operations.push({
         type: "add_edge",
         ...edge,
         fromOutput: added[0],
       });
     }
+    editDocument(nextDocument, operations);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleNodeNameChange = useCallback((
     nodeId: string,
     displayName: string,
   ): NodeNameChangeResult => {
-    const current = editableDocumentRef.current;
-    if (saveOutcomeUnknownRef.current) {
+    const current = getDocumentSnapshot().document;
+    if (getDocumentSnapshot().editingBlocked) {
       return {
         ok: false,
         message: "Reload from disk before making more changes.",
@@ -1306,25 +986,26 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "rename_node_function", nodeId, functionName });
+    editDocument(nextDocument, [{
+      type: "rename_node_function",
+      nodeId,
+      functionName,
+    }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
 
     return { ok: true, functionName };
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleNodeMetadataChange = useCallback((
     nodeId: string,
     metadata: { description?: string },
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     const nextDescription = metadata.description ?? node.description;
@@ -1347,24 +1028,24 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited("metadata");
+    const operations: DocumentOperation[] = [];
     if (metadata.description !== undefined) {
-      queueOperation({
+      operations.push({
         type: "update_node_description",
         nodeId,
         description: metadata.description,
       });
     }
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(nextDocument, operations, "metadata");
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleConnectNodes = useCallback((
     fromNode: string,
     fromOutput: string,
     toNode: string,
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const toInput = fromOutput;
     const sourceNode = current.nodes.find((node) => node.id === fromNode);
     const targetNode = current.nodes.find((node) => node.id === toNode);
@@ -1416,26 +1097,23 @@ export default function App() {
     };
 
     setConnectionWarning(null);
-    markDocumentEdited();
-    queueOperation({
+    editDocument(nextDocument, [{
       type: "add_edge",
       fromNode,
       fromOutput,
       toNode,
       toInput,
-    });
+    }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleDeleteEdges = useCallback((edgeIds: string[]) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return [];
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return [];
     const edgeIdSet = new Set(edgeIds);
     const removedEdges = current.edges.filter((edge) =>
       edgeIdSet.has(getEdgeId(edge))
@@ -1477,26 +1155,24 @@ export default function App() {
       edges: nextEdges,
     };
 
-    markDocumentEdited();
-    for (const edge of editableRemovedEdges) {
-      queueOperation({
+    editDocument(
+      nextDocument,
+      editableRemovedEdges.map((edge) => ({
         type: "remove_edge",
         ...edge,
-      });
-    }
+      })),
+    );
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
     return acceptedEdgeIds;
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const commitDeleteNode = useCallback((nodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked || isRunActive) return;
     if (!current.nodes.some((node) => node.id === nodeId)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
 
@@ -1508,27 +1184,24 @@ export default function App() {
       ...getChangedOutputNodeIds(current, nextDocument),
     ]);
 
-    markDocumentEdited();
-    queueOperation({ type: "delete_node", nodeId });
+    editDocument(nextDocument, [{ type: "delete_node", nodeId }]);
     markNodesStale(staleNodeIds);
     forgetNodes([nodeId]);
     if (shouldClearSelection) {
       setSelectedNodeId(null);
     }
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
+    editDocument,
+    getDocumentSnapshot,
     forgetNodes,
-    markDocumentEdited,
     markNodesStale,
-    queueOperation,
     selectedNodeId,
     isRunActive,
   ]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked || isRunActive) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || hasCustomManagedDownstream(current, nodeId)) return;
 
@@ -1539,7 +1212,7 @@ export default function App() {
         edge.fromNode === nodeId || edge.toNode === nodeId
       ).length,
     });
-  }, [isRunActive]);
+  }, [getDocumentSnapshot, isRunActive]);
 
   const confirmDeleteNode = useCallback(() => {
     if (!pendingNodeDeletion) return;
@@ -1552,8 +1225,8 @@ export default function App() {
     nodeId: string,
     position: { x: number; y: number },
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || arePositionsEqual(node.position, position)) return;
     const nextDocument = {
@@ -1563,16 +1236,18 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited("metadata");
-    queueOperation({ type: "move_node", nodeId, position });
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(
+      nextDocument,
+      [{ type: "move_node", nodeId, position }],
+      "metadata",
+    );
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleAutoLayout = useCallback((
     dimensions: NodeDimensionsById,
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const positions = createSimpleLayout(toRuntimeGraph(current), dimensions);
     const changedPositions = current.nodes.flatMap((node) => {
       const position = positions[node.id];
@@ -1591,27 +1266,16 @@ export default function App() {
       })),
     };
 
-    markDocumentEdited("metadata");
-    for (const { nodeId, position } of changedPositions) {
-      queueOperation({ type: "move_node", nodeId, position });
-    }
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
-
-  async function handleSaveDocument() {
-    if (
-      !editableDocument || saveStatus === "saving" ||
-      saveOutcomeUnknownRef.current
-    ) {
-      return;
-    }
-
-    if (!(await ensureDocumentFreshForWrite())) {
-      return;
-    }
-
-    await flushPendingOperations();
-  }
+    editDocument(
+      nextDocument,
+      changedPositions.map(({ nodeId, position }) => ({
+        type: "move_node",
+        nodeId,
+        position,
+      })),
+      "metadata",
+    );
+  }, [editDocument, getDocumentSnapshot]);
 
   function navigateToPythonError(target: PythonEditorErrorTarget) {
     if (target.editor === "node" && target.nodeId) {
@@ -1631,126 +1295,6 @@ export default function App() {
     }));
   }
 
-  async function reloadDocumentFromDisk(
-    options: { allowDiscardLocalEdits?: boolean; showUpdatedNotice?: boolean } =
-      {},
-  ): Promise<boolean> {
-    if (isReloadingExternalDocumentRef.current) {
-      return false;
-    }
-
-    if (flushPromiseRef.current) {
-      setExternalDocumentNotice({
-        kind: "dirty",
-        detectedAt: Date.now(),
-      });
-      return false;
-    }
-
-    const started = {
-      editGeneration: editGenerationRef.current,
-      pendingOperationCount: pendingOperationsRef.current.length,
-      saveAttemptGeneration: saveAttemptGenerationRef.current,
-    };
-    const startedPendingOperations = [...pendingOperationsRef.current];
-    isReloadingExternalDocumentRef.current = true;
-    setIsExternalReloading(true);
-    try {
-      const loaded = await loadDocument();
-
-      if (
-        !canApplyLoadedDocument(
-          started,
-          {
-            editGeneration: editGenerationRef.current,
-            pendingOperationCount: pendingOperationsRef.current.length,
-            saveAttemptGeneration: saveAttemptGenerationRef.current,
-            saveInFlight: flushPromiseRef.current !== null,
-          },
-        )
-      ) {
-        setExternalDocumentNotice({
-          kind: "dirty",
-          detectedAt: Date.now(),
-        });
-        return false;
-      }
-
-      applyLoadedDocument(loaded, {
-        preserveExecutionSession: shouldPreserveExecutionSessionOnReload({
-          currentSourceRevision: baseSourceRevisionRef.current,
-          loadedSourceRevision: loaded.sourceRevision,
-          pendingOperations: startedPendingOperations,
-        }),
-      });
-      invalidExternalDocumentSinceRef.current = null;
-      setExternalDocumentNotice(
-        options.showUpdatedNotice
-          ? { kind: "updated", updatedAt: Date.now() }
-          : { kind: "idle" },
-      );
-      return true;
-    } catch (error) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: error instanceof Error ? error.message : undefined,
-      });
-      return false;
-    } finally {
-      isReloadingExternalDocumentRef.current = false;
-      setIsExternalReloading(false);
-    }
-  }
-
-  async function handleReloadDocumentFromDisk() {
-    await reloadDocumentFromDisk({ allowDiscardLocalEdits: true });
-  }
-
-  async function ensureDocumentFreshForWrite(): Promise<boolean> {
-    if (saveOutcomeUnknownRef.current) {
-      return false;
-    }
-
-    const result = await documentStatusQuery.refetch();
-    if (!result.isSuccess) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: result.error instanceof Error
-          ? result.error.message
-          : undefined,
-      });
-      return false;
-    }
-
-    const status = result.data.status;
-    if (!status.valid || !status.revision) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: status.issues[0]?.message,
-      });
-      return false;
-    }
-
-    if (status.revision === baseRevisionRef.current) {
-      baseSourceRevisionRef.current = status.sourceRevision;
-      return true;
-    }
-
-    if (pendingOperationsRef.current.length > 0) {
-      setExternalDocumentNotice({
-        kind: "dirty",
-        detectedAt: Date.now(),
-      });
-      return false;
-    }
-
-    await reloadDocumentFromDisk({ showUpdatedNotice: true });
-    return false;
-  }
-
   function getCurrentPythonSourceForRun(): string | undefined {
     // TODO: When the UI owns raw Python source state, pass that string here so
     // dirty editor contents can run without first saving to disk.
@@ -1765,8 +1309,7 @@ export default function App() {
       importInFlightRef.current && !options.allowDuringImport;
     if (isRuntimeMaintenanceActive || importBlocksRun()) return;
     if (
-      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
-      !(await flushPendingOperations())
+      !editableGraph || !(await prepareForWrite({ savePending: true }))
     ) {
       return;
     }
@@ -1779,7 +1322,7 @@ export default function App() {
     runToNodeMutation.mutate({
       nodeId,
       source: getCurrentPythonSourceForRun(),
-      expectedRevision: baseRevisionRef.current,
+      expectedRevision: getDocumentSnapshot().revision,
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
@@ -1791,8 +1334,7 @@ export default function App() {
   async function handleRunGraph() {
     if (isRuntimeMaintenanceActive || importInFlightRef.current) return;
     if (
-      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
-      !(await flushPendingOperations())
+      !editableGraph || !(await prepareForWrite({ savePending: true }))
     ) {
       return;
     }
@@ -1807,7 +1349,7 @@ export default function App() {
     markGraphExecutionRunning();
     runGraphMutation.mutate({
       source: getCurrentPythonSourceForRun(),
-      expectedRevision: baseRevisionRef.current,
+      expectedRevision: getDocumentSnapshot().revision,
       trace: traceEnabled,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
@@ -1877,14 +1419,7 @@ export default function App() {
       ].join(" ")}
     >
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold">Rowcall</h1>
-            <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-              Alpha
-            </span>
-          </div>
-        </div>
+        <h1 className="text-lg font-semibold">Rowcall</h1>
         <div className="flex min-w-0 items-center gap-3">
           {externalDocumentNotice.kind === "updated" && (
             <span className="hidden shrink-0 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200 md:inline-flex">
@@ -2220,7 +1755,6 @@ export default function App() {
                 onAddChildNode={canEditStructure
                   ? handleAddChildNode
                   : undefined}
-                onCodeChange={canEditStructure ? handleCodeChange : undefined}
                 onConnectNodes={canEditStructure
                   ? handleConnectNodes
                   : undefined}
@@ -2875,139 +2409,6 @@ function toAddNodeOperationNode(node: RuntimeNode): Extract<
     ...(node.title ? { title: node.title } : {}),
     ...(node.description ? { description: node.description } : {}),
   };
-}
-
-function formatSaveError(
-  error: unknown,
-  operations: DocumentOperation[] = [],
-): SaveErrorMessage {
-  if (error instanceof DocumentApiRequestError && error.issues.length > 0) {
-    const issue = error.issues[0];
-    const location = formatIssueLocation(issue.path);
-
-    if (issue.kind === "invalid_python") {
-      const target = getPythonEditorErrorTarget(issue, operations);
-      return {
-        title: "Save failed: unsaved Python has a syntax error",
-        detail: `${issue.message}${
-          target ? formatEditorLocation(target) : location
-        }. The saved file was not changed and your edits are still in the editor.`,
-        ...(target ? { target } : {}),
-      };
-    }
-
-    return {
-      title: "Save failed",
-      detail: `${issue.kind}: ${issue.message}${location}`,
-    };
-  }
-
-  return {
-    title: "Save failed",
-    detail: error instanceof Error ? error.message : String(error),
-  };
-}
-
-function getPythonEditorErrorTarget(
-  issue: DocumentValidationIssue,
-  operations: DocumentOperation[],
-): PythonEditorErrorTarget | undefined {
-  if (issue.operationIndex === undefined) {
-    return undefined;
-  }
-
-  const operation = operations[issue.operationIndex];
-  if (!operation) {
-    return undefined;
-  }
-
-  if (operation.type === "update_globals") {
-    const location = (issue.field === "globalsCode"
-      ? parsePythonIssueLocation(issue.path)
-      : null) ?? findPythonSyntaxError(operation.code);
-    return location
-      ? { ...location, editor: "globals", message: issue.message }
-      : undefined;
-  }
-
-  if (operation.type === "update_node_body") {
-    const location =
-      (issue.field === "code" ? parsePythonIssueLocation(issue.path) : null) ??
-        findPythonSyntaxError(operation.code);
-    return location
-      ? {
-        ...location,
-        editor: "node",
-        nodeId: operation.nodeId,
-        message: issue.message,
-      }
-      : undefined;
-  }
-
-  if (operation.type === "add_node") {
-    const location = findPythonSyntaxError(operation.node.code);
-    return location
-      ? {
-        ...location,
-        editor: "node",
-        nodeId: operation.node.id,
-        message: issue.message,
-      }
-      : undefined;
-  }
-
-  return undefined;
-}
-
-function parsePythonIssueLocation(
-  path: string | undefined,
-): PythonSyntaxLocation | null {
-  if (!path) {
-    return null;
-  }
-  const [lineText, columnText] = path.split(":", 2);
-  const line = Number(lineText);
-  const column = Number(columnText);
-  return Number.isInteger(line) && line > 0 && Number.isInteger(column) &&
-      column > 0
-    ? { line, column }
-    : null;
-}
-
-function findPythonSyntaxError(code: string): PythonSyntaxLocation | null {
-  const tree = pythonParser.parse(code);
-  let errorOffset: number | null = null;
-
-  tree.iterate({
-    enter(node) {
-      if (errorOffset === null && node.type.isError) {
-        errorOffset = node.from;
-      }
-    },
-  });
-
-  return errorOffset === null
-    ? null
-    : pythonSyntaxLocationFromOffset(code, errorOffset);
-}
-
-function formatEditorLocation(target: PythonEditorErrorTarget): string {
-  return ` at line ${target.line}, column ${target.column} in ${
-    target.editor === "globals" ? "Document Globals" : "this step"
-  }`;
-}
-
-function formatIssueLocation(path: string | undefined): string {
-  if (!path) {
-    return "";
-  }
-
-  const [line, column] = path.split(":");
-  if (line && column) {
-    return ` at line ${line}, column ${column}`;
-  }
-
-  return ` at ${path}`;
 }
 
 function formatElapsedDuration(milliseconds: number): string {

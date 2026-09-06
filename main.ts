@@ -15,16 +15,13 @@ import {
   readPythonDocumentSourceAtRevision,
 } from "./python_document.ts";
 import {
-  clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   querySourceRuntimeTable,
   resolvePythonCommand,
   runSourceGraph,
-  runSourceSingleNode,
   runSourceToNode,
   shutdownSourceRuntimeSession,
   streamSourceRunGraph,
-  streamSourceRunSingleNode,
   streamSourceRunToNode,
   withStoppedSourceRuntimeSession,
 } from "./executor.ts";
@@ -261,13 +258,11 @@ function requiresAuthToken(method: string, pathname: string): boolean {
 
   return [
     "/document",
-    "/run-node",
     "/run-to-node",
     "/run-graph",
     "/results",
     "/runtime/python",
     "/runtime/environment",
-    "/runtime-session/clear-cache",
   ].some((apiPath) =>
     pathname === apiPath || pathname.startsWith(`${apiPath}/`)
   );
@@ -1161,74 +1156,6 @@ app.post("/document/operations", async (c) => {
   }
 });
 
-app.post("/run-node", async (c) => {
-  if (activeEnvironmentSync) {
-    return c.json(environmentSyncInProgressError(), 409);
-  }
-  const body = await c.req.json();
-  if (hasGraphPayloadWithoutSource(body)) {
-    return c.json(graphPayloadWithoutSourceError(), 422);
-  }
-
-  const nodeId = body.nodeId;
-
-  if (typeof nodeId !== "string") {
-    return c.json(
-      errorResponse({
-        kind: "invalid_request",
-        message: "Run-node requests require a string nodeId.",
-      }),
-      422,
-    );
-  }
-
-  const inputs = body.inputs || {};
-  const trace = body.trace || false;
-  if (hasExplicitRunInputs(body.inputs)) {
-    return c.json(sourceBackedInputsError(), 422);
-  }
-
-  // TODO: Add scoped API-level concurrency and resource controls once the
-  // product has a runtime/session/document model. The UI keeps one active run
-  // at a time for now, but direct API callers can still start concurrent runs.
-  if (wantsExecutionStream(c)) {
-    const runId = crypto.randomUUID();
-    const sourceResult = await getRunRequestSource(body);
-    if (!sourceResult.ok) {
-      return c.json(sourceResult, runSourceErrorStatus(sourceResult));
-    }
-    return streamExecutionEvents(
-      runId,
-      "run_node",
-      (signal) =>
-        streamSourceRunSingleNode(
-          runId,
-          sourceResult.source,
-          activeDocumentPath,
-          nodeId,
-          inputs,
-          trace,
-          signal,
-        ),
-      nodeId,
-    );
-  }
-
-  const sourceResult = await getRunRequestSource(body);
-  if (!sourceResult.ok) {
-    return c.json(sourceResult, runSourceErrorStatus(sourceResult));
-  }
-  const result = await runSourceSingleNode(
-    sourceResult.source,
-    activeDocumentPath,
-    nodeId,
-    inputs,
-    trace,
-  );
-
-  return c.json(result);
-});
-
 app.post("/run-to-node", async (c) => {
   if (activeEnvironmentSync) {
     return c.json(environmentSyncInProgressError(), 409);
@@ -1403,13 +1330,6 @@ app.post("/results/table", async (c) => {
       },
     }, 500);
   }
-});
-
-app.post("/runtime-session/clear-cache", async (c) => {
-  if (activeEnvironmentSync) {
-    return c.json(environmentSyncInProgressError(), 409);
-  }
-  return c.json(await clearSourceRuntimeSessionCache());
 });
 
 function decodeTableQueryRequest(value: unknown): TableQueryRequest | null {

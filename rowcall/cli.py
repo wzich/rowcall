@@ -34,7 +34,6 @@ LAUNCHER_COMMANDS = {
     "new",
     "open",
     "reset-env",
-    "update",
 }
 
 

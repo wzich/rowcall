@@ -14,34 +14,24 @@ import {
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
 import {
-  clearSourceRuntimeSessionCache,
   runSourceGraph,
-  runSourceSingleNode,
+  runSourceToNode,
   shutdownSourceRuntimeSession,
 } from "./executor.ts";
-import {
-  decodeDocumentOperationsRequest,
-  decodeRowcallDocument,
-} from "./document.ts";
+import { decodeDocumentOperationsRequest } from "./document.ts";
 
-Deno.test("document gateways preserve named route fields", () => {
+Deno.test("document operations preserve named route fields", () => {
   const edge = {
     fromNode: "split",
     fromOutput: "train",
     toNode: "fit",
     toInput: "training_data",
   };
-  const decodedDocument = decodeRowcallDocument({
-    version: 1,
-    nodes: [],
-    edges: [edge],
-  });
   const decodedOperations = decodeDocumentOperationsRequest({
     baseRevision: "revision",
     operations: [{ type: "add_edge", ...edge }],
   });
 
-  assertEquals(decodedDocument.ok && decodedDocument.document.edges, [edge]);
   assertEquals(
     decodedOperations.ok && decodedOperations.request.operations,
     [{ type: "add_edge", ...edge }],
@@ -104,7 +94,6 @@ Deno.test("Python document source executes through worker runtime", async () => 
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(source, path);
     assertEquals(response.ok, true);
@@ -121,9 +110,8 @@ Deno.test("Python document source-backed node run executes fresh upstream", asyn
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
-  await clearSourceRuntimeSessionCache();
   try {
-    const single = await runSourceSingleNode(source, path, "n_shout");
+    const single = await runSourceToNode(source, path, "n_shout");
 
     assertEquals(single.ok, true);
     assertEquals(single.executedNodeIds, ["n_load", "n_shout"]);
@@ -181,7 +169,6 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
   const editedSource = await Deno.readTextFile(documentPath);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(editedSource, documentPath);
     assertEquals(response.ok, true);
@@ -269,7 +256,6 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
 
   const source = await Deno.readTextFile(documentPath);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(source, documentPath);
     assertEquals(response.ok, true);
