@@ -270,27 +270,29 @@ Deno.test({
   },
 });
 
-Deno.test("parseLauncherCommand maps doctor/reset/update commands", () => {
-  assertEquals(parseLauncherCommand(["doctor", "--updates"]), {
+Deno.test("parseLauncherCommand maps doctor/reset commands", () => {
+  assertEquals(parseLauncherCommand(["doctor"]), {
     kind: "doctor",
-    checkUpdates: true,
     json: false,
     managedEnv: false,
   });
   assertEquals(parseLauncherCommand(["doctor", "--managed-env"]), {
     kind: "doctor",
-    checkUpdates: false,
     json: false,
     managedEnv: true,
   });
   assertEquals(parseLauncherCommand(["doctor", "--json"]), {
     kind: "doctor",
-    checkUpdates: false,
     json: true,
     managedEnv: false,
   });
   assertEquals(parseLauncherCommand(["reset-env"]), { kind: "reset-env" });
-  assertEquals(parseLauncherCommand(["update"]), { kind: "update" });
+  assertThrows(
+    () => parseLauncherCommand(["doctor", "--updates"]),
+    Error,
+    "Unknown option",
+  );
+  assertThrows(() => helpTextForTopic("update"), Error, "Unknown help topic");
 });
 
 Deno.test({
@@ -303,7 +305,6 @@ Deno.test({
 
     const report = await buildDoctorReport({
       kind: "doctor",
-      checkUpdates: false,
       json: true,
       managedEnv: true,
     }, paths);
@@ -507,6 +508,7 @@ Deno.test({
       await Deno.readTextFile(`${folder}/requirements.txt`),
       "pandas\npolars\nmatplotlib\n",
     );
+    assertEquals((await Deno.stat(`${folder}/data`)).isDirectory, true);
     const agentInstructions = await Deno.readTextFile(`${folder}/AGENTS.md`);
     assertStringIncludes(agentInstructions, "rowcall help format");
     assertStringIncludes(agentInstructions, "rowcall validate .");
@@ -537,6 +539,28 @@ Deno.test({
     assertEquals(
       await Deno.readTextFile(`${folder}/requirements.txt`),
       "duckdb\n",
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "createNewDocument rejects a conflicting data file before writing graph.py",
+  permissions: { read: true, write: true },
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const folder = `${dir}/existing-project`;
+    await Deno.mkdir(folder);
+    await Deno.writeTextFile(`${folder}/data`, "existing data\n");
+
+    await assertRejects(
+      () => createNewDocument(folder),
+      Deno.errors.AlreadyExists,
+    );
+    assertEquals(await Deno.readTextFile(`${folder}/data`), "existing data\n");
+    await assertRejects(
+      () => Deno.stat(`${folder}/graph.py`),
+      Deno.errors.NotFound,
     );
   },
 });
@@ -609,12 +633,131 @@ Deno.test({
     );
     assertEquals(
       await Deno.readTextFile(`${folder}/requirements.txt`),
-      "pandas\npolars\nmatplotlib\n",
+      "polars\n",
     );
     assertStringIncludes(
       await Deno.readTextFile(`${folder}/AGENTS.md`),
       "Do not relaunch Rowcall",
     );
+  },
+});
+
+Deno.test({
+  name: "createExampleProject preserves existing requirements",
+  permissions: { read: true, write: true },
+  async fn() {
+    const folder = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${folder}/requirements.txt`, "polars==1.0.0\n");
+      await createExampleProject(folder);
+      assertEquals(
+        await Deno.readTextFile(`${folder}/requirements.txt`),
+        "polars==1.0.0\n",
+      );
+    } finally {
+      await Deno.remove(folder, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "generated example executes independent branches and supports iteration",
+  permissions: { read: true, write: true, run: true },
+  async fn() {
+    const folder = await Deno.makeTempDir();
+    try {
+      const path = await createExampleProject(folder);
+      const result = await new Deno.Command("python3", {
+        args: [
+          "-c",
+          `from pathlib import Path
+import sys
+from rowcall.runtime import run_document
+
+path = Path(sys.argv[1])
+full = run_document(path)
+assert full["ok"], full
+assert full["executedNodeIds"] == ["n_load_orders", "n_summarize_orders", "n_large_orders"]
+summary = full["finalOutputsByNode"]["n_summarize_orders"]["summary"]["table"]["rows"]
+assert summary == [["Kitchen", 2, 127.5], ["Games", 2, 86.24], ["Books", 2, 46.35]], summary
+large = full["finalOutputsByNode"]["n_large_orders"]["large_orders"]["table"]["rows"]
+assert large == [[1002, "Kitchen", 85.0], [1004, "Games", 64.99]], large
+for node_id in ["n_summarize_orders", "n_large_orders"]:
+    assert len(full["resultsByNode"][node_id]["displays"]) == 1
+
+for target, node_id in [("summarize_orders", "n_summarize_orders"), ("find_large_orders", "n_large_orders")]:
+    branch = run_document(path, target=target)
+    assert branch["ok"], branch
+    assert branch["executedNodeIds"] == ["n_load_orders", node_id], branch
+
+path.write_text(path.read_text().replace('>= 50', '>= 80'))
+changed = run_document(path)
+assert changed["ok"], changed
+assert changed["finalOutputsByNode"]["n_summarize_orders"]["summary"]["table"]["rows"] == summary
+assert changed["finalOutputsByNode"]["n_large_orders"]["large_orders"]["table"]["rows"] == [[1002, "Kitchen", 85.0]]
+`,
+          path,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+    } finally {
+      await Deno.remove(folder, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "project setup forwards installer output to stderr and preserves JSON stdout",
+  ignore: Deno.build.os === "windows",
+  permissions: { read: true, write: true, run: true, env: true },
+  async fn() {
+    const folder = await Deno.makeTempDir();
+    try {
+      const python = getVenvPythonPath(`${folder}/.venv`);
+      await Deno.mkdir(`${folder}/.venv/bin`, { recursive: true });
+      await Deno.writeTextFile(`${folder}/graph.py`, "");
+      await Deno.writeTextFile(`${folder}/requirements.txt`, "example\n");
+      await Deno.writeTextFile(
+        `${folder}/.venv/.rowcall-setup`,
+        "incomplete\n",
+      );
+      await Deno.writeTextFile(
+        python,
+        `#!/bin/sh
+if [ "$1" = "-m" ]; then
+  printf 'installer stdout\\n'
+  printf 'installer stderr\\n' >&2
+fi
+`,
+        { mode: 0o700 },
+      );
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `import { ensureProjectEnvironment } from ${
+            JSON.stringify(new URL("./launcher.ts", import.meta.url).href)
+          };
+await ensureProjectEnvironment(${JSON.stringify(`${folder}/graph.py`)});
+console.log(JSON.stringify({ok: true}));`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(result.code, 0, stderr);
+      assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
+        ok: true,
+      });
+      assertStringIncludes(stderr, "installer stdout");
+      assertStringIncludes(stderr, "installer stderr");
+      assertStringIncludes(stderr, "Project Python environment is ready.");
+    } finally {
+      await Deno.remove(folder, { recursive: true });
+    }
   },
 });
 
@@ -805,7 +948,7 @@ Deno.test({
     );
     assertEquals(
       await Deno.readTextFile(`${venvDirectory}/.rowcall-setup`),
-      completedSetup,
+      "incomplete\n",
     );
   },
 });

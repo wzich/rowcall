@@ -91,6 +91,9 @@ export type TableQueryResponse =
   };
 
 export type NodeRunResult = {
+  errorLocation?: { line: number; column: number };
+  /** Bounded snapshots captured before this step can mutate its inputs. */
+  inputs?: Record<string, ValuePreview>;
   ok: boolean;
   stdout: string;
   stderr: string;
@@ -174,7 +177,7 @@ export type ExecutionStepTrace = {
 
 export type ExecutionResponse = {
   ok: boolean;
-  runType: "run_node" | "run_to_node" | "run_graph";
+  runType: "run_to_node" | "run_graph";
   targetNodeId?: string;
   finalNodeIds: string[];
   executedNodeIds: string[];

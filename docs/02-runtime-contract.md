@@ -175,11 +175,9 @@ context.
 
 The invited beta has no execution cache. Every selected-node run parses the
 current source and freshly executes the complete upstream dependency plan
-through the selected Node. The legacy `POST /run-node` route is a compatibility
-alias for that same plan and retains `run_node` response labeling, but it does
-not execute a distinct single-node plan or reuse prior outputs.
-`POST /runtime-session/clear-cache` likewise remains a compatibility endpoint
-and reports that caching is disabled.
+through the selected Node. The app exposes two execution routes:
+`POST /run-to-node` for a selected Node and its ancestors, and `POST /run-graph`
+for the complete graph. Neither reuses prior outputs.
 
 The beta headless CLI does not expose explicit root inputs. Public CLI runs are
 intended to be reproducible from the Python document itself, so root data
@@ -212,7 +210,9 @@ returning an earlier snapshot that the save could subsequently replace.
 The app-visible document revision includes both Python source and normalized
 sidecar metadata so UI-only edits such as node position changes participate in
 stale-write detection. The lower-level Python parser revision remains the source
-hash used by CLI/runtime code.
+hash used by CLI/runtime code. Successful document load and operation responses
+include that lower-level `sourceRevision` separately so the app can preserve
+execution results across sidecar-only saves and external metadata reloads.
 
 ## Document Status
 
@@ -245,6 +245,44 @@ Future runtime configurations may expose explicit isolation modes:
   namespaces and copied routed values
 - no isolation, where Nodes intentionally share the same execution namespace
 
+## Local File Imports
+
+The app may copy one browser-dropped local file into the `data/` directory
+beside the active Python document. The server creates that directory when it is
+missing, sanitizes the supplied basename, and uses an exclusive write with a
+numeric suffix rather than overwriting an existing file. Imported Nodes refer to
+the returned project-relative path such as `data/orders.csv`; app and CLI
+execution scope the process working directory to the document directory.
+
+CSV, TSV, and Parquet suffixes generate ordinary editable Polars reader Nodes.
+Their Node bodies use the `pl` alias, while `import polars as pl` is added to
+document globals only when that import is not already present. Other suffixes
+generate ordinary editable Nodes that expose the copied file path for the author
+to replace with a reader. There is no runtime-level `rowcall.read_file`
+abstraction. Deleting an imported Node does not delete its data file.
+
+Drops are rejected without copying while another Run is active. Recognized
+imports auto-run only when the document was clean and the runtime was ready when
+the import began and remained ready. Otherwise the app creates and selects the
+Node without implicitly saving other work. File copying and document editing are
+deliberately separate operations; if adding or saving the Node later fails, the
+copied file remains in `data/`.
+
+## Worker Operations
+
+The internal NDJSON protocol exposes six operations, each used by the app:
+
+- `inspect_source`: parse and validate source for document loading and status.
+- `apply_operations`: rewrite a document edit batch.
+- `run_to_node`: freshly execute a target Node and its ancestors.
+- `run_graph`: freshly execute the full graph.
+- `query_table`: inspect routed output from the latest successful run.
+- `shutdown`: terminate the worker.
+
+Run requests emit their plan before node events. Planning remains part of the
+Python runtime and has no separate worker request. Deno owns reading source from
+disk before inspection and execution.
+
 ## Streaming Execution
 
 Execution endpoints return the normal JSON `ExecutionResponse` by default. If a
@@ -253,7 +291,6 @@ SSE-formatted events while the run is executing.
 
 Streaming is supported by:
 
-- `POST /run-node`
 - `POST /run-to-node`
 - `POST /run-graph`
 

@@ -171,7 +171,9 @@ The implemented split uses these boundaries:
 6. `.rowcall.json` sidecars remain UI-only metadata. They are not required to
    validate or run a Python document, but the app-facing revision includes
    normalized sidecar metadata so position/title/description edits participate
-   in stale-write detection.
+   in stale-write detection. Load and save responses also expose the Python
+   source revision separately, allowing those metadata-only changes to preserve
+   in-progress and completed execution results.
 7. The app polls document status while the editor is open. The status response
    includes the app-visible revision, source revision, sidecar revision, and
    validation issues when the file is temporarily unreadable. If the on-disk

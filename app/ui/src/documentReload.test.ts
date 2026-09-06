@@ -3,7 +3,46 @@ import {
   canApplyLoadedDocument,
   canEditDocument,
   shouldAutoReloadDocument,
+  shouldPreserveExecutionSessionOnReload,
 } from "./documentReload.ts";
+
+Deno.test("sidecar-only reloads preserve execution results", () => {
+  assertEquals(
+    shouldPreserveExecutionSessionOnReload({
+      currentSourceRevision: "source-1",
+      loadedSourceRevision: "source-1",
+      pendingOperations: [{
+        type: "move_node",
+        nodeId: "n_test",
+        position: { x: 10, y: 20 },
+      }],
+    }),
+    true,
+  );
+});
+
+Deno.test("source changes and pending executable edits do not preserve execution results", () => {
+  assertEquals(
+    shouldPreserveExecutionSessionOnReload({
+      currentSourceRevision: "source-1",
+      loadedSourceRevision: "source-2",
+      pendingOperations: [],
+    }),
+    false,
+  );
+  assertEquals(
+    shouldPreserveExecutionSessionOnReload({
+      currentSourceRevision: "source-1",
+      loadedSourceRevision: "source-1",
+      pendingOperations: [{
+        type: "update_node_body",
+        nodeId: "n_test",
+        code: "value = 2",
+      }],
+    }),
+    false,
+  );
+});
 
 Deno.test("unknown save outcome makes an otherwise editable document non-editable", () => {
   assertEquals(

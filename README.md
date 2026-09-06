@@ -55,11 +55,30 @@ Cloudflare upload. The other architecture is cross-built but not executed.
 If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 `export PATH=...` line to your shell profile.
 
-Show command help:
+Try the branching example:
 
 ```sh
-rowcall --help
+rowcall example my-example --open
 ```
+
+One CSV feeds two branches: revenue by category and orders of at least $50. Run
+the graph, inspect both tables, then change the `50` threshold in
+`find_large_orders` and run that branch again. Its input still comes from the
+same source; the category comparison stays separate. Each run currently
+re-executes its upstream dependencies.
+
+The example needs only Polars. Its generated `requirements.txt` contains
+`polars`; Rowcall installs it when creating the project environment on first
+open or run. Existing requirements files and user environments are preserved.
+
+For the same workflow in a terminal:
+
+```sh
+rowcall validate my-example
+rowcall run my-example --to find_large_orders --json=summary
+```
+
+Use `rowcall --help` for commands, or start from the minimal hello graph:
 
 Create and open a new Rowcall folder:
 
@@ -73,6 +92,7 @@ This creates:
 my-work/
   .gitignore
   AGENTS.md
+  data/
   graph.py
   requirements.txt
 ```
@@ -108,6 +128,12 @@ rowcall new graph.py
 
 The app is served at `http://127.0.0.1:8000/` and is bound to the local machine
 only.
+
+Drop one local file at a time onto the canvas to copy it into the project's
+`data/` folder and create a source Node at the drop position. CSV, TSV, and
+Parquet files receive editable Polars reader code. Other file types receive an
+editable file-path Node. Rowcall never overwrites an existing data file and adds
+a numeric suffix when needed.
 
 ### Python Environments
 
@@ -211,6 +237,27 @@ reproducible from the file itself.
 
 See [docs/03-headless-cli.md](docs/03-headless-cli.md) for the CLI contract.
 
+## Browser Regression Tests
+
+The browser journey exercises the built UI, API, and Python runtime together:
+edit, save, reload, run, recover from invalid Python, and handle external edits
+without overwriting a conflicting draft. Additional cases protect edits during
+pending saves/reloads and recovery when a committed save loses its response. CI
+and release preparation run the suite.
+
+With Node.js 22+ and the development Python environment installed:
+
+```sh
+deno task browser:install
+ROWCALL_TEST_PYTHON="$PWD/.venv/bin/python" deno task test:browser
+```
+
+Install the browser once and after changing the pinned Playwright version. The
+test uses a temporary project under `tmp/`, not your open graph. Failures save a
+screenshot and trace under `output/playwright/`; CI uploads them as an artifact.
+From `e2e/`, use `npx playwright show-trace <trace.zip>` to inspect the steps.
+This is development tooling and is not bundled into the beta CLI.
+
 ## Run Locally For Development
 
 Install Deno and Python 3.10 or newer, then prepare the repo-local development
@@ -232,14 +279,24 @@ deno task dev
 
 This starts the watched Deno API and the Vite development server, then opens the
 app at `http://127.0.0.1:5173/`. Vite hot-reloads UI changes and proxies API
-requests with a development-session authorization token, so API restarts do not
-require opening a new tokenized URL.
+requests. The browser receives the development-session authorization token in
+the launch URL and sends it through the same client code used by a compiled
+launcher.
 
 By default Rowcall edits `examples/ecommerce/analysis.py`. To edit another local
-document during development, pass a `.py` path through the task:
+document during development, pass either a project folder containing `graph.py`
+or a `.py` path through the task:
 
 ```sh
+deno task dev path/to/project
 deno task dev path/to/analysis.py
+```
+
+Pass `--managed-env` to exercise the launcher's managed Python environment
+instead of the document project's environment:
+
+```sh
+deno task dev --managed-env path/to/project
 ```
 
 To create a new document and start the API against it, pass `--create` with the
@@ -345,6 +402,17 @@ deno task launcher:compile
 
 The task builds the UI first. The compiled binary is written to `dist/rowcall`
 and embeds the built UI, the Python package, and `requirements-alpha.txt`.
+
+Run the compiled-binary smoke test before a release or after changing launcher,
+runtime, authentication, or asset-packaging behavior:
+
+```sh
+deno task smoke:binary
+```
+
+The smoke task rebuilds the binary, launches it against an isolated folder and
+home directory, verifies the production UI assets and authenticated document
+API, and then shuts it down.
 
 For release hosting, publish platform-specific binaries such as:
 

@@ -1,31 +1,37 @@
+import { DismissibleDetails } from "./components/DismissibleDetails.tsx";
+import { ActionMenu, RunMenu } from "./components/RunMenu.tsx";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
 import {
   AlertTriangle,
   CheckCircle2,
-  Moon,
+  FileUp,
   Play,
   Save,
-  Sun,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  applyDocumentOperations,
   DocumentApiRequestError,
   type DocumentOperation,
-  type DocumentValidationIssue,
-  loadDocument,
-  loadDocumentStatus,
-  type LoadDocumentSuccess,
+  importDocumentFile,
+  maxImportedFileBytes,
 } from "./api/documents.ts";
-import { loadPythonRuntime } from "./api/runtime.ts";
+import {
+  loadProjectEnvironment,
+  loadPythonRuntime,
+  type ProjectEnvironmentInfo,
+  restartPythonRuntime,
+  syncProjectEnvironment,
+} from "./api/runtime.ts";
+import { WorkspaceSplit } from "./components/WorkspaceSplit.tsx";
 import { Canvas } from "./components/Canvas.tsx";
 import {
-  coalesceDocumentOperations,
   deriveRoutedOutputs,
+  getChangedOutputNodeIds,
   hasCustomManagedDownstream,
+  removeNodeAndIncidentEdges,
 } from "./documentOperations.ts";
 import {
   type ExecutionDisplayState,
@@ -35,7 +41,7 @@ import {
   type NodeInspectorBadge,
   type NodeInspectorSelection,
 } from "./components/InspectorPanel.tsx";
-import { getEdgeId, toReactFlowGraph } from "./graph/toReactFlow.ts";
+import { getEdgeId } from "./graph/toReactFlow.ts";
 import type {
   NodeCanvasPreview,
   NodeRunVisualStatus,
@@ -61,26 +67,23 @@ import {
   getRunNotificationSummary,
   type RunNotification,
 } from "./query/executionPresentation.ts";
+import { canEditDocument } from "./documentReload.ts";
+import { useDocumentSession } from "./useDocumentSession.ts";
+import type { PythonEditorErrorTarget } from "./documentSaveError.ts";
 import {
-  type PythonSyntaxLocation,
-  pythonSyntaxLocationFromOffset,
-} from "./pythonSyntaxError.ts";
-import { classifySaveFailure } from "./saveOutcome.ts";
-import {
-  canApplyLoadedDocument,
-  canEditDocument,
-  shouldAutoReloadDocument,
-} from "./documentReload.ts";
+  createImportedFileNode,
+  ensurePolarsGlobalsImport,
+  importAutoPreviewSkipReason,
+} from "./importedFile.ts";
 import type { RuntimeGraph, RuntimeNode } from "./graph/runtimeTypes.ts";
 import type { NodeRunResult, ValuePreview } from "../../../types.ts";
 
 const generatedFunctionNamePattern = /^new_step_(\d+)$/u;
 const documentCanvasKey = "document:active";
 const themeStorageKey = "rowcall:theme";
-const documentStatusPollIntervalMs = 4_000;
-const invalidExternalDocumentGraceMs = 4_000;
-const updatedFromDiskNoticeMs = 3_500;
+const environmentStatusPollIntervalMs = 4_000;
 const successfulRunNoticeMs = 3_000;
+const importNoticeMs = 7_000;
 
 export type ThemeMode = "light" | "dark";
 
@@ -93,34 +96,20 @@ export type NodeNameChangeResult =
   | { ok: true; functionName: string }
   | { ok: false; message: string };
 
-type SaveErrorMessage = {
-  title: string;
-  detail: string;
-  target?: PythonEditorErrorTarget;
-};
-
-export type PythonEditorErrorTarget = PythonSyntaxLocation & {
-  editor: "globals" | "node";
-  nodeId?: string;
-  message: string;
-};
-
 type ConnectionWarning = {
   title: string;
   detail: string;
 };
 
-type ExternalDocumentNotice =
-  | { kind: "idle" }
-  | { kind: "dirty"; detectedAt: number }
-  | { kind: "waiting_readable"; detectedAt: number; detail?: string }
-  | { kind: "updated"; updatedAt: number };
+type ImportNotification = {
+  id: number;
+  tone: "info" | "warning" | "danger";
+  title: string;
+  detail: string;
+};
 
-function getDocumentSourceValue(
-  baseRevision: string,
-  editGeneration: number,
-): string {
-  return `document:${baseRevision}:${editGeneration}`;
+function getExecutionSourceValue(executionGeneration: number): string {
+  return `execution-source:${executionGeneration}`;
 }
 
 function getInitialThemeMode(): ThemeMode {
@@ -142,6 +131,7 @@ function getInitialThemeMode(): ThemeMode {
 }
 
 export default function App() {
+  const [inspectorFocused, setInspectorFocused] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pendingNodeDeletion, setPendingNodeDeletion] = useState<
@@ -157,58 +147,27 @@ export default function App() {
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<
     { nodeId: string; requestId: number } | null
   >(null);
-  const [traceEnabled, setTraceEnabled] = useState(false);
-  const [editableDocument, setEditableDocument] = useState<
-    RowcallDocumentV1 | null
-  >(null);
-  const [saveStatus, setSaveStatus] = useState<
-    "idle" | "saving" | "saved" | "error" | "outcome_unknown"
-  >("idle");
-  const [saveError, setSaveError] = useState<SaveErrorMessage | null>(null);
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
-  const [documentPath, setDocumentPath] = useState("Active document");
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
-  const [firstUnsavedEditAt, setFirstUnsavedEditAt] = useState<number | null>(
+  const [importNotification, setImportNotification] = useState<
+    ImportNotification | null
+  >(null);
+  const [importingFileName, setImportingFileName] = useState<string | null>(
     null,
   );
-  const [isExternalReloading, setIsExternalReloading] = useState(false);
-  const [externalDocumentNotice, setExternalDocumentNotice] = useState<
-    ExternalDocumentNotice
-  >({ kind: "idle" });
-  const editGenerationRef = useRef(0);
-  const editableDocumentRef = useRef<RowcallDocumentV1 | null>(null);
-  const baseRevisionRef = useRef("");
-  const saveOutcomeUnknownRef = useRef(false);
-  const firstUnsavedEditAtRef = useRef<number | null>(null);
-  const invalidExternalDocumentSinceRef = useRef<number | null>(null);
-  const isReloadingExternalDocumentRef = useRef(false);
-  const documentSourceValueRef = useRef(
-    getDocumentSourceValue(baseRevisionRef.current, editGenerationRef.current),
+  const executionGenerationRef = useRef(0);
+  const executionSourceValueRef = useRef(
+    getExecutionSourceValue(executionGenerationRef.current),
   );
-  const [documentSourceValue, setDocumentSourceValue] = useState(() =>
-    documentSourceValueRef.current
+  const [executionSourceValue, setExecutionSourceValue] = useState(() =>
+    executionSourceValueRef.current
   );
-  const pendingOperationsRef = useRef<DocumentOperation[]>([]);
-  const flushPromiseRef = useRef<Promise<boolean> | null>(null);
-  const saveAttemptGenerationRef = useRef(0);
+  const importNotificationIdRef = useRef(0);
+  const importInFlightRef = useRef(false);
   const generatedFunctionNameSessionRef = useRef<GeneratedFunctionNameSession>({
     reservedNames: new Set(),
     nextIndex: 1,
-  });
-  const documentQuery = useQuery({
-    queryKey: ["rowcall-document", "active"],
-    queryFn: loadDocument,
-    refetchOnWindowFocus: false,
-  });
-  const documentStatusQuery = useQuery({
-    queryKey: ["rowcall-document-status", "active"],
-    queryFn: loadDocumentStatus,
-    enabled: documentQuery.isSuccess,
-    refetchInterval: documentStatusPollIntervalMs,
-    refetchOnWindowFocus: true,
-    retry: false,
   });
   const pythonRuntimeQuery = useQuery({
     queryKey: ["runtime", "python"],
@@ -217,16 +176,17 @@ export default function App() {
   useEffect(() => {
     globalThis.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
-  const syncDocumentSourceValue = useCallback(() => {
-    const sourceValue = getDocumentSourceValue(
-      baseRevisionRef.current,
-      editGenerationRef.current,
+  const advanceExecutionSourceValue = useCallback(() => {
+    executionGenerationRef.current += 1;
+    const sourceValue = getExecutionSourceValue(
+      executionGenerationRef.current,
     );
-    documentSourceValueRef.current = sourceValue;
-    setDocumentSourceValue(sourceValue);
+    executionSourceValueRef.current = sourceValue;
+    setExecutionSourceValue(sourceValue);
     return sourceValue;
   }, []);
   const {
+    successfulResultsByNodeId,
     executionStateByNodeId,
     graphExecutionState,
     activeRunType,
@@ -249,13 +209,93 @@ export default function App() {
     storeExecutionResponseForNodeIds,
     storeGraphExecutionRequestError,
     storeGraphExecutionResponse,
-  } = useExecutionSession(documentSourceValue, {
-    getCurrentSourceValue: () => documentSourceValueRef.current,
+  } = useExecutionSession(executionSourceValue, {
+    getCurrentSourceValue: () => executionSourceValueRef.current,
+  });
+  const {
+    documentQuery,
+    editableDocument,
+    documentPath,
+    saveStatus,
+    saveError,
+    pendingOperationCount,
+    firstUnsavedEditAt,
+    isExternalReloading,
+    externalDocumentNotice,
+    editDocument,
+    getSnapshot: getDocumentSnapshot,
+    waitForActiveSave,
+    prepareForWrite,
+    saveDocument,
+    reloadDocument: handleReloadDocumentFromDisk,
+  } = useDocumentSession({
+    onLoaded: (document, preserveExecutionSession) => {
+      generatedFunctionNameSessionRef.current =
+        createGeneratedFunctionNameSession(document);
+      setPendingNodeDeletion(null);
+      if (!preserveExecutionSession) {
+        clearExecutionSession();
+        advanceExecutionSourceValue();
+      }
+    },
+    onExecutionEdit: () => {
+      prepareForDocumentEdit();
+      advanceExecutionSourceValue();
+    },
+    onPythonError: navigateToPythonError,
+  });
+  const projectEnvironmentQuery = useQuery({
+    queryKey: ["runtime", "environment"],
+    queryFn: loadProjectEnvironment,
+    enabled: documentQuery.isSuccess,
+    refetchInterval: environmentStatusPollIntervalMs,
+    refetchOnWindowFocus: true,
   });
   const isRunActive = activeRunType !== null;
   const isSelectedNodeRunning = selectedNodeId
     ? executionStateByNodeId[selectedNodeId]?.status === "running"
     : false;
+  const syncEnvironmentMutation = useMutation({
+    mutationFn: syncProjectEnvironment,
+    onMutate: () => {
+      clearExecutionSession();
+    },
+    onSuccess: async () => {
+      await projectEnvironmentQuery.refetch();
+    },
+  });
+  const restartRuntimeMutation = useMutation({
+    mutationFn: restartPythonRuntime,
+    onMutate: () => {
+      clearExecutionSession();
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        pythonRuntimeQuery.refetch(),
+        projectEnvironmentQuery.refetch(),
+      ]);
+    },
+  });
+  const isRuntimeMaintenanceActive = syncEnvironmentMutation.isPending ||
+    restartRuntimeMutation.isPending;
+  const activeRunTypeRef = useRef(activeRunType);
+  const runtimeMaintenanceActiveRef = useRef(isRuntimeMaintenanceActive);
+  const runtimeReadyRef = useRef(
+    pythonRuntimeQuery.isSuccess &&
+      pythonRuntimeQuery.data.python.rowcallImport.ok,
+  );
+
+  useEffect(() => {
+    activeRunTypeRef.current = activeRunType;
+    runtimeMaintenanceActiveRef.current = isRuntimeMaintenanceActive;
+    runtimeReadyRef.current = pythonRuntimeQuery.isSuccess &&
+      pythonRuntimeQuery.data.python.rowcallImport.ok;
+  }, [
+    activeRunType,
+    isRuntimeMaintenanceActive,
+    pythonRuntimeQuery.data,
+    pythonRuntimeQuery.isSuccess,
+  ]);
 
   useEffect(() => {
     if (runNotification?.tone !== "success") {
@@ -270,163 +310,17 @@ export default function App() {
   }, [dismissRunNotification, runNotification]);
 
   useEffect(() => {
-    editableDocumentRef.current = editableDocument;
-  }, [editableDocument]);
-
-  const applyLoadedDocument = useCallback(
-    (loaded: LoadDocumentSuccess) => {
-      const graph = loaded.document;
-      generatedFunctionNameSessionRef.current =
-        createGeneratedFunctionNameSession(graph);
-      setDocumentPath(loaded.path);
-      const flowGraph = toReactFlowGraph(graph);
-      const nextDocument = {
-        ...graph,
-        nodes: graph.nodes.map((node) => ({
-          ...node,
-          position: flowGraph.nodes.find((flowNode) => flowNode.id === node.id)
-            ?.position,
-        })),
-      };
-      editableDocumentRef.current = nextDocument;
-      setEditableDocument(nextDocument);
-      setPendingNodeDeletion(null);
-      clearExecutionSession();
-      baseRevisionRef.current = graph.revision ?? "";
-      pendingOperationsRef.current = [];
-      setPendingOperationCount(0);
-      firstUnsavedEditAtRef.current = null;
-      setFirstUnsavedEditAt(null);
-      invalidExternalDocumentSinceRef.current = null;
-      setSaveStatus("idle");
-      saveOutcomeUnknownRef.current = false;
-      setSaveError(null);
-      editGenerationRef.current = 0;
-      syncDocumentSourceValue();
-    },
-    [syncDocumentSourceValue],
-  );
-
-  useEffect(() => {
-    if (!documentQuery.isSuccess) {
+    if (!importNotification || importNotification.tone === "danger") {
       return;
     }
 
-    applyLoadedDocument(documentQuery.data);
-  }, [applyLoadedDocument, documentQuery.data, documentQuery.isSuccess]);
-
-  const queueOperation = useCallback((operation: DocumentOperation) => {
-    if (saveOutcomeUnknownRef.current) {
-      return;
-    }
-    const operations = coalesceDocumentOperations([
-      ...pendingOperationsRef.current,
-      operation,
-    ]);
-    pendingOperationsRef.current = operations;
-    setPendingOperationCount(operations.length);
-    if (operations.length === 0) {
-      firstUnsavedEditAtRef.current = null;
-      setFirstUnsavedEditAt(null);
-    }
-    if (!saveOutcomeUnknownRef.current) {
-      setSaveStatus("idle");
-      setSaveError(null);
-    }
-  }, []);
-
-  const flushPendingOperations = useCallback(async (): Promise<boolean> => {
-    if (flushPromiseRef.current) {
-      return await flushPromiseRef.current;
-    }
-    if (pendingOperationsRef.current.length === 0) {
-      return true;
-    }
-    if (!editableDocumentRef.current) {
-      return false;
-    }
-
-    const operations = pendingOperationsRef.current;
-    const baseRevision = baseRevisionRef.current;
-    const editGeneration = editGenerationRef.current;
-
-    pendingOperationsRef.current = [];
-    saveAttemptGenerationRef.current += 1;
-    setSaveStatus("saving");
-    setSaveError(null);
-
-    const promise = applyDocumentOperations(
-      baseRevision,
-      operations,
-    )
-      .then((result) => {
-        setDocumentPath(result.path);
-        baseRevisionRef.current = result.document.revision ?? "";
-        syncDocumentSourceValue();
-        if (editGeneration === editGenerationRef.current) {
-          editableDocumentRef.current = result.document;
-          setEditableDocument(result.document);
-          setSaveStatus("saved");
-        } else if (pendingOperationsRef.current.length > 0) {
-          setSaveStatus("idle");
-        } else {
-          setSaveStatus("saved");
-        }
-        setPendingOperationCount(pendingOperationsRef.current.length);
-        if (pendingOperationsRef.current.length === 0) {
-          firstUnsavedEditAtRef.current = null;
-          setFirstUnsavedEditAt(null);
-        }
-        void documentStatusQuery.refetch();
-        return pendingOperationsRef.current.length === 0;
-      })
-      .catch((error) => {
-        pendingOperationsRef.current = coalesceDocumentOperations([
-          ...operations,
-          ...pendingOperationsRef.current,
-        ]);
-        setPendingOperationCount(pendingOperationsRef.current.length);
-        if (classifySaveFailure(error) === "unknown_outcome") {
-          saveOutcomeUnknownRef.current = true;
-          setSaveStatus("outcome_unknown");
-          setSaveError({
-            title: "Save outcome unknown",
-            detail:
-              "Rowcall lost confirmation of the save and cannot safely tell whether it committed. Save and run are blocked. Reload from disk to inspect the actual saved state; reloading discards the local canvas edits shown here.",
-          });
-        } else {
-          const formattedError = formatSaveError(error, operations);
-          setSaveStatus("error");
-          setSaveError(formattedError);
-          if (formattedError.target) {
-            navigateToPythonError(formattedError.target);
-          }
-        }
-        return false;
-      })
-      .finally(() => {
-        flushPromiseRef.current = null;
-      });
-
-    flushPromiseRef.current = promise;
-    return await promise;
-  }, [documentStatusQuery]);
-
-  useEffect(() => {
-    if (
-      pendingOperationCount === 0 && saveStatus !== "outcome_unknown"
-    ) {
-      return;
-    }
-
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    globalThis.addEventListener("beforeunload", warnBeforeUnload);
-    return () =>
-      globalThis.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [pendingOperationCount, saveStatus]);
+    const timeoutId = setTimeout(() => {
+      setImportNotification((current) =>
+        current?.id === importNotification.id ? null : current
+      );
+    }, importNoticeMs);
+    return () => clearTimeout(timeoutId);
+  }, [importNotification]);
 
   const runToNodeMutation = useMutation({
     ...runToNodeMutationOptions(),
@@ -494,81 +388,6 @@ export default function App() {
       DocumentApiRequestError
     ? documentQuery.error.issues
     : [];
-  useEffect(() => {
-    const status = documentStatusQuery.data?.status;
-    if (!documentQuery.isSuccess || !status) {
-      return;
-    }
-    if (isReloadingExternalDocumentRef.current) {
-      return;
-    }
-
-    if (status.valid && status.revision) {
-      invalidExternalDocumentSinceRef.current = null;
-      if (status.revision === baseRevisionRef.current) {
-        setExternalDocumentNotice((current) =>
-          current.kind === "dirty" || current.kind === "waiting_readable"
-            ? { kind: "idle" }
-            : current
-        );
-        return;
-      }
-
-      if (
-        shouldAutoReloadDocument({
-          pendingOperationCount: pendingOperationsRef.current.length,
-          saveInFlight: flushPromiseRef.current !== null,
-          saveOutcomeUnknown: saveOutcomeUnknownRef.current,
-        })
-      ) {
-        void reloadDocumentFromDisk({ showUpdatedNotice: true });
-        return;
-      }
-
-      setExternalDocumentNotice((current) =>
-        current.kind === "dirty"
-          ? current
-          : { kind: "dirty", detectedAt: Date.now() }
-      );
-      return;
-    }
-
-    const now = Date.now();
-    if (invalidExternalDocumentSinceRef.current === null) {
-      invalidExternalDocumentSinceRef.current = now;
-      return;
-    }
-
-    if (
-      now - invalidExternalDocumentSinceRef.current >=
-        invalidExternalDocumentGraceMs
-    ) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: invalidExternalDocumentSinceRef.current,
-        detail: status.issues[0]?.message,
-      });
-    }
-  }, [
-    documentQuery.isSuccess,
-    documentStatusQuery.data?.status,
-  ]);
-  useEffect(() => {
-    if (externalDocumentNotice.kind !== "updated") {
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      setExternalDocumentNotice((current) =>
-        current.kind === "updated" &&
-          current.updatedAt === externalDocumentNotice.updatedAt
-          ? { kind: "idle" }
-          : current
-      );
-    }, updatedFromDiskNoticeMs);
-
-    return () => clearTimeout(timeoutId);
-  }, [externalDocumentNotice]);
   const editableGraph = useMemo<RuntimeGraph | null>(
     () => editableDocument ? toRuntimeGraph(editableDocument) : null,
     [editableDocument],
@@ -680,6 +499,15 @@ export default function App() {
         node.id,
         executionStateByNodeId,
       ),
+      lastSuccessfulResult: successfulResultsByNodeId[node.id],
+      inputSources: Object.fromEntries(
+        editableGraph.edges.filter((edge) => edge.toNode === node.id).map((
+          edge,
+        ) => [
+          edge.toInput,
+          getNodeLabelsById(editableGraph)[edge.fromNode] ?? edge.fromNode,
+        ]),
+      ),
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
       nodeLabelsById: getNodeLabelsById(editableGraph),
@@ -689,41 +517,13 @@ export default function App() {
     editableGraph,
     executionStateByNodeId,
     graphNodeDetails,
+    successfulResultsByNodeId,
     selectedNodeId,
   ]);
 
-  const markDocumentEdited = useCallback(() => {
-    if (saveOutcomeUnknownRef.current) {
-      return;
-    }
-    prepareForDocumentEdit();
-    if (firstUnsavedEditAtRef.current === null) {
-      const now = Date.now();
-      firstUnsavedEditAtRef.current = now;
-      setFirstUnsavedEditAt(now);
-    }
-    editGenerationRef.current += 1;
-    syncDocumentSourceValue();
-    if (!saveOutcomeUnknownRef.current) {
-      setSaveStatus("idle");
-      setSaveError(null);
-    }
-  }, [prepareForDocumentEdit, syncDocumentSourceValue]);
-
-  const commitEditableDocument = useCallback(
-    (nextDocument: RowcallDocumentV1) => {
-      if (saveOutcomeUnknownRef.current) {
-        return;
-      }
-      editableDocumentRef.current = nextDocument;
-      setEditableDocument(nextDocument);
-    },
-    [],
-  );
-
   const handleAddNode = useCallback((position: { x: number; y: number }) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const nodeId = createNextNodeId(current);
     const functionName = reserveNextFunctionName(
       current,
@@ -742,14 +542,218 @@ export default function App() {
       nodes: [...current.nodes, node],
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(nextDocument, [{
+      type: "add_node",
+      node: toAddNodeOperationNode(node),
+    }]);
+  }, [editDocument, getDocumentSnapshot]);
+
+  async function handleImportFiles(
+    files: File[],
+    position: { x: number; y: number },
+  ) {
+    if (files.length !== 1) {
+      showImportNotification({
+        tone: "warning",
+        title: "Drop one file at a time",
+        detail: "No files were imported.",
+      });
+      return;
+    }
+    if (importInFlightRef.current) {
+      showImportNotification({
+        tone: "warning",
+        title: "An import is already in progress",
+        detail: "Wait for it to finish before dropping another file.",
+      });
+      return;
+    }
+
+    const file = files[0];
+    const current = getDocumentSnapshot().document;
+    if (!current || current.readOnly) {
+      showImportNotification({
+        tone: "warning",
+        title: "This document is read-only",
+        detail: `${file.name} was not copied into the project.`,
+      });
+      return;
+    }
+    if (getDocumentSnapshot().editingBlocked) {
+      showImportNotification({
+        tone: "danger",
+        title: "Import unavailable",
+        detail:
+          "Reload from disk to resolve the unknown save outcome before importing a file.",
+      });
+      return;
+    }
+    if (activeRunTypeRef.current !== null) {
+      showImportNotification({
+        tone: "warning",
+        title: "A run is in progress",
+        detail:
+          `Wait for it to finish before importing ${file.name}. The file was not copied.`,
+      });
+      return;
+    }
+    if (file.size > maxImportedFileBytes) {
+      showImportNotification({
+        tone: "danger",
+        title: "File is too large",
+        detail: `${file.name} exceeds the 100 MiB import limit.`,
+      });
+      return;
+    }
+
+    const hadUnsavedWork = getDocumentSnapshot().hasUnsavedWork;
+    const startingEditGeneration = getDocumentSnapshot().editGeneration;
+    const hadRuntimeMaintenance = runtimeMaintenanceActiveRef.current;
+    const runtimeWasReady = runtimeReadyRef.current;
+
+    importInFlightRef.current = true;
+    setImportingFileName(file.name);
+    try {
+      if (!(await waitForActiveSave())) {
+        showImportNotification({
+          tone: "danger",
+          title: "Import paused",
+          detail:
+            "The active save did not finish successfully, so no file was copied.",
+        });
+        return;
+      }
+      if (!(await prepareForWrite())) {
+        return;
+      }
+
+      const imported = await importDocumentFile(file);
+      const latest = getDocumentSnapshot().document;
+      if (!latest || latest.readOnly || getDocumentSnapshot().editingBlocked) {
+        showImportNotification({
+          tone: "danger",
+          title: `Copied ${imported.storedName}, but could not add its node`,
+          detail:
+            "The file remains in the project’s data folder. Resolve the document state, then add its reader node manually.",
+        });
+        return;
+      }
+
+      const nodeId = createNextNodeId(latest);
+      const importedNode = createImportedFileNode({
+        id: nodeId,
+        storedName: imported.storedName,
+        relativePath: imported.relativePath,
+        position,
+        existingFunctionNames: latest.nodes.flatMap((node) =>
+          node.functionName ? [node.functionName] : []
+        ),
+      });
+      const currentGlobalsCode = latest.globalsCode ?? "";
+      const nextGlobalsCode = importedNode.kind === "unsupported"
+        ? currentGlobalsCode
+        : ensurePolarsGlobalsImport(currentGlobalsCode);
+      const globalsChanged = nextGlobalsCode !== currentGlobalsCode;
+      const nextDocument = {
+        ...latest,
+        ...(globalsChanged ? { globalsCode: nextGlobalsCode } : {}),
+        nodes: [...latest.nodes, importedNode.node],
+      };
+      const documentChangedDuringImport =
+        getDocumentSnapshot().editGeneration !== startingEditGeneration;
+
+      if (activeRunTypeRef.current !== null) {
+        showImportNotification({
+          tone: "warning",
+          title: `Copied ${imported.storedName}, but did not add its node`,
+          detail:
+            "A run started while the import was in progress. The file remains in the project’s data folder.",
+        });
+        return;
+      }
+
+      const operations: DocumentOperation[] = [];
+      if (globalsChanged) {
+        operations.push({ type: "update_globals", code: nextGlobalsCode });
+      }
+      operations.push({
+        type: "add_node",
+        node: toAddNodeOperationNode(importedNode.node),
+      });
+      editDocument(nextDocument, operations);
+      setSelectedNodeId(nodeId);
+
+      const renamed = imported.storedName !== file.name;
+      if (importedNode.kind === "unsupported") {
+        showImportNotification({
+          tone: "warning",
+          title: `Copied ${imported.storedName}`,
+          detail:
+            "Rowcall does not know this format. Choose a reader in the generated file node.",
+        });
+        return;
+      }
+
+      const autoPreviewSkipReason = importAutoPreviewSkipReason({
+        hadUnsavedWork: hadUnsavedWork || documentChangedDuringImport,
+        hadRuntimeMaintenance,
+        runtimeMaintenanceNow: runtimeMaintenanceActiveRef.current,
+        runtimeWasReady,
+        runtimeIsReady: runtimeReadyRef.current,
+      });
+      if (autoPreviewSkipReason === "unsaved_work") {
+        showImportNotification({
+          tone: "warning",
+          title: `Imported ${imported.storedName}`,
+          detail:
+            "Auto-preview was skipped to avoid saving your other edits. Run the node when you’re ready.",
+        });
+        return;
+      }
+      if (autoPreviewSkipReason === "runtime_unavailable") {
+        showImportNotification({
+          tone: "warning",
+          title: `Imported ${imported.storedName}`,
+          detail:
+            "Auto-preview was skipped because the Python runtime is not ready. Run the node when it becomes available.",
+        });
+        return;
+      }
+
+      if (renamed) {
+        showImportNotification({
+          tone: "info",
+          title: `Imported as ${imported.storedName}`,
+          detail:
+            `${file.name} already existed or required a safe project filename.`,
+        });
+      }
+      await handleRunToNode(nodeId, { allowDuringImport: true });
+    } catch (error) {
+      showImportNotification({
+        tone: "danger",
+        title: `Couldn’t import ${file.name}`,
+        detail: error instanceof Error
+          ? error.message
+          : "The file could not be copied into the project.",
+      });
+    } finally {
+      importInFlightRef.current = false;
+      setImportingFileName(null);
+    }
+  }
+
+  function handleImportDirectoryRejected() {
+    showImportNotification({
+      tone: "warning",
+      title: "Folders aren’t supported",
+      detail: "Drop one file at a time instead.",
+    });
+  }
 
   const handleAddChildNode = useCallback((parentNodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const parentNode = current.nodes.find((node) => node.id === parentNodeId);
     if (!parentNode) return;
     const nodeId = createNextNodeId(current);
@@ -774,15 +778,16 @@ export default function App() {
       nodes: [...current.nodes, node],
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "add_node", node: toAddNodeOperationNode(node) });
+    editDocument(nextDocument, [{
+      type: "add_node",
+      node: toAddNodeOperationNode(node),
+    }]);
     setSelectedNodeId(node.id);
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleCodeChange = useCallback((nodeId: string, code: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || node.code === code) return;
     const staleNodeIds = getNodeAndDescendants(toRuntimeGraph(current), nodeId);
@@ -818,33 +823,33 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "update_node_body", nodeId, code });
+    const operations: DocumentOperation[] = [
+      { type: "update_node_body", nodeId, code },
+    ];
     if (renamedOutput) {
       for (const edge of renamedEdges) {
-        queueOperation({ type: "remove_edge", ...edge });
+        operations.push({ type: "remove_edge", ...edge });
       }
       for (const edge of renamedEdges) {
-        queueOperation({
+        operations.push({
           type: "add_edge",
           ...edge,
           fromOutput: renamedOutput.toOutput,
         });
       }
     }
+    editDocument(nextDocument, operations);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleGlobalsCodeChange = useCallback((globalsCode: string) => {
-    const current = editableDocumentRef.current;
+    const current = getDocumentSnapshot().document;
     if (
-      !current || saveOutcomeUnknownRef.current ||
+      !current || getDocumentSnapshot().editingBlocked ||
       (current.globalsCode ?? "") === globalsCode
     ) {
       return;
@@ -855,23 +860,20 @@ export default function App() {
       globalsCode,
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "update_globals", code: globalsCode });
+    editDocument(nextDocument, [{ type: "update_globals", code: globalsCode }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleOutputsChange = useCallback((
     nodeId: string,
     outputs: string[],
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || areStringArraysEqual(node.outputs, outputs)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
@@ -902,38 +904,37 @@ export default function App() {
       edges: nextEdges,
     };
 
-    markDocumentEdited();
+    const operations: DocumentOperation[] = [];
     for (const edge of removedEdges) {
-      queueOperation({ type: "remove_edge", ...edge });
+      operations.push({ type: "remove_edge", ...edge });
     }
     if (removedEdges.length === 0) {
       // Legacy documents may contain an unconnected declared output. Routes
       // normally derive this return plumbing, but keep the inline cleanup
       // action capable of removing that old declaration.
-      queueOperation({ type: "update_node_outputs", nodeId, outputs });
+      operations.push({ type: "update_node_outputs", nodeId, outputs });
     }
     for (const edge of renamedEdges) {
-      queueOperation({
+      operations.push({
         type: "add_edge",
         ...edge,
         fromOutput: added[0],
       });
     }
+    editDocument(nextDocument, operations);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleNodeNameChange = useCallback((
     nodeId: string,
     displayName: string,
   ): NodeNameChangeResult => {
-    const current = editableDocumentRef.current;
-    if (saveOutcomeUnknownRef.current) {
+    const current = getDocumentSnapshot().document;
+    if (getDocumentSnapshot().editingBlocked) {
       return {
         ok: false,
         message: "Reload from disk before making more changes.",
@@ -997,25 +998,26 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "rename_node_function", nodeId, functionName });
+    editDocument(nextDocument, [{
+      type: "rename_node_function",
+      nodeId,
+      functionName,
+    }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
 
     return { ok: true, functionName };
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleNodeMetadataChange = useCallback((
     nodeId: string,
     metadata: { description?: string },
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     const nextDescription = metadata.description ?? node.description;
@@ -1038,24 +1040,24 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
+    const operations: DocumentOperation[] = [];
     if (metadata.description !== undefined) {
-      queueOperation({
+      operations.push({
         type: "update_node_description",
         nodeId,
         description: metadata.description,
       });
     }
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(nextDocument, operations, "metadata");
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleConnectNodes = useCallback((
     fromNode: string,
     fromOutput: string,
     toNode: string,
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const toInput = fromOutput;
     const sourceNode = current.nodes.find((node) => node.id === fromNode);
     const targetNode = current.nodes.find((node) => node.id === toNode);
@@ -1107,26 +1109,23 @@ export default function App() {
     };
 
     setConnectionWarning(null);
-    markDocumentEdited();
-    queueOperation({
+    editDocument(nextDocument, [{
       type: "add_edge",
       fromNode,
       fromOutput,
       toNode,
       toInput,
-    });
+    }]);
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const handleDeleteEdges = useCallback((edgeIds: string[]) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return [];
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return [];
     const edgeIdSet = new Set(edgeIds);
     const removedEdges = current.edges.filter((edge) =>
       edgeIdSet.has(getEdgeId(edge))
@@ -1168,60 +1167,53 @@ export default function App() {
       edges: nextEdges,
     };
 
-    markDocumentEdited();
-    for (const edge of editableRemovedEdges) {
-      queueOperation({
+    editDocument(
+      nextDocument,
+      editableRemovedEdges.map((edge) => ({
         type: "remove_edge",
         ...edge,
-      });
-    }
+      })),
+    );
     markNodesStale(staleNodeIds);
-    commitEditableDocument(nextDocument);
     return acceptedEdgeIds;
   }, [
-    commitEditableDocument,
-    markDocumentEdited,
+    editDocument,
+    getDocumentSnapshot,
     markNodesStale,
-    queueOperation,
   ]);
 
   const commitDeleteNode = useCallback((nodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked || isRunActive) return;
     if (!current.nodes.some((node) => node.id === nodeId)) return;
     if (hasCustomManagedDownstream(current, nodeId)) return;
 
     const descendants = getDescendants(toRuntimeGraph(current), nodeId);
     const shouldClearSelection = selectedNodeId === nodeId;
-    const nextDocument = {
-      ...current,
-      nodes: current.nodes.filter((node) => node.id !== nodeId),
-      edges: current.edges.filter((edge) =>
-        edge.fromNode !== nodeId && edge.toNode !== nodeId
-      ),
-    };
+    const nextDocument = removeNodeAndIncidentEdges(current, nodeId);
+    const staleNodeIds = new Set([
+      ...descendants,
+      ...getChangedOutputNodeIds(current, nextDocument),
+    ]);
 
-    markDocumentEdited();
-    queueOperation({ type: "delete_node", nodeId });
-    markNodesStale(descendants);
+    editDocument(nextDocument, [{ type: "delete_node", nodeId }]);
+    markNodesStale(staleNodeIds);
     forgetNodes([nodeId]);
     if (shouldClearSelection) {
       setSelectedNodeId(null);
     }
-    commitEditableDocument(nextDocument);
   }, [
-    commitEditableDocument,
+    editDocument,
+    getDocumentSnapshot,
     forgetNodes,
-    markDocumentEdited,
     markNodesStale,
-    queueOperation,
     selectedNodeId,
     isRunActive,
   ]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current || isRunActive) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked || isRunActive) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || hasCustomManagedDownstream(current, nodeId)) return;
 
@@ -1232,7 +1224,7 @@ export default function App() {
         edge.fromNode === nodeId || edge.toNode === nodeId
       ).length,
     });
-  }, [isRunActive]);
+  }, [getDocumentSnapshot, isRunActive]);
 
   const confirmDeleteNode = useCallback(() => {
     if (!pendingNodeDeletion) return;
@@ -1245,8 +1237,8 @@ export default function App() {
     nodeId: string,
     position: { x: number; y: number },
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const node = current.nodes.find((item) => item.id === nodeId);
     if (!node || arePositionsEqual(node.position, position)) return;
     const nextDocument = {
@@ -1256,16 +1248,18 @@ export default function App() {
       ),
     };
 
-    markDocumentEdited();
-    queueOperation({ type: "move_node", nodeId, position });
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
+    editDocument(
+      nextDocument,
+      [{ type: "move_node", nodeId, position }],
+      "metadata",
+    );
+  }, [editDocument, getDocumentSnapshot]);
 
   const handleAutoLayout = useCallback((
     dimensions: NodeDimensionsById,
   ) => {
-    const current = editableDocumentRef.current;
-    if (!current || saveOutcomeUnknownRef.current) return;
+    const current = getDocumentSnapshot().document;
+    if (!current || getDocumentSnapshot().editingBlocked) return;
     const positions = createSimpleLayout(toRuntimeGraph(current), dimensions);
     const changedPositions = current.nodes.flatMap((node) => {
       const position = positions[node.id];
@@ -1284,27 +1278,16 @@ export default function App() {
       })),
     };
 
-    markDocumentEdited();
-    for (const { nodeId, position } of changedPositions) {
-      queueOperation({ type: "move_node", nodeId, position });
-    }
-    commitEditableDocument(nextDocument);
-  }, [commitEditableDocument, markDocumentEdited, queueOperation]);
-
-  async function handleSaveDocument() {
-    if (
-      !editableDocument || saveStatus === "saving" ||
-      saveOutcomeUnknownRef.current
-    ) {
-      return;
-    }
-
-    if (!(await ensureDocumentFreshForWrite())) {
-      return;
-    }
-
-    await flushPendingOperations();
-  }
+    editDocument(
+      nextDocument,
+      changedPositions.map(({ nodeId, position }) => ({
+        type: "move_node",
+        nodeId,
+        position,
+      })),
+      "metadata",
+    );
+  }, [editDocument, getDocumentSnapshot]);
 
   function navigateToPythonError(target: PythonEditorErrorTarget) {
     if (target.editor === "node" && target.nodeId) {
@@ -1324,140 +1307,35 @@ export default function App() {
     }));
   }
 
-  async function reloadDocumentFromDisk(
-    options: { allowDiscardLocalEdits?: boolean; showUpdatedNotice?: boolean } =
-      {},
-  ): Promise<boolean> {
-    if (isReloadingExternalDocumentRef.current) {
-      return false;
-    }
-
-    if (flushPromiseRef.current) {
-      setExternalDocumentNotice({
-        kind: "dirty",
-        detectedAt: Date.now(),
-      });
-      return false;
-    }
-
-    const started = {
-      editGeneration: editGenerationRef.current,
-      pendingOperationCount: pendingOperationsRef.current.length,
-      saveAttemptGeneration: saveAttemptGenerationRef.current,
-    };
-    isReloadingExternalDocumentRef.current = true;
-    setIsExternalReloading(true);
-    try {
-      const loaded = await loadDocument();
-
-      if (
-        !canApplyLoadedDocument(
-          started,
-          {
-            editGeneration: editGenerationRef.current,
-            pendingOperationCount: pendingOperationsRef.current.length,
-            saveAttemptGeneration: saveAttemptGenerationRef.current,
-            saveInFlight: flushPromiseRef.current !== null,
-          },
-        )
-      ) {
-        setExternalDocumentNotice({
-          kind: "dirty",
-          detectedAt: Date.now(),
-        });
-        return false;
-      }
-
-      applyLoadedDocument(loaded);
-      invalidExternalDocumentSinceRef.current = null;
-      setExternalDocumentNotice(
-        options.showUpdatedNotice
-          ? { kind: "updated", updatedAt: Date.now() }
-          : { kind: "idle" },
-      );
-      return true;
-    } catch (error) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: error instanceof Error ? error.message : undefined,
-      });
-      return false;
-    } finally {
-      isReloadingExternalDocumentRef.current = false;
-      setIsExternalReloading(false);
-    }
-  }
-
-  async function handleReloadDocumentFromDisk() {
-    await reloadDocumentFromDisk({ allowDiscardLocalEdits: true });
-  }
-
-  async function ensureDocumentFreshForWrite(): Promise<boolean> {
-    if (saveOutcomeUnknownRef.current) {
-      return false;
-    }
-
-    const result = await documentStatusQuery.refetch();
-    if (!result.isSuccess) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: result.error instanceof Error
-          ? result.error.message
-          : undefined,
-      });
-      return false;
-    }
-
-    const status = result.data.status;
-    if (!status.valid || !status.revision) {
-      setExternalDocumentNotice({
-        kind: "waiting_readable",
-        detectedAt: Date.now(),
-        detail: status.issues[0]?.message,
-      });
-      return false;
-    }
-
-    if (status.revision === baseRevisionRef.current) {
-      return true;
-    }
-
-    if (pendingOperationsRef.current.length > 0) {
-      setExternalDocumentNotice({
-        kind: "dirty",
-        detectedAt: Date.now(),
-      });
-      return false;
-    }
-
-    await reloadDocumentFromDisk({ showUpdatedNotice: true });
-    return false;
-  }
-
   function getCurrentPythonSourceForRun(): string | undefined {
     // TODO: When the UI owns raw Python source state, pass that string here so
     // dirty editor contents can run without first saving to disk.
     return undefined;
   }
 
-  async function handleRunToNode(nodeId: string) {
+  async function handleRunToNode(
+    nodeId: string,
+    options: { allowDuringImport?: boolean; trace?: boolean } = {},
+  ) {
+    const importBlocksRun = () =>
+      importInFlightRef.current && !options.allowDuringImport;
+    if (isRuntimeMaintenanceActive || importBlocksRun()) return;
     if (
-      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
-      !(await flushPendingOperations())
+      !editableGraph || !(await prepareForWrite({ savePending: true }))
     ) {
       return;
     }
-    const runSourceValue = documentSourceValueRef.current;
+    if (importBlocksRun()) return;
+    const runSourceValue = executionSourceValueRef.current;
 
     const abortController = startRunAbortController();
+    activeRunTypeRef.current = "run_to_node";
     markNodeExecutionRunning(nodeId, "run_to_node");
     runToNodeMutation.mutate({
       nodeId,
       source: getCurrentPythonSourceForRun(),
-      expectedRevision: baseRevisionRef.current,
-      trace: traceEnabled,
+      expectedRevision: getDocumentSnapshot().revision,
+      trace: options.trace ?? false,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
@@ -1465,24 +1343,26 @@ export default function App() {
     });
   }
 
-  async function handleRunGraph() {
+  async function handleRunGraph(trace = false) {
+    if (isRuntimeMaintenanceActive || importInFlightRef.current) return;
     if (
-      !editableGraph || !(await ensureDocumentFreshForWrite()) ||
-      !(await flushPendingOperations())
+      !editableGraph || !(await prepareForWrite({ savePending: true }))
     ) {
       return;
     }
-    const runSourceValue = documentSourceValueRef.current;
+    if (importInFlightRef.current) return;
+    const runSourceValue = executionSourceValueRef.current;
 
     if (selectedNodeId === null) {
       showInspectorTarget("run_result");
     }
     const abortController = startRunAbortController();
+    activeRunTypeRef.current = "run_graph";
     markGraphExecutionRunning();
     runGraphMutation.mutate({
       source: getCurrentPythonSourceForRun(),
-      expectedRevision: baseRevisionRef.current,
-      trace: traceEnabled,
+      expectedRevision: getDocumentSnapshot().revision,
+      trace,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
@@ -1498,14 +1378,49 @@ export default function App() {
         nodeId: destination.nodeId,
         requestId: (current?.requestId ?? 0) + 1,
       }));
+      setInspectorNavigationRequest((current) => ({
+        target: notification.tone === "danger" ? "node_code" : "node_results",
+        nodeId: destination.nodeId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+      dismissRunNotification(notification.id);
       return;
     }
 
+    dismissRunNotification(notification.id);
     showInspectorTarget(
       destination.kind === "document_globals"
         ? "document_globals"
         : "run_result",
     );
+  }
+
+  const [saveAcknowledged, setSaveAcknowledged] = useState(false);
+  const saveFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (saveFeedbackTimer.current) clearTimeout(saveFeedbackTimer.current);
+  }, []);
+
+  async function handleSaveDocument() {
+    setSaveAcknowledged(false);
+    if (saveFeedbackTimer.current) clearTimeout(saveFeedbackTimer.current);
+    if (await saveDocument()) {
+      setSaveAcknowledged(true);
+      saveFeedbackTimer.current = setTimeout(
+        () => setSaveAcknowledged(false),
+        1600,
+      );
+    }
+  }
+
+  function showImportNotification(
+    notification: Omit<ImportNotification, "id">,
+  ) {
+    importNotificationIdRef.current += 1;
+    setImportNotification({
+      ...notification,
+      id: importNotificationIdRef.current,
+    });
   }
 
   function showInspectorTarget(target: "document_globals" | "run_result") {
@@ -1534,22 +1449,19 @@ export default function App() {
       ].join(" ")}
     >
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold">Rowcall</h1>
-            <span className="rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-              Alpha
-            </span>
-          </div>
-        </div>
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <h1 className="shrink-0 text-sm font-semibold">Rowcall</h1>
+          <span aria-hidden="true" className="text-zinc-400 dark:text-zinc-600">
+            /
+          </span>
+
           {externalDocumentNotice.kind === "updated" && (
             <span className="hidden shrink-0 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200 md:inline-flex">
               Updated from disk
             </span>
           )}
           <span
-            className="hidden max-w-[34vw] truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline"
+            className="min-w-0 max-w-[30vw] truncate text-xs text-zinc-600 dark:text-zinc-400"
             title={documentPath}
           >
             {compactDocumentPath(documentPath)}
@@ -1559,73 +1471,48 @@ export default function App() {
             error={pythonRuntimeQuery.error}
             python={pythonRuntimeQuery.data?.python ?? null}
             documentPath={documentPath}
+            environment={projectEnvironmentQuery.data?.environment ?? null}
+            isRunActive={isRunActive || isRuntimeMaintenanceActive}
+            isRestarting={restartRuntimeMutation.isPending}
+            restartError={restartRuntimeMutation.error}
+            onRestart={() => restartRuntimeMutation.mutate()}
           />
-          {saveStatus === "saved" && (
-            <span className="text-xs font-medium text-emerald-700">Saved</span>
-          )}
-          {saveStatus === "idle" && pendingOperationCount > 0 && (
-            <span className="text-xs font-medium text-amber-700">
-              Unsaved changes
-            </span>
-          )}
-          {saveStatus === "saving" && (
-            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Saving...
-            </span>
-          )}
-          {saveStatus === "error" && saveError && (
-            <span
-              className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
-              title={saveError.detail}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              title={saveStatus === "outcome_unknown"
+                ? "Save outcome unknown; reload from disk before running"
+                : isRuntimeMaintenanceActive
+                ? "Wait for Python environment maintenance to finish"
+                : importingFileName
+                ? "Wait for the file import to finish"
+                : isRunActive
+                ? "A run is already in progress"
+                : "Run the full graph"}
+              className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+              disabled={!editableGraph || isRunActive ||
+                isRuntimeMaintenanceActive ||
+                importingFileName !== null ||
+                saveStatus === "outcome_unknown"}
+              onClick={() => void handleRunGraph()}
             >
-              {saveError.title}
-            </span>
-          )}
-          <button
-            type="button"
-            title={saveStatus === "outcome_unknown"
-              ? "Save outcome unknown; reload from disk before running"
-              : isRunActive
-              ? "A run is already in progress"
-              : "Run the full graph"}
-            className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-            disabled={!editableGraph || isRunActive ||
-              saveStatus === "outcome_unknown"}
-            onClick={() => void handleRunGraph()}
-          >
-            <Play
-              aria-hidden="true"
-              className="h-4 w-4"
-              strokeWidth={2.25}
+              <Play
+                aria-hidden="true"
+                className="h-4 w-4"
+                strokeWidth={2.25}
+              />
+              {isRunActive ? "Running…" : "Run graph"}
+            </button>
+            <RunMenu
+              chevron
+              disabled={!editableGraph || isRunActive ||
+                isRuntimeMaintenanceActive || importingFileName !== null ||
+                saveStatus === "outcome_unknown"}
+              onTrace={() => void handleRunGraph(true)}
             />
-            {isRunActive ? "Running…" : "Run graph"}
-          </button>
-          <button
-            type="button"
-            aria-label={themeMode === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"}
-            title={themeMode === "dark" ? "Light mode" : "Dark mode"}
-            className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            onClick={() =>
-              setThemeMode((current) => current === "dark" ? "light" : "dark")}
-          >
-            {themeMode === "dark"
-              ? (
-                <Sun
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  strokeWidth={2.25}
-                />
-              )
-              : (
-                <Moon
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  strokeWidth={2.25}
-                />
-              )}
-          </button>
+          </div>
           <button
             type="button"
             title={isReadOnlyDocument
@@ -1633,29 +1520,61 @@ export default function App() {
               : saveStatus === "outcome_unknown"
               ? "Save outcome unknown; reload from disk before saving again"
               : "Save (Ctrl+S)"}
-            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+            className="inline-flex h-8 min-w-24 justify-center items-center gap-1.5 rounded px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 active:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
             disabled={!editableDocument || saveStatus === "saving" ||
               saveStatus === "outcome_unknown"}
+            aria-label={isReadOnlyDocument ? "Read-only" : "Save"}
             onClick={handleSaveDocument}
           >
             {!isReadOnlyDocument && (
-              <Save aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+              saveAcknowledged && pendingOperationCount === 0
+                ? <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+                : (
+                  <Save
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    strokeWidth={2.25}
+                  />
+                )
             )}
             {isReadOnlyDocument
               ? "Read-only"
               : saveStatus === "saving"
               ? "Saving..."
+              : pendingOperationCount > 0
+              ? "Save •"
+              : saveAcknowledged
+              ? "Saved"
               : "Save"}
           </button>
+          <ActionMenu
+            label="More options"
+            actionLabel={themeMode === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"}
+            disabled={false}
+            onAction={() =>
+              setThemeMode((current) => current === "dark" ? "light" : "dark")}
+          />
         </div>
       </header>
-      {runNotification && (
-        <RunNotificationCard
-          notification={runNotification}
-          nodeLabelsById={graphInspectorDetails?.nodeLabelsById ?? {}}
-          onOpen={() => handleRunNotificationClick(runNotification)}
-          onDismiss={() => dismissRunNotification(runNotification.id)}
-        />
+      {(runNotification || importNotification) && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
+          {importNotification && (
+            <ImportNotificationCard
+              notification={importNotification}
+              onDismiss={() => setImportNotification(null)}
+            />
+          )}
+          {runNotification && (
+            <RunNotificationCard
+              notification={runNotification}
+              nodeLabelsById={graphInspectorDetails?.nodeLabelsById ?? {}}
+              onOpen={() => handleRunNotificationClick(runNotification)}
+              onDismiss={() => dismissRunNotification(runNotification.id)}
+            />
+          )}
+        </div>
       )}
       {connectionWarning && (
         <div
@@ -1772,6 +1691,15 @@ export default function App() {
         </div>
       )}
       {documentQuery.isSuccess && (
+        <RuntimeEnvironmentNotice
+          environment={projectEnvironmentQuery.data?.environment ?? null}
+          isRunActive={isRunActive || isRuntimeMaintenanceActive}
+          isSyncing={syncEnvironmentMutation.isPending}
+          syncError={syncEnvironmentMutation.error}
+          onSync={() => syncEnvironmentMutation.mutate()}
+        />
+      )}
+      {documentQuery.isSuccess && (
         <PreflightPanel
           python={pythonRuntimeQuery.data?.python ?? null}
           pythonError={pythonRuntimeQuery.error}
@@ -1828,75 +1756,99 @@ export default function App() {
         )}
         {documentQuery.isSuccess && editableGraph &&
           graphInspectorDetails && (
-          <div className="flex h-full min-h-0">
-            <div className="min-h-0 min-w-0 flex-1">
-              <Canvas
-                key={documentCanvasKey}
-                graph={editableGraph}
-                selectedNodeId={selectedNodeId}
-                focusNodeRequest={canvasFocusRequest}
-                nodeRunStatuses={nodeRunStatuses}
-                nodePreviews={nodePreviews}
-                nodeInputPreviews={nodeInputPreviews}
-                nodeOutputOptions={nodeOutputOptions}
-                onAddNode={canEditStructure ? handleAddNode : undefined}
-                onAutoLayout={canEditStructure ? handleAutoLayout : undefined}
-                onAddChildNode={canEditStructure
-                  ? handleAddChildNode
-                  : undefined}
-                onCodeChange={canEditStructure ? handleCodeChange : undefined}
-                onConnectNodes={canEditStructure
-                  ? handleConnectNodes
-                  : undefined}
-                onDeleteEdges={canEditStructure ? handleDeleteEdges : undefined}
-                onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-                onNodePositionChange={editingBlocked
-                  ? undefined
-                  : handleNodePositionChange}
-                onNodeSelect={setSelectedNodeId}
-                onOutputsChange={canEditOutputs
-                  ? handleOutputsChange
-                  : undefined}
-                onRunToNode={handleRunToNode}
-                onVariableSelect={showNodeVariable}
-                onSaveDocument={handleSaveDocument}
-                outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isRunActive || isSelectedNodeRunning ||
-                  saveStatus === "outcome_unknown"}
-                onSelectionClear={() => setSelectedNodeId(null)}
-                themeMode={themeMode}
-              />
-            </div>
-            <InspectorPanel
-              themeMode={themeMode}
-              selectedNode={selectedNodeDetails}
-              graph={graphInspectorDetails}
-              selectedNodeExecutionState={selectedNodeId
-                ? executionStateByNodeId[selectedNodeId] ?? null
-                : null}
-              selectedNodeRunStatus={selectedNodeId
-                ? nodeRunStatuses[selectedNodeId] ?? "idle"
-                : "idle"}
-              graphExecutionState={graphExecutionState}
-              isRunActive={isRunActive}
-              traceEnabled={traceEnabled}
-              readOnly={!canEditOutputs}
-              onNodeSelect={setSelectedNodeId}
-              onCodeChange={handleCodeChange}
-              onNodeNameChange={handleNodeNameChange}
-              onNodeMetadataChange={handleNodeMetadataChange}
-              onGlobalsCodeChange={handleGlobalsCodeChange}
-              onTraceEnabledChange={setTraceEnabled}
-              onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-              onRunToNode={handleRunToNode}
-              onSelectionClear={() => setSelectedNodeId(null)}
-              actionsBlocked={saveStatus === "outcome_unknown"}
-              navigationRequest={inspectorNavigationRequest}
-              pythonEditorError={saveError?.target}
-              onShowDocumentGlobals={() =>
-                showInspectorTarget("document_globals")}
+          <div className="h-full min-h-0">
+            <WorkspaceSplit
+              vertical
+              storageKey="graph-height"
+              initial={36}
+              label="Resize inspector"
+              focused={inspectorFocused}
+              first={
+                <div className="relative h-full min-h-0 min-w-0">
+                  <Canvas
+                    key={documentCanvasKey}
+                    graph={editableGraph}
+                    selectedNodeId={selectedNodeId}
+                    focusNodeRequest={canvasFocusRequest}
+                    nodeRunStatuses={nodeRunStatuses}
+                    nodePreviews={nodePreviews}
+                    nodeInputPreviews={nodeInputPreviews}
+                    nodeOutputOptions={nodeOutputOptions}
+                    onAddNode={canEditStructure ? handleAddNode : undefined}
+                    onImportFiles={handleImportFiles}
+                    onImportDirectoryRejected={handleImportDirectoryRejected}
+                    importingFileName={importingFileName}
+                    onAutoLayout={canEditStructure
+                      ? handleAutoLayout
+                      : undefined}
+                    onAddChildNode={canEditStructure
+                      ? handleAddChildNode
+                      : undefined}
+                    onConnectNodes={canEditStructure
+                      ? handleConnectNodes
+                      : undefined}
+                    onDeleteEdges={canEditStructure
+                      ? handleDeleteEdges
+                      : undefined}
+                    onDeleteNode={canEditStructure
+                      ? handleDeleteNode
+                      : undefined}
+                    onNodePositionChange={editingBlocked
+                      ? undefined
+                      : handleNodePositionChange}
+                    onNodeSelect={setSelectedNodeId}
+                    onOutputsChange={canEditOutputs
+                      ? handleOutputsChange
+                      : undefined}
+                    onRunToNode={handleRunToNode}
+                    onVariableSelect={showNodeVariable}
+                    onSaveDocument={handleSaveDocument}
+                    outputsReadOnly={!canEditOutputs}
+                    runToNodeDisabled={isRunActive ||
+                      isRuntimeMaintenanceActive ||
+                      importingFileName !== null ||
+                      isSelectedNodeRunning ||
+                      saveStatus === "outcome_unknown"}
+                    onSelectionClear={() => setSelectedNodeId(null)}
+                    themeMode={themeMode}
+                  />
+                  <ShortcutHintPanel />
+                </div>
+              }
+              second={
+                <InspectorPanel
+                  focused={inspectorFocused}
+                  onToggleFocus={() =>
+                    setInspectorFocused((current) => !current)}
+                  themeMode={themeMode}
+                  selectedNode={selectedNodeDetails}
+                  graph={graphInspectorDetails}
+                  selectedNodeExecutionState={selectedNodeId
+                    ? executionStateByNodeId[selectedNodeId] ?? null
+                    : null}
+                  selectedNodeRunStatus={selectedNodeId
+                    ? nodeRunStatuses[selectedNodeId] ?? "idle"
+                    : "idle"}
+                  graphExecutionState={graphExecutionState}
+                  isRunActive={isRunActive || isRuntimeMaintenanceActive ||
+                    importingFileName !== null}
+                  readOnly={!canEditOutputs}
+                  onNodeSelect={setSelectedNodeId}
+                  onCodeChange={handleCodeChange}
+                  onNodeNameChange={handleNodeNameChange}
+                  onNodeMetadataChange={handleNodeMetadataChange}
+                  onGlobalsCodeChange={handleGlobalsCodeChange}
+                  onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
+                  onRunToNode={handleRunToNode}
+                  onSelectionClear={() => setSelectedNodeId(null)}
+                  actionsBlocked={saveStatus === "outcome_unknown"}
+                  navigationRequest={inspectorNavigationRequest}
+                  pythonEditorError={saveError?.target}
+                  onShowDocumentGlobals={() =>
+                    showInspectorTarget("document_globals")}
+                />
+              }
             />
-            <ShortcutHintPanel />
           </div>
         )}
       </main>
@@ -2033,7 +1985,7 @@ function RunNotificationCard({
       role={isDanger ? "alert" : "status"}
       aria-live={isDanger ? "assertive" : "polite"}
       className={[
-        "fixed bottom-4 right-4 z-50 flex w-[min(20rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
+        "flex w-[min(20rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
         isDanger
           ? "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
           : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100",
@@ -2082,27 +2034,91 @@ function RunNotificationCard({
   );
 }
 
+function ImportNotificationCard({
+  notification,
+  onDismiss,
+}: {
+  notification: ImportNotification;
+  onDismiss: () => void;
+}) {
+  const isDanger = notification.tone === "danger";
+  const isWarning = notification.tone === "warning";
+  const toneClass = isDanger
+    ? "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
+    : isWarning
+    ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    : "border-blue-300 bg-blue-50 text-blue-950 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100";
+
+  return (
+    <div
+      role={isDanger ? "alert" : "status"}
+      aria-live={isDanger ? "assertive" : "polite"}
+      className={[
+        "flex w-[min(22rem,calc(100vw-2rem))] items-start overflow-hidden rounded-md border shadow-lg",
+        toneClass,
+      ].join(" ")}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5">
+        {isDanger || isWarning
+          ? (
+            <AlertTriangle
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )
+          : (
+            <FileUp
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              strokeWidth={2.25}
+            />
+          )}
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">
+            {notification.title}
+          </span>
+          <span className="mt-0.5 block text-xs leading-4 opacity-80">
+            {notification.detail}
+          </span>
+        </span>
+      </div>
+      <button
+        type="button"
+        aria-label="Dismiss import notification"
+        title="Dismiss"
+        className="m-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-black/10 focus:outline-none focus:ring-2 focus:ring-current"
+        onClick={onDismiss}
+      >
+        <X aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+    </div>
+  );
+}
+
 function ShortcutHintPanel() {
   return (
-    <aside className="pointer-events-none absolute bottom-3 left-3 hidden rounded border border-zinc-200 bg-white/90 px-3 py-2 text-[11px] text-zinc-500 shadow-sm backdrop-blur md:block">
-      <span className="mr-2 font-medium text-zinc-700">Shortcuts</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Shift+Enter
-      </kbd>
-      <span className="mx-1">run through step</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        A
-      </kbd>
-      <span className="mx-1">add nearby node</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Ctrl+S
-      </kbd>
-      <span className="mx-1">save</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Delete
-      </kbd>
-      <span className="ml-1">delete selection</span>
-    </aside>
+    <DismissibleDetails className="absolute bottom-3 right-3 z-10 max-w-[90%] rounded bg-white/95 px-3 py-2 text-[11px] text-zinc-500 shadow-sm dark:bg-zinc-900/95 dark:text-zinc-400">
+      <summary className="cursor-pointer font-medium">Shortcuts</summary>
+      <div className="mt-2 flex flex-wrap items-center gap-y-2">
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Shift+Enter
+        </kbd>
+        <span className="mx-1">run through step</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          A
+        </kbd>
+        <span className="mx-1">add nearby node</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Ctrl+S
+        </kbd>
+        <span className="mx-1">save</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Delete
+        </kbd>
+        <span className="ml-1">delete selection</span>
+      </div>
+    </DismissibleDetails>
   );
 }
 
@@ -2117,19 +2133,13 @@ function compactDocumentPath(path: string): string {
 }
 
 function runtimeSummaryLabel(python: PythonRuntime): string {
-  return `${runtimeEnvironmentLabel(python)} - Python ${python.version}`;
-}
-
-function runtimeModeLabel(python: PythonRuntime): string {
-  return python.runtimeMode === "managed"
-    ? "Managed environment"
-    : "User environment";
+  return `${runtimeEnvironmentLabel(python)} ${python.version}`;
 }
 
 function runtimeEnvironmentLabel(python: PythonRuntime): string {
-  if (python.runtimeMode === "managed") return "Managed env";
+  if (python.runtimeMode === "managed") return "Project Python";
   if (python.condaPrefix) return `Conda ${environmentName(python.condaPrefix)}`;
-  if (python.virtualEnv) return `Venv ${environmentName(python.virtualEnv)}`;
+  if (python.virtualEnv) return "Venv Python";
   return "System Python";
 }
 
@@ -2142,11 +2152,21 @@ function PythonRuntimeBadge({
   isLoading,
   error,
   documentPath,
+  environment,
+  isRunActive,
+  isRestarting,
+  restartError,
+  onRestart,
 }: {
   python: PythonRuntime | null;
   isLoading: boolean;
   error: Error | null;
   documentPath: string;
+  environment: ProjectEnvironmentInfo | null;
+  isRunActive: boolean;
+  isRestarting: boolean;
+  restartError: Error | null;
+  onRestart: () => void;
 }) {
   if (isLoading) {
     return <RuntimeChip label="Python checking..." tone="neutral" />;
@@ -2166,44 +2186,145 @@ function PythonRuntimeBadge({
 
   const runtimeLabel = runtimeSummaryLabel(python);
   const title = [
-    `Runtime: ${runtimeModeLabel(python)}`,
     `Python: ${python.executable}`,
     `Document: ${documentPath}`,
   ].join("\n");
 
   return (
-    <details className="group relative hidden md:block">
+    <DismissibleDetails className="group relative hidden md:block">
       <summary
-        className="flex cursor-pointer list-none items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1.5 text-xs text-zinc-500 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:text-zinc-400 dark:hover:text-zinc-100 [&::-webkit-details-marker]:hidden"
         title={title}
       >
         <span>{runtimeLabel}</span>
       </summary>
-      <div className="absolute right-0 z-30 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded border border-zinc-200 bg-white p-3 text-xs text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+      <div className="absolute left-0 z-30 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded border border-zinc-200 bg-white p-3 text-xs text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
         <div className="mb-2 flex items-center justify-between gap-3 border-b border-zinc-200 pb-2 dark:border-zinc-700">
           <span className="font-semibold">Runtime Details</span>
-          <span className="text-zinc-500 dark:text-zinc-400">
-            {runtimeModeLabel(python)}
-          </span>
         </div>
         <RuntimeDetail label="Document" value={documentPath} />
         <RuntimeDetail label="Python" value={python.executable} />
         <RuntimeDetail label="Version" value={python.version} />
-        {python.condaPrefix && (
-          <RuntimeDetail label="Conda" value={python.condaPrefix} />
+        {environment && (
+          <RuntimeDetail
+            label="Requirements"
+            value={environment.requirementsStatus === "unknown"
+              ? "Not tracked"
+              : environment.requirementsStatus === "changed"
+              ? "Sync needed"
+              : environment.requirementsPresent
+              ? "Requirements unchanged"
+              : "No requirements file"}
+            tone={environment.requirementsStatus === "changed"
+              ? "warning"
+              : "default"}
+          />
         )}
-        {python.virtualEnv && (
-          <RuntimeDetail label="Venv" value={python.virtualEnv} />
-        )}
-        <RuntimeDetail
-          label="rowcall"
-          value={python.rowcallImport.ok
-            ? python.rowcallImport.path ?? "importable"
-            : python.rowcallImport.error ?? "not importable"}
-          tone={python.rowcallImport.ok ? "default" : "warning"}
-        />
+        <details className="mt-2">
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200">
+            Advanced
+          </summary>
+          <div className="mt-2">
+            {python.condaPrefix && (
+              <RuntimeDetail label="Conda" value={python.condaPrefix} />
+            )}
+            {python.virtualEnv && (
+              <RuntimeDetail label="Venv" value={python.virtualEnv} />
+            )}
+            <RuntimeDetail
+              label="rowcall"
+              value={python.rowcallImport.ok
+                ? python.rowcallImport.path ?? "importable"
+                : python.rowcallImport.error ?? "not importable"}
+              tone={python.rowcallImport.ok ? "default" : "warning"}
+            />
+          </div>
+        </details>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+          {restartError && (
+            <span
+              role="alert"
+              className="min-w-0 text-red-600 dark:text-red-400"
+            >
+              {restartError.message}
+            </span>
+          )}
+          <button
+            type="button"
+            className="shrink-0 rounded border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            disabled={isRunActive || isRestarting}
+            title={isRunActive
+              ? "Wait for the active run to finish before restarting Python"
+              : "Replace the Python process without restarting Rowcall."}
+            onClick={onRestart}
+          >
+            {isRestarting ? "Restarting..." : "Restart Python"}
+          </button>
+        </div>
       </div>
-    </details>
+    </DismissibleDetails>
+  );
+}
+
+function RuntimeEnvironmentNotice({
+  environment,
+  isRunActive,
+  isSyncing,
+  syncError,
+  onSync,
+}: {
+  environment: ProjectEnvironmentInfo | null;
+  isRunActive: boolean;
+  isSyncing: boolean;
+  syncError: Error | null;
+  onSync: () => void;
+}) {
+  const updateAvailable = environment?.canSync &&
+    environment.requirementsStatus === "changed";
+  const relevantSyncError = updateAvailable ? syncError : null;
+  if (!updateAvailable && !relevantSyncError) {
+    return null;
+  }
+
+  const error = relevantSyncError;
+  const message = error
+    ? error.message
+    : "requirements.txt changed. Updating will restart Python and clear current results.";
+
+  return (
+    <section
+      className={[
+        "border-b px-5 py-2 text-xs",
+        error
+          ? "border-red-200 bg-red-50 text-red-900 dark:border-red-900/70 dark:bg-red-950 dark:text-red-100"
+          : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950 dark:text-amber-100",
+      ].join(" ")}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-h-28 min-w-0 flex-1 overflow-auto whitespace-pre-wrap">
+          {message}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          {updateAvailable && (
+            <button
+              type="button"
+              className="rounded border border-amber-300 bg-white px-2.5 py-1 font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-50 dark:hover:bg-amber-800"
+              disabled={isRunActive || isSyncing}
+              title={isRunActive
+                ? "Wait for the active run to finish before updating dependencies"
+                : undefined}
+              onClick={onSync}
+            >
+              {isSyncing
+                ? "Updating..."
+                : syncError
+                ? "Retry update"
+                : "Update environment"}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -2332,139 +2453,6 @@ function toAddNodeOperationNode(node: RuntimeNode): Extract<
     ...(node.title ? { title: node.title } : {}),
     ...(node.description ? { description: node.description } : {}),
   };
-}
-
-function formatSaveError(
-  error: unknown,
-  operations: DocumentOperation[] = [],
-): SaveErrorMessage {
-  if (error instanceof DocumentApiRequestError && error.issues.length > 0) {
-    const issue = error.issues[0];
-    const location = formatIssueLocation(issue.path);
-
-    if (issue.kind === "invalid_python") {
-      const target = getPythonEditorErrorTarget(issue, operations);
-      return {
-        title: "Save failed: unsaved Python has a syntax error",
-        detail: `${issue.message}${
-          target ? formatEditorLocation(target) : location
-        }. The saved file was not changed and your edits are still in the editor.`,
-        ...(target ? { target } : {}),
-      };
-    }
-
-    return {
-      title: "Save failed",
-      detail: `${issue.kind}: ${issue.message}${location}`,
-    };
-  }
-
-  return {
-    title: "Save failed",
-    detail: error instanceof Error ? error.message : String(error),
-  };
-}
-
-function getPythonEditorErrorTarget(
-  issue: DocumentValidationIssue,
-  operations: DocumentOperation[],
-): PythonEditorErrorTarget | undefined {
-  if (issue.operationIndex === undefined) {
-    return undefined;
-  }
-
-  const operation = operations[issue.operationIndex];
-  if (!operation) {
-    return undefined;
-  }
-
-  if (operation.type === "update_globals") {
-    const location = (issue.field === "globalsCode"
-      ? parsePythonIssueLocation(issue.path)
-      : null) ?? findPythonSyntaxError(operation.code);
-    return location
-      ? { ...location, editor: "globals", message: issue.message }
-      : undefined;
-  }
-
-  if (operation.type === "update_node_body") {
-    const location =
-      (issue.field === "code" ? parsePythonIssueLocation(issue.path) : null) ??
-        findPythonSyntaxError(operation.code);
-    return location
-      ? {
-        ...location,
-        editor: "node",
-        nodeId: operation.nodeId,
-        message: issue.message,
-      }
-      : undefined;
-  }
-
-  if (operation.type === "add_node") {
-    const location = findPythonSyntaxError(operation.node.code);
-    return location
-      ? {
-        ...location,
-        editor: "node",
-        nodeId: operation.node.id,
-        message: issue.message,
-      }
-      : undefined;
-  }
-
-  return undefined;
-}
-
-function parsePythonIssueLocation(
-  path: string | undefined,
-): PythonSyntaxLocation | null {
-  if (!path) {
-    return null;
-  }
-  const [lineText, columnText] = path.split(":", 2);
-  const line = Number(lineText);
-  const column = Number(columnText);
-  return Number.isInteger(line) && line > 0 && Number.isInteger(column) &&
-      column > 0
-    ? { line, column }
-    : null;
-}
-
-function findPythonSyntaxError(code: string): PythonSyntaxLocation | null {
-  const tree = pythonParser.parse(code);
-  let errorOffset: number | null = null;
-
-  tree.iterate({
-    enter(node) {
-      if (errorOffset === null && node.type.isError) {
-        errorOffset = node.from;
-      }
-    },
-  });
-
-  return errorOffset === null
-    ? null
-    : pythonSyntaxLocationFromOffset(code, errorOffset);
-}
-
-function formatEditorLocation(target: PythonEditorErrorTarget): string {
-  return ` at line ${target.line}, column ${target.column} in ${
-    target.editor === "globals" ? "Document Globals" : "this step"
-  }`;
-}
-
-function formatIssueLocation(path: string | undefined): string {
-  if (!path) {
-    return "";
-  }
-
-  const [line, column] = path.split(":");
-  if (line && column) {
-    return ` at line ${line}, column ${column}`;
-  }
-
-  return ` at ${path}`;
 }
 
 function formatElapsedDuration(milliseconds: number): string {

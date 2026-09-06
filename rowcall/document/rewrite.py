@@ -890,6 +890,26 @@ def _delete_node(
         for edge in parsed.document.edges
         if edge.from_node != node_id and edge.to_node != node_id
     ]
+    affected_source_ids = tuple(
+        dict.fromkeys(
+            edge.from_node
+            for edge in parsed.document.edges
+            if edge.to_node == node_id and edge.from_node != node_id
+        )
+    )
+    nodes_by_id = {item.id: item for item in remaining_nodes}
+    next_outputs_by_source: dict[str, tuple[str, ...]] = {}
+    for source_id in affected_source_ids:
+        source_node = nodes_by_id.get(source_id)
+        if source_node is None or not source_node.editable:
+            continue
+        next_outputs = _outputs_routed_from_node(
+            source_node.outputs,
+            remaining_edges,
+            source_id,
+        )
+        if next_outputs != source_node.outputs:
+            next_outputs_by_source[source_id] = next_outputs
     _append_graph(lines, _render_graph_lines(remaining_nodes, remaining_edges))
     next_metadata = copy.deepcopy(metadata)
     if isinstance(next_metadata.get("nodes"), dict):
@@ -912,7 +932,23 @@ def _delete_node(
     # the complete batch and will still reject a document that ends empty.
     if result.issues and all(issue.kind == "missing_node" for issue in result.issues):
         return result.source, next_metadata
-    return _source_result_or_issue(result, next_metadata)
+    if not result.ok:
+        return _source_result_or_issue(result, next_metadata)
+
+    rewritten = result
+    for source_id, next_outputs in next_outputs_by_source.items():
+        rewritten = _update_node_outputs(
+            rewritten.source,
+            document_path,
+            source_id,
+            next_outputs,
+            validate_output_bindings=False,
+            normalize_signatures=False,
+        )
+        if not rewritten.ok:
+            return _source_result_or_issue(rewritten, next_metadata)
+
+    return rewritten.source, next_metadata
 
 
 def _find_node(nodes: tuple[DocumentNode, ...], node_id: str) -> DocumentNode | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import contextvars
 import hashlib
@@ -42,14 +43,6 @@ DEFAULT_ERROR_MESSAGE_LIMIT_BYTES = 16 * 1024
 DEFAULT_DISPLAY_LIMIT = 10
 _TRUNCATED_ERROR_SUFFIX = "\n[error message truncated]"
 _DOCUMENT_LOCAL_MODULE_PATHS: dict[str, frozenset[Path]] = {}
-
-
-@dataclass(frozen=True)
-class RunRequest:
-    source: str
-    document_path: Path
-    target: str | None = None
-    trace: bool = False
 
 
 class ImportFreshnessError(RuntimeError):
@@ -451,8 +444,8 @@ def document_execution_context(document_path: Path) -> Iterator[None]:
     previous_cwd = os.getcwd()
     previous_path = list(sys.path)
     os.chdir(document_dir)
-    if document_dir not in sys.path:
-        sys.path.insert(0, document_dir)
+    # Sibling helpers must take precedence even if the directory is already on sys.path.
+    sys.path.insert(0, document_dir)
     try:
         yield
     finally:
@@ -522,6 +515,7 @@ def execute_plan(
             outputs_by_node,
             root_inputs,
         )
+        input_previews = {name: preview_value(name, value) for name, value in inputs.items()}
         result = execute_node(
             node,
             globals_scope,
@@ -534,33 +528,13 @@ def execute_plan(
                 DISPLAY_PNG_RUN_MAX_BYTES - display_image_bytes,
             ),
         )
+        result["inputs"] = input_previews
         display_image_bytes += result.pop("_displayImageBytes", 0)
         results_by_node[node_id] = result
         executed_node_ids.append(node_id)
 
         if result["ok"]:
-            raw_outputs = result["_rawOutputs"]
-            outputs_by_node[node_id] = raw_outputs
-            del result["_rawOutputs"]
-            append_trace(
-                trace,
-                index=index,
-                node_id=node_id,
-                depends_on=step.depends_on,
-                inputs=inputs,
-                result=result,
-            )
-            if on_node_event is not None:
-                on_node_event(
-                    {
-                        "type": "node_completed",
-                        "index": index,
-                        "nodeId": node_id,
-                        "dependsOn": list(step.depends_on),
-                        "result": result,
-                    }
-                )
-            continue
+            outputs_by_node[node_id] = result.pop("_rawOutputs")
 
         append_trace(
             trace,
@@ -573,13 +547,16 @@ def execute_plan(
         if on_node_event is not None:
             on_node_event(
                 {
-                    "type": "node_failed",
+                    "type": "node_completed" if result["ok"] else "node_failed",
                     "index": index,
                     "nodeId": node_id,
                     "dependsOn": list(step.depends_on),
                     "result": result,
                 }
             )
+        if result["ok"]:
+            continue
+
         error_details = result.get("errorDetails")
         error = {
             **(
@@ -734,6 +711,16 @@ def execute_node(
             stderr_buffer.getvalue(),
             error_details=error_details,
         )
+        # Runtime functions retain authored body line numbers. Only expose a
+        # location when it maps to editable body code, never generated returns.
+        function = ast.parse(node.function_source).body[0]
+        if node.editable and isinstance(function, ast.FunctionDef) and function.body:
+            first_line = function.body[0].lineno
+            for frame, line in traceback.walk_tb(exc.__traceback__):
+                if frame.f_code.co_filename == filename and frame.f_code.co_name == node.function_name:
+                    body_line = line - first_line + 1
+                    if 1 <= body_line <= len(node.display_code.splitlines()):
+                        result["errorLocation"] = {"line": body_line, "column": 1}
         result["displays"] = displays
         result["_displayImageBytes"] = display_collector.image_bytes
         result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
@@ -913,7 +900,7 @@ def append_trace(
             "index": index,
             "nodeId": node_id,
             "dependsOn": list(depends_on),
-            "inputs": {name: preview_value(name, value) for name, value in inputs.items()},
+            "inputs": result.get("inputs", {}),
             "ok": result["ok"],
             "stdout": result["stdout"],
             "stderr": result["stderr"],

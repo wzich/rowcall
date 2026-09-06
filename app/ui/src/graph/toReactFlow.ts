@@ -8,19 +8,14 @@ export type PythonNodeData = {
   label: string;
   description?: string;
   functionName?: string;
-  nodeId: string;
   outputs: string[];
   inputs: NodePortPreview[];
   outputPreviews: Record<string, string>;
   outputOptions: PythonNodeOutputOption[];
-  editable: boolean;
   runStatus: NodeRunVisualStatus;
-  preview?: NodeCanvasPreview;
-  onCodeChange?: (nodeId: string, code: string) => void;
   onOutputsChange?: (nodeId: string, outputs: string[]) => void;
   onRunToNode?: (nodeId: string) => void;
   onVariableSelect?: (nodeId: string, variableName: string) => void;
-  onSaveDocument?: () => void;
   outputsReadOnly?: boolean;
   runToNodeDisabled?: boolean;
 };
@@ -74,19 +69,15 @@ export function toReactFlowGraph(
     nodes: graph.nodes.map((node) => ({
       id: node.id,
       type: "pythonNode",
-      // TODO: Add a "Clean up layout" canvas action that reapplies the
-      // generated layout and stores the resulting positions in the document.
       position: node.position ?? positions[node.id] ?? { x: 0, y: 0 },
       data: {
         label: getNodeLabel(node),
         description: node.description,
         functionName: node.functionName,
-        nodeId: node.id,
         outputs: node.outputs,
         inputs: getNodeInputs(graph, node.id),
         outputPreviews: {},
         outputOptions: [],
-        editable: node.editable ?? true,
         runStatus: nodeRunStatuses[node.id] ?? "idle",
       },
     })),

@@ -3,10 +3,45 @@ import type { DocumentOperation } from "./api/documents.ts";
 import {
   coalesceDocumentOperations,
   deriveRoutedOutputs,
+  documentOperationAffectsExecution,
+  getChangedOutputNodeIds,
   hasCustomManagedDownstream,
+  removeNodeAndIncidentEdges,
 } from "./documentOperations.ts";
 import type { RowcallDocumentV1 } from "./graph/documentTypes.ts";
 import { detectPureOutputRename } from "./graph/outputRename.ts";
+
+Deno.test("only executable document operations invalidate results", () => {
+  assertEquals(
+    [
+      {
+        type: "move_node",
+        nodeId: "n_test",
+        position: { x: 10, y: 20 },
+      },
+      { type: "update_node_title", nodeId: "n_test", title: "Test" },
+      {
+        type: "update_node_description",
+        nodeId: "n_test",
+        description: "A test step.",
+      },
+    ].map((operation) =>
+      documentOperationAffectsExecution(operation as DocumentOperation)
+    ),
+    [false, false, false],
+  );
+
+  assertEquals(
+    [
+      { type: "update_globals", code: "value = 1" },
+      { type: "update_node_body", nodeId: "n_test", code: "value = 2" },
+      { type: "delete_node", nodeId: "n_test" },
+    ].map((operation) =>
+      documentOperationAffectsExecution(operation as DocumentOperation)
+    ),
+    [true, true, true],
+  );
+});
 
 Deno.test("coalesceDocumentOperations cancels a new node deleted before save", () => {
   const operations: DocumentOperation[] = [
@@ -247,6 +282,76 @@ Deno.test("deriveRoutedOutputs keeps only uniquely routed source variables", () 
 
   assertEquals(deriveRoutedOutputs(document, "split"), ["test", "train"]);
   assertEquals(deriveRoutedOutputs(document, "missing"), []);
+});
+
+Deno.test("removeNodeAndIncidentEdges demotes only outputs whose final route is deleted", () => {
+  const document: RowcallDocumentV1 = {
+    version: 1,
+    nodes: [
+      {
+        id: "source",
+        code: "shared = 1\nremoved = 2",
+        runtimeCode: "compiled source",
+        outputs: ["shared", "removed"],
+      },
+      {
+        id: "other_source",
+        code: "other = 3",
+        runtimeCode: "compiled other source",
+        outputs: ["other"],
+      },
+      { id: "deleted", code: "pass", outputs: [] },
+      { id: "survivor", code: "pass", outputs: [] },
+    ],
+    edges: [
+      {
+        fromNode: "source",
+        fromOutput: "shared",
+        toNode: "deleted",
+        toInput: "shared",
+      },
+      {
+        fromNode: "source",
+        fromOutput: "shared",
+        toNode: "survivor",
+        toInput: "shared",
+      },
+      {
+        fromNode: "source",
+        fromOutput: "removed",
+        toNode: "deleted",
+        toInput: "removed",
+      },
+      {
+        fromNode: "other_source",
+        fromOutput: "other",
+        toNode: "deleted",
+        toInput: "other",
+      },
+    ],
+  };
+
+  const result = removeNodeAndIncidentEdges(document, "deleted");
+
+  assertEquals(result.nodes.map((node) => node.id), [
+    "source",
+    "other_source",
+    "survivor",
+  ]);
+  assertEquals(result.nodes[0].outputs, ["shared"]);
+  assertEquals(result.nodes[0].runtimeCode, undefined);
+  assertEquals(result.nodes[1].outputs, []);
+  assertEquals(result.nodes[1].runtimeCode, undefined);
+  assertEquals(getChangedOutputNodeIds(document, result), [
+    "source",
+    "other_source",
+  ]);
+  assertEquals(result.edges, [{
+    fromNode: "source",
+    fromOutput: "shared",
+    toNode: "survivor",
+    toInput: "shared",
+  }]);
 });
 
 Deno.test("pure output renames are tracked but ambiguous edits are not", () => {

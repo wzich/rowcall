@@ -1,8 +1,21 @@
+import type { DocumentOperation } from "./api/documents.ts";
+import { documentOperationAffectsExecution } from "./documentOperations.ts";
+
 export type DocumentReloadSnapshot = {
   editGeneration: number;
   pendingOperationCount: number;
   saveAttemptGeneration: number;
 };
+
+export function shouldPreserveExecutionSessionOnReload(options: {
+  currentSourceRevision: string;
+  loadedSourceRevision: string;
+  pendingOperations: DocumentOperation[];
+}): boolean {
+  return options.currentSourceRevision.length > 0 &&
+    options.currentSourceRevision === options.loadedSourceRevision &&
+    !options.pendingOperations.some(documentOperationAffectsExecution);
+}
 
 export function shouldAutoReloadDocument(options: {
   pendingOperationCount: number;

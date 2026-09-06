@@ -50,7 +50,7 @@ class RuntimeWorkerTests(unittest.TestCase):
     def test_session_validate_and_plan_target(self) -> None:
         session = RuntimeSession()
 
-        validation = session.validate_source(HELLO_SOURCE, DOCUMENT_PATH)
+        validation = session.inspect_source(HELLO_SOURCE, DOCUMENT_PATH)
         plan = session.plan_run(HELLO_SOURCE, DOCUMENT_PATH, target="world")
 
         self.assertTrue(validation["ok"])
@@ -64,52 +64,6 @@ class RuntimeWorkerTests(unittest.TestCase):
                 {"nodeId": "world", "dependsOn": ["hello"]},
             ],
         )
-
-    def test_worker_validate_source_success(self) -> None:
-        events = self.run_lines(
-            [
-                request(
-                    "validate_source",
-                    {"source": HELLO_SOURCE, "documentPath": DOCUMENT_PATH},
-                )
-            ]
-        )
-
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["type"], "validate_source_completed")
-        self.assertEqual(events[0]["protocolVersion"], 1)
-        self.assertTrue(events[0]["ok"])
-        self.assertEqual(events[0]["issues"], [])
-
-    def test_worker_load_document_reads_path_and_returns_app_document(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            document_path = Path(directory) / "graph.py"
-            document_path.write_text(HELLO_SOURCE)
-
-            events = self.run_lines(
-                [
-                    request(
-                        "load_document",
-                        {"documentPath": str(document_path)},
-                    )
-                ]
-            )
-
-        self.assertEqual(events[0]["type"], "load_document_completed")
-        self.assertTrue(events[0]["ok"])
-        self.assertEqual(events[0]["issues"], [])
-        self.assertEqual(events[0]["documentPath"], str(document_path.resolve()))
-        document = events[0]["document"]
-        self.assertEqual(document["version"], 1)
-        self.assertEqual(document["readOnly"], False)
-        self.assertEqual(document["nodes"][0]["id"], "hello")
-        self.assertEqual(
-            document["edges"],
-            [{"fromNode": "hello", "fromOutput": "message", "toNode": "world", "toInput": "message"}],
-        )
-        self.assertNotIn("path", document)
-        self.assertNotIn("issues", document)
-        self.assertNotIn("functionSource", document["nodes"][0])
 
     def test_worker_inspect_source_returns_app_document(self) -> None:
         events = self.run_lines(
@@ -137,22 +91,7 @@ class RuntimeWorkerTests(unittest.TestCase):
             [{"fromNode": "hello", "fromOutput": "message", "toNode": "world", "toInput": "message"}],
         )
 
-    def test_worker_render_source_echoes_valid_source_and_document(self) -> None:
-        events = self.run_lines(
-            [
-                request(
-                    "render_source",
-                    {"source": HELLO_SOURCE, "documentPath": DOCUMENT_PATH},
-                )
-            ]
-        )
-
-        self.assertEqual(events[0]["type"], "render_source_completed")
-        self.assertTrue(events[0]["ok"])
-        self.assertEqual(events[0]["source"], HELLO_SOURCE)
-        self.assertEqual(events[0]["document"]["readOnly"], False)
-
-    def test_worker_validate_candidate_source_reports_validation_issues(self) -> None:
+    def test_worker_inspect_source_reports_validation_issues(self) -> None:
         candidate_source = """
 from rowcall import node
 
@@ -170,13 +109,13 @@ def second():
         events = self.run_lines(
             [
                 request(
-                    "validate_candidate_source",
+                    "inspect_source",
                     {"source": candidate_source, "documentPath": DOCUMENT_PATH},
                 )
             ]
         )
 
-        self.assertEqual(events[0]["type"], "validate_candidate_source_completed")
+        self.assertEqual(events[0]["type"], "inspect_source_completed")
         self.assertFalse(events[0]["ok"])
         self.assertEqual(events[0]["issues"][0]["kind"], "duplicate_node_id")
         self.assertNotIn("document", events[0])
@@ -223,21 +162,6 @@ world.depends_on(hello.output("message"))
         self.assertIn('text = message + " applied"', events[0]["source"])
         self.assertEqual(events[0]["sidecarMetadata"], {"nodes": {"world": {"title": "World"}}})
         self.assertEqual(events[0]["document"]["nodes"][1]["code"], 'text = message + " applied"')
-
-    def test_worker_plan_run_target(self) -> None:
-        events = self.run_lines(
-            [
-                request(
-                    "plan_run",
-                    {"source": HELLO_SOURCE, "documentPath": DOCUMENT_PATH, "target": "world"},
-                )
-            ]
-        )
-
-        self.assertEqual(events[0]["type"], "plan_run_completed")
-        self.assertTrue(events[0]["ok"])
-        self.assertEqual(events[0]["targetNodeId"], "world")
-        self.assertEqual([step["nodeId"] for step in events[0]["plan"]["steps"]], ["hello", "world"])
 
     def test_worker_run_graph_hello_world_keeps_stdout_in_result(self) -> None:
         events = self.run_lines(
@@ -319,27 +243,19 @@ world.depends_on(hello.output("message"))
             ["run_started", "run_plan", "node_started", "node_completed", "run_completed"],
         )
 
-    def test_session_run_node_executes_fresh_through_upstream_nodes(self) -> None:
+    def test_session_run_to_node_executes_fresh_through_upstream_nodes(self) -> None:
         session = RuntimeSession()
 
-        single = session.run_node(
+        single = session.run_to_node(
             HELLO_SOURCE.replace('message = "hello"', 'message = "fresh"'),
             DOCUMENT_PATH,
             "world",
         )
 
         self.assertTrue(single["ok"])
-        self.assertEqual(single["runType"], "run_node")
+        self.assertEqual(single["runType"], "run_to_node")
         self.assertEqual(single["executedNodeIds"], ["hello", "world"])
         self.assertEqual(single["finalOutputsByNode"]["world"]["text"]["jsonValue"], "fresh world")
-
-    def test_session_clear_cache_reports_that_caching_is_disabled(self) -> None:
-        session = RuntimeSession()
-
-        self.assertEqual(
-            session.clear_session_cache(),
-            {"ok": True, "clearedEntries": 0, "cachingDisabled": True},
-        )
 
     def test_latest_result_store_replaces_only_after_success(self) -> None:
         session = RuntimeSession()
@@ -544,7 +460,7 @@ def frame():
         )
         self.assertTrue(by_value["ok"])
         self.assertEqual([row[0] for row in by_value["table"]["rows"][:3]], [0, 1, 2])
-        self.assertEqual(by_value["table"]["index"][:3], [54, 53, 52])
+        self.assertNotIn("index", by_value["table"])
 
         by_source_row = session.query_table(
             run_id="polars-run",
@@ -554,16 +470,16 @@ def frame():
             offset=0,
             sort={"kind": "index", "descending": True},
         )
-        self.assertEqual(by_source_row["table"]["index"][:3], [54, 53, 52])
+        self.assertNotIn("index", by_source_row["table"])
         self.assertEqual([row[0] for row in by_source_row["table"]["rows"][:3]], [0, 1, 2])
 
-    def test_worker_run_node_emits_fresh_upstream_events(self) -> None:
+    def test_worker_run_to_node_emits_fresh_upstream_events(self) -> None:
         session = RuntimeSession()
 
         events = self.run_lines(
             [
                 request(
-                    "run_node",
+                    "run_to_node",
                     {"source": HELLO_SOURCE, "documentPath": DOCUMENT_PATH, "target": "world"},
                 )
             ],
@@ -592,7 +508,7 @@ def frame():
         self.assertEqual(events[2]["nodeId"], "hello")
         self.assertEqual(events[4]["nodeId"], "world")
         self.assertEqual(events[5]["result"]["outputs"]["text"]["jsonValue"], "hello world")
-        self.assertEqual(events[-1]["response"]["runType"], "run_node")
+        self.assertEqual(events[-1]["response"]["runType"], "run_to_node")
         self.assertEqual(events[-1]["response"]["executedNodeIds"], ["hello", "world"])
 
     def test_worker_malformed_request_returns_error_and_continues(self) -> None:
@@ -601,7 +517,7 @@ def frame():
                 "{bad json",
                 json.dumps(
                     request(
-                        "validate_source",
+                        "inspect_source",
                         {"source": HELLO_SOURCE, "documentPath": DOCUMENT_PATH},
                         request_id="r2",
                     )
@@ -611,7 +527,7 @@ def frame():
 
         self.assertEqual(events[0]["type"], "error")
         self.assertEqual(events[0]["error"]["kind"], "malformed_json")
-        self.assertEqual(events[1]["type"], "validate_source_completed")
+        self.assertEqual(events[1]["type"], "inspect_source_completed")
         self.assertEqual(events[1]["id"], "r2")
 
     def test_worker_error_messages_are_bounded(self) -> None:

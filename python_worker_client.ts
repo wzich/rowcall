@@ -2,26 +2,15 @@ import {
   getPythonCommandEnvironment,
   resolvePythonCommand,
 } from "./runtime_config.ts";
-import type { DocumentOperation, RowcallDocumentV1 } from "./document.ts";
-import type {
-  ExecutionResponse,
-  TableQueryRequest,
-  ValidationIssue,
-} from "./types.ts";
+import type { DocumentOperation } from "./document.ts";
+import type { TableQueryRequest } from "./types.ts";
 
 export const pythonWorkerOperations = [
-  "validate_source",
   "inspect_source",
-  "render_source",
-  "validate_candidate_source",
-  "plan_run",
   "run_graph",
   "run_to_node",
-  "run_node",
   "query_table",
-  "load_document",
   "apply_operations",
-  "clear_session_cache",
   "shutdown",
 ] as const;
 
@@ -38,10 +27,6 @@ export type PythonWorkerSourceRunPayload = PythonWorkerSourcePayload & {
   inputs?: Record<string, unknown>;
 };
 
-export type PythonWorkerDocumentPayload = {
-  documentPath: string;
-};
-
 export type PythonWorkerDocumentOperationsPayload = {
   source: string;
   documentPath: string;
@@ -50,58 +35,21 @@ export type PythonWorkerDocumentOperationsPayload = {
 };
 
 export type PythonWorkerPayloadByOperation = {
-  validate_source: PythonWorkerSourcePayload;
   inspect_source: PythonWorkerSourcePayload;
-  render_source: PythonWorkerSourcePayload;
-  validate_candidate_source: PythonWorkerSourcePayload;
-  plan_run: PythonWorkerSourcePayload & { target?: string };
   run_graph: PythonWorkerSourceRunPayload;
   run_to_node: PythonWorkerSourceRunPayload & { target: string };
-  run_node: PythonWorkerSourceRunPayload & { target: string };
   query_table: TableQueryRequest;
-  load_document: PythonWorkerDocumentPayload;
   apply_operations: PythonWorkerDocumentOperationsPayload;
-  clear_session_cache: Record<string, never>;
   shutdown: Record<string, never>;
-};
-
-export type PythonWorkerExecutionEvent = PythonWorkerEvent & {
-  type:
-    | "run_started"
-    | "run_plan"
-    | "node_started"
-    | "node_completed"
-    | "node_failed"
-    | "run_completed"
-    | "run_failed";
-  response?: ExecutionResponse;
-};
-
-export type PythonWorkerDocumentEvent = PythonWorkerEvent & {
-  type:
-    | "load_document_completed"
-    | "apply_operations_completed"
-    | "render_source_completed"
-    | "validate_candidate_source_completed";
-  document?: RowcallDocumentV1;
-  source?: string;
-  sidecarMetadata?: unknown;
-  issues?: ValidationIssue[];
 };
 
 export const pythonWorkerTerminalEventTypes = [
   "error",
-  "validate_source_completed",
   "inspect_source_completed",
-  "render_source_completed",
-  "validate_candidate_source_completed",
-  "plan_run_completed",
   "run_completed",
   "run_failed",
   "table_query_completed",
-  "load_document_completed",
   "apply_operations_completed",
-  "session_cache_cleared",
   "shutdown",
 ] as const;
 
@@ -109,18 +57,11 @@ export type PythonWorkerTerminalEventType =
   typeof pythonWorkerTerminalEventTypes[number];
 
 export const pythonWorkerTerminalEventsByOperation = {
-  validate_source: ["validate_source_completed", "error"],
   inspect_source: ["inspect_source_completed", "error"],
-  render_source: ["render_source_completed", "error"],
-  validate_candidate_source: ["validate_candidate_source_completed", "error"],
-  plan_run: ["plan_run_completed", "error"],
   run_graph: ["run_completed", "run_failed", "error"],
   run_to_node: ["run_completed", "run_failed", "error"],
-  run_node: ["run_completed", "run_failed", "error"],
   query_table: ["table_query_completed", "error"],
-  load_document: ["load_document_completed", "error"],
   apply_operations: ["apply_operations_completed", "error"],
-  clear_session_cache: ["session_cache_cleared", "error"],
   shutdown: ["shutdown", "error"],
 } as const satisfies Record<PythonWorkerOperation, readonly string[]>;
 
@@ -287,28 +228,17 @@ export class PythonWorkerClient {
   async shutdown(): Promise<void> {
     const release = await this.acquire();
     try {
-      if (this.activeQueue) {
-        this.activeQueue.fail(new Error("Python worker was shut down"));
-        this.activeQueue = null;
-      }
+      await this.shutdownAcquiredWorker();
+    } finally {
+      release();
+    }
+  }
 
-      const child = this.child;
-      const writer = this.writer;
-      this.child = null;
-      this.writer = null;
-
-      const writerClosed = writer?.close().catch(() => {});
-      if (child) {
-        await terminateWorkerProcess(child);
-      }
-      if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
-
-      await settleWithDeadline([
-        this.stdoutDone ?? Promise.resolve(),
-        this.stderrDone ?? Promise.resolve(),
-      ]);
-      this.stdoutDone = null;
-      this.stderrDone = null;
+  async withWorkerStopped<T>(operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquire();
+    try {
+      await this.shutdownAcquiredWorker();
+      return await operation();
     } finally {
       release();
     }
@@ -325,6 +255,31 @@ export class PythonWorkerClient {
     );
     await previous;
     return release;
+  }
+
+  private async shutdownAcquiredWorker(): Promise<void> {
+    if (this.activeQueue) {
+      this.activeQueue.fail(new Error("Python worker was shut down"));
+      this.activeQueue = null;
+    }
+
+    const child = this.child;
+    const writer = this.writer;
+    this.child = null;
+    this.writer = null;
+
+    const writerClosed = writer?.close().catch(() => {});
+    if (child) {
+      await terminateWorkerProcess(child);
+    }
+    if (writerClosed) await raceWithDelay(writerClosed, WORKER_EXIT_WAIT_MS);
+
+    await settleWithDeadline([
+      this.stdoutDone ?? Promise.resolve(),
+      this.stderrDone ?? Promise.resolve(),
+    ]);
+    this.stdoutDone = null;
+    this.stderrDone = null;
   }
 
   private async startOperation(

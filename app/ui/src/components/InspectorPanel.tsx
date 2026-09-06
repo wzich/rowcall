@@ -1,3 +1,4 @@
+import { RunMenu } from "./RunMenu.tsx";
 import type {
   ExecutionResponse,
   ImagePreview,
@@ -8,55 +9,44 @@ import type {
   ValuePreview,
 } from "../../../../types.ts";
 import { python } from "@codemirror/lang-python";
-import { EditorView, keymap } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  gutterLineClass,
+  GutterMarker,
+  keymap,
+} from "@codemirror/view";
+import { RangeSet, StateField } from "@codemirror/state";
 import CodeMirror from "@uiw/react-codemirror";
-import { AlertTriangle, Play, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Maximize2,
+  Play,
+  Presentation,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type {
-  NodeNameChangeResult,
-  PythonEditorErrorTarget,
-  ThemeMode,
-} from "../App.tsx";
+import type { NodeNameChangeResult, ThemeMode } from "../App.tsx";
+import type { PythonEditorErrorTarget } from "../documentSaveError.ts";
 import { formatPythonType } from "../graph/pythonTypeLabels.ts";
 import type { NodeRunVisualStatus } from "../graph/toReactFlow.ts";
 import { JsonPreview, JsonPreviewThemeScope } from "./JsonPreview.tsx";
+import {
+  readPreference,
+  savePreference,
+  WorkspaceSplit,
+} from "./WorkspaceSplit.tsx";
 import { ResultTable } from "./ResultTable.tsx";
 import { resolveGraphOutputSelection } from "./graphOutputSelection.ts";
 
 type ExecutionTraceStep = NonNullable<ExecutionResponse["trace"]>[number];
 
-const inspectorMinWidth = 520;
-const inspectorMaxWidth = 900;
-const minCanvasWidth = 360;
-
-function clampInspectorWidth(width: number) {
-  if (typeof window === "undefined") {
-    return Math.min(inspectorMaxWidth, Math.max(inspectorMinWidth, width));
-  }
-
-  const viewportMaxWidth = Math.max(
-    inspectorMinWidth,
-    window.innerWidth - minCanvasWidth,
-  );
-  return Math.min(
-    inspectorMaxWidth,
-    viewportMaxWidth,
-    Math.max(inspectorMinWidth, width),
-  );
-}
-
-function getDefaultInspectorWidth() {
-  if (typeof window === "undefined") {
-    return 640;
-  }
-
-  return clampInspectorWidth(Math.min(640, window.innerWidth * 0.48));
-}
-
 export type NodeInspectorBadge = "Source" | "Sink" | "Isolated";
 
 export type NodeInspectorSelection = {
+  lastSuccessfulResult?: NodeRunResult;
   id: string;
   displayName: string;
   description: string;
@@ -69,13 +59,14 @@ export type NodeInspectorSelection = {
     source: "input" | "assigned" | "missing";
   }>;
   variablePreviews: Record<string, ValuePreview>;
+  inputSources?: Record<string, string>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   nodeLabelsById: Record<string, string>;
   badges: NodeInspectorBadge[];
 };
 
-type NodeInspectorMode = "code" | "results";
+type NodeInspectorMode = "code" | "results" | "details";
 type GraphInspectorMode = "overview" | "results";
 
 export type GraphInspectorModel = {
@@ -141,6 +132,8 @@ export type InspectorNavigationRequest =
   };
 
 type InspectorPanelProps = {
+  focused: boolean;
+  onToggleFocus: () => void;
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection | null;
   graph: GraphInspectorModel;
@@ -148,7 +141,6 @@ type InspectorPanelProps = {
   selectedNodeRunStatus: NodeRunVisualStatus;
   graphExecutionState: GraphExecutionDisplayState | null;
   isRunActive: boolean;
-  traceEnabled: boolean;
   readOnly: boolean;
   onNodeSelect: (nodeId: string) => void;
   onCodeChange: (nodeId: string, code: string) => void;
@@ -161,15 +153,41 @@ type InspectorPanelProps = {
     metadata: { description?: string },
   ) => void;
   onGlobalsCodeChange: (code: string) => void;
-  onTraceEnabledChange: (value: boolean) => void;
   onDeleteNode?: (nodeId: string) => void;
-  onRunToNode: (nodeId: string) => void;
+  onRunToNode: (nodeId: string, options?: { trace?: boolean }) => void;
   onSelectionClear: () => void;
   actionsBlocked?: boolean;
   navigationRequest?: InspectorNavigationRequest | null;
   pythonEditorError?: PythonEditorErrorTarget;
   onShowDocumentGlobals?: () => void;
 };
+
+class ErrorLineMarker extends GutterMarker {
+  override elementClass = "cm-error-gutter";
+}
+
+function errorLineExtension(line: number) {
+  const position = StateField.define<number>({
+    create: (state) =>
+      line > 0 && line <= state.doc.lines ? state.doc.line(line).from : -1,
+    update: (value, transaction) => transaction.docChanged ? -1 : value,
+  });
+  return [
+    position,
+    EditorView.decorations.compute([position], (state) => {
+      const from = state.field(position);
+      return from < 0 ? Decoration.none : Decoration.set([
+        Decoration.line({ class: "cm-error-line" }).range(from),
+      ]);
+    }),
+    gutterLineClass.compute([position], (state) => {
+      const from = state.field(position);
+      return from < 0
+        ? RangeSet.empty
+        : RangeSet.of([new ErrorLineMarker().range(from)]);
+    }),
+  ];
+}
 
 function focusEditorLocation(
   view: EditorView,
@@ -290,16 +308,14 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
               {table.columns.map((column) => (
                 <th
                   key={column.name}
+                  title={column.dtype
+                    ? `${column.name} · ${column.dtype}`
+                    : column.name}
                   className="border-b border-r border-zinc-200 px-2 py-1.5 font-medium last:border-r-0 dark:border-zinc-700"
                 >
                   <div className="max-w-44 truncate text-zinc-800 dark:text-zinc-100">
                     {column.name}
                   </div>
-                  {column.dtype && (
-                    <div className="max-w-44 truncate font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                      {column.dtype}
-                    </div>
-                  )}
                 </th>
               ))}
             </tr>
@@ -337,8 +353,10 @@ function TablePreviewBlock({ table }: { table: TablePreview }) {
       </div>
       {table.truncated && (
         <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-          Showing {table.rows.length} of {table.rowCount} rows and{" "}
-          {table.columns.length} of {table.columnCount} columns.
+          Showing {table.rows.length} of {table.rowCount}{" "}
+          rows{table.columns.length < table.columnCount
+            ? ` · ${table.columns.length} of ${table.columnCount} columns`
+            : ""}
         </p>
       )}
     </div>
@@ -395,32 +413,154 @@ function CellValue({ value }: { value: TableCellPreview }) {
 function ImagePreviewBlock({
   image,
   alt,
+  expandable = false,
 }: {
   image: ImagePreview;
   alt: string;
+  expandable?: boolean;
 }) {
+  const [expandedImage, setExpandedImage] = useState<
+    {
+      image: ImagePreview;
+      alt: string;
+    } | null
+  >(null);
+  const expandButtonRef = useRef<HTMLButtonElement>(null);
+  const imageSource = `data:${image.mimeType};base64,${image.dataBase64}`;
+  const closeExpandedImage = () => {
+    setExpandedImage(null);
+    requestAnimationFrame(() => expandButtonRef.current?.focus());
+  };
+
   return (
-    <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
-      <div className="flex max-h-[32rem] justify-center overflow-auto p-3">
-        <img
-          src={`data:${image.mimeType};base64,${image.dataBase64}`}
-          alt={alt}
-          className="h-auto max-w-full object-contain"
-        />
+    <>
+      <div className="mt-2 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+        <div className="flex max-h-[32rem] justify-center overflow-auto">
+          {expandable
+            ? (
+              <button
+                ref={expandButtonRef}
+                type="button"
+                className="group relative flex w-full cursor-zoom-in justify-center p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+                aria-label={`Expand ${alt}`}
+                title={`Expand ${alt}`}
+                onClick={() => setExpandedImage({ image, alt })}
+              >
+                <img
+                  src={imageSource}
+                  alt={alt}
+                  className="h-auto max-w-full object-contain"
+                />
+                <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded bg-zinc-950/75 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  Expand
+                </span>
+              </button>
+            )
+            : (
+              <div className="flex justify-center p-3">
+                <img
+                  src={imageSource}
+                  alt={alt}
+                  className="h-auto max-w-full object-contain"
+                />
+              </div>
+            )}
+        </div>
       </div>
-      <p className="border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-        {image.width} × {image.height} px · {formatImageSize(image.sizeBytes)}
-      </p>
-    </div>
+      {expandedImage && (
+        <ExpandedImageDialog
+          image={expandedImage.image}
+          alt={expandedImage.alt}
+          onClose={closeExpandedImage}
+        />
+      )}
+    </>
   );
 }
 
-function formatImageSize(sizeBytes: number): string {
-  if (sizeBytes < 1024) return `${sizeBytes} B`;
-  return `${(sizeBytes / 1024).toFixed(1)} KiB`;
+function ExpandedImageDialog({
+  image,
+  alt,
+  onClose,
+}: {
+  image: ImagePreview;
+  alt: string;
+  onClose: () => void;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.showModal();
+    closeButtonRef.current?.focus();
+    return () => {
+      if (dialogRef.current?.open) {
+        dialogRef.current.close();
+      }
+      if (
+        previouslyFocused instanceof HTMLElement &&
+        previouslyFocused.isConnected
+      ) {
+        previouslyFocused.focus();
+      }
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-label={`${alt} expanded image`}
+      className="m-auto w-[min(64rem,calc(100vw-3rem))] max-w-none rounded-lg bg-transparent p-0 backdrop:bg-black/45"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onMouseDown={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left || event.clientX > bounds.right ||
+          event.clientY < bounds.top || event.clientY > bounds.bottom
+        ) {
+          onClose();
+        }
+      }}
+    >
+      <div className="flex max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-950 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+        <div className="flex items-center justify-between gap-4 border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">{alt}</h2>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="shrink-0 rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            aria-label="Close expanded image"
+            onClick={onClose}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 overflow-auto p-4">
+          <img
+            src={`data:${image.mimeType};base64,${image.dataBase64}`}
+            alt={alt}
+            className="mx-auto block h-auto max-h-[calc(100vh-10rem)] max-w-full object-contain"
+          />
+        </div>
+      </div>
+    </dialog>
+  );
 }
 
-function PreviewCard({ preview }: { preview: ValuePreview }) {
+function PreviewCard({
+  preview,
+  imageExpandable = false,
+}: {
+  preview: ValuePreview;
+  imageExpandable?: boolean;
+}) {
   const typeLabel = formatPythonType(preview.type);
 
   return (
@@ -437,7 +577,13 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
         </span>
       </div>
       {preview.image
-        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        ? (
+          <ImagePreviewBlock
+            image={preview.image}
+            alt={preview.name}
+            expandable={imageExpandable}
+          />
+        )
         : preview.table
         ? <TablePreviewBlock table={preview.table} />
         : <JsonPreview preview={preview} />}
@@ -450,51 +596,87 @@ function PreviewCard({ preview }: { preview: ValuePreview }) {
   );
 }
 
+function previewUpdateTooltip(status?: NodeRunVisualStatus) {
+  if (status === "running" || status === "queued") {
+    return "Running… showing the last successful values.";
+  }
+  if (
+    status === "failed" || status === "blocked" || status === "blocked_globals"
+  ) return "This run failed. Showing the last successful values.";
+  return "Showing the last successful run. Run again to apply your changes.";
+}
+
 function FlatPreview({
   preview,
+  showName = false,
+  header,
+  previous = false,
+  runStatus,
+  provenance,
   metadataSuffix,
   interactiveTable,
+  imageExpandable = false,
 }: {
   preview: ValuePreview;
+  showName?: boolean;
+  header?: ReactNode;
+  previous?: boolean;
+  runStatus?: NodeRunVisualStatus;
+  provenance?: string;
   metadataSuffix?: ReactNode;
   interactiveTable?: {
     identity: ResultStoreIdentity;
     nodeId: string;
     outputName: string;
   };
+  imageExpandable?: boolean;
 }) {
   const typeLabel = formatPythonType(preview.type);
 
   return (
-    <div className="pt-3">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-zinc-500 dark:text-zinc-400">
-        <span title={preview.type}>{typeLabel}</span>
-        {preview.table && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span>
-              {preview.table.rowCount} rows × {preview.table.columnCount}{" "}
-              columns
+    <div>
+      <div
+        title={[preview.type, provenance].filter(Boolean).join(" · ")}
+        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {header ??
+            (showName && (
+              <span className="truncate font-mono font-semibold text-zinc-900 dark:text-zinc-100">
+                {preview.name}
+              </span>
+            ))}
+          {previous && (
+            <span
+              className="shrink-0 text-amber-800/80 dark:text-amber-200/60"
+              title={previewUpdateTooltip(runStatus)}
+            >
+              Not updated
             </span>
-          </>
-        )}
-        {preview.image && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span>
-              {preview.image.width} × {preview.image.height} px
-            </span>
-          </>
-        )}
-        {metadataSuffix && (
-          <>
-            <span aria-hidden="true">·</span>
-            {metadataSuffix}
-          </>
-        )}
+          )}
+        </div>
+        {metadataSuffix}
+        <span
+          className="ml-auto shrink-0 font-mono"
+          title={preview.table
+            ? `${preview.table.rowCount} rows × ${preview.table.columnCount} columns`
+            : preview.type}
+        >
+          {preview.table
+            ? `${preview.table.rowCount} × ${preview.table.columnCount}`
+            : preview.image
+            ? null
+            : typeLabel}
+        </span>
       </div>
       {preview.image
-        ? <ImagePreviewBlock image={preview.image} alt={preview.name} />
+        ? (
+          <ImagePreviewBlock
+            image={preview.image}
+            alt={preview.name}
+            expandable={imageExpandable}
+          />
+        )
         : preview.table
         ? interactiveTable
           ? (
@@ -525,7 +707,7 @@ function DisplayResults({ displays }: { displays: ValuePreview[] }) {
       </h4>
       <div className="mt-3 space-y-3">
         {displays.map((display, index) => (
-          <PreviewCard key={index} preview={display} />
+          <PreviewCard key={index} preview={display} imageExpandable />
         ))}
       </div>
     </section>
@@ -679,7 +861,7 @@ function GraphInspector({
       </p>
       <div
         className={[
-          "mt-3 min-h-52 flex-1 overflow-hidden rounded border dark:border-zinc-700 [&_.cm-content]:pb-6 [&_.cm-editor]:h-full [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
+          "mt-3 min-h-52 flex-1 overflow-hidden [&_.cm-content]:pb-6 [&_.cm-editor]:h-full [&_.cm-editor]:text-sm [&_.cm-scroller]:font-mono",
           globalsError ? "border-red-300" : "border-zinc-200",
         ].join(" ")}
       >
@@ -687,7 +869,12 @@ function GraphInspector({
           className="inspector-code-editor h-full"
           value={graph.globalsCode}
           height="100%"
-          extensions={[python()]}
+          extensions={[
+            python(),
+            EditorView.contentAttributes.of({
+              "aria-label": "Document globals Python code",
+            }),
+          ]}
           readOnly={readOnly}
           onCreateEditor={(view) => {
             globalsEditorRef.current = view;
@@ -804,7 +991,7 @@ function GraphRunResult({
   return (
     <div className="space-y-4">
       {executionState.freshness !== "fresh" && (
-        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+        <div className="py-2 text-xs text-amber-800 dark:text-amber-200">
           <p className="text-sm font-medium">
             {executionState.freshness === "failed_run"
               ? "Showing the previous result"
@@ -837,7 +1024,7 @@ function GraphRunResult({
       >
         {response.ok
           ? (
-            <GraphOutputTabs
+            <GraphOutputPreview
               response={response}
               freshness={executionState.freshness}
               nodeLabelsById={nodeLabelsById}
@@ -919,7 +1106,38 @@ type GraphOutputOption = {
   preview: ValuePreview;
 };
 
-function GraphOutputTabs({
+function graphOutputOptions(
+  response: ExecutionResponse,
+  nodeLabelsById: Record<string, string>,
+): GraphOutputOption[] {
+  const displayOptions = response.executedNodeIds.flatMap((nodeId) =>
+    (response.resultsByNode[nodeId]?.displays ?? []).map(
+      (preview, index) => ({
+        key: `display:${nodeId}:${index}`,
+        kind: "display" as const,
+        nodeId,
+        nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
+        name: preview.name,
+        preview,
+      }),
+    )
+  );
+  const outputOptions = response.finalNodeIds.flatMap((nodeId) =>
+    Object.entries(response.finalOutputsByNode[nodeId] ?? {}).map(
+      ([name, preview]) => ({
+        key: `output:${nodeId}:${name}`,
+        kind: "output" as const,
+        nodeId,
+        nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
+        name,
+        preview,
+      }),
+    )
+  );
+  return [...displayOptions, ...outputOptions];
+}
+
+function GraphOutputPreview({
   response,
   freshness,
   nodeLabelsById,
@@ -934,47 +1152,7 @@ function GraphOutputTabs({
   selectedKey: string;
   onSelectedKeyChange: (key: string) => void;
 }) {
-  const options = useMemo<GraphOutputOption[]>(
-    () => {
-      const displayOptions = response.executedNodeIds.flatMap((nodeId) =>
-        (response.resultsByNode[nodeId]?.displays ?? []).map(
-          (preview, index) => ({
-            key: `display:${nodeId}:${index}`,
-            kind: "display" as const,
-            nodeId,
-            nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
-            name: preview.name,
-            preview,
-          }),
-        )
-      );
-      const outputOptions = response.finalNodeIds.flatMap((nodeId) =>
-        Object.entries(response.finalOutputsByNode[nodeId] ?? {}).map(
-          ([name, preview]) => ({
-            key: `output:${nodeId}:${name}`,
-            kind: "output" as const,
-            nodeId,
-            nodeLabel: nodeLabelsById[nodeId] ?? nodeId,
-            name,
-            preview,
-          }),
-        )
-      );
-      return [...displayOptions, ...outputOptions];
-    },
-    [nodeLabelsById, response],
-  );
-  const duplicateNames = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const option of options) {
-      counts.set(option.name, (counts.get(option.name) ?? 0) + 1);
-    }
-    return new Set(
-      [...counts.entries()]
-        .filter(([, count]) => count > 1)
-        .map(([name]) => name),
-    );
-  }, [options]);
+  const options = graphOutputOptions(response, nodeLabelsById);
   const resolvedSelectedKey = resolveGraphOutputSelection(
     selectedKey,
     options.map((option) => option.key),
@@ -1005,39 +1183,11 @@ function GraphOutputTabs({
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-          Graph results
-        </h3>
-        {freshness === "fresh" && (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Fresh
-          </span>
-        )}
-      </div>
-      <div className="mt-3 flex gap-4 overflow-x-auto border-b border-zinc-200 pb-2 [scrollbar-gutter:stable] dark:border-zinc-700">
-        {options.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            className={[
-              "shrink-0 border-b-2 px-0.5 pb-2 font-mono text-xs",
-              option.key === selected.key
-                ? "border-blue-600 font-semibold text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
-                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
-            ].join(" ")}
-            onClick={() => onSelectedKeyChange(option.key)}
-          >
-            {duplicateNames.has(option.name)
-              ? `${option.nodeLabel} · ${option.name}`
-              : option.name}
-          </button>
-        ))}
-      </div>
-      <div className="py-3">
+      <div>
         <FlatPreview
+          showName
           preview={{ ...selected.preview, name: selected.name }}
+          imageExpandable={selected.kind === "display"}
           interactiveTable={response.finalOutputsByNode[selected.nodeId]?.[
               selected.name
             ] &&
@@ -1199,31 +1349,36 @@ function TraceStep({
 }
 
 function NodeInspector({
+  nameEditor,
   themeMode,
   selectedNode,
   executionState,
   runStatus,
   mode,
+  onModeChange,
   readOnly,
   actionsDisabled,
   onCodeChange,
   onNodeMetadataChange,
   onNodeSelect,
   onRunToNode,
-  traceEnabled,
-  onTraceEnabledChange,
   onDeleteNode,
   onShowDocumentGlobals,
+  onOpenCode,
   pythonEditorError,
   errorFocusRequestId,
+  selectedContent,
+  onContentSelect,
   selectedVariableName,
   onVariableSelect,
 }: {
+  nameEditor: ReactNode;
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
   mode: NodeInspectorMode;
+  onModeChange: (mode: NodeInspectorMode) => void;
   readOnly: boolean;
   actionsDisabled: boolean;
   onCodeChange: (nodeId: string, code: string) => void;
@@ -1232,13 +1387,14 @@ function NodeInspector({
     metadata: { description?: string },
   ) => void;
   onNodeSelect: (nodeId: string) => void;
-  onRunToNode: (nodeId: string) => void;
-  traceEnabled: boolean;
-  onTraceEnabledChange: (value: boolean) => void;
+  onRunToNode: (nodeId: string, options?: { trace?: boolean }) => void;
   onDeleteNode?: (nodeId: string) => void;
   onShowDocumentGlobals?: () => void;
+  onOpenCode: () => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
+  selectedContent: string;
+  onContentSelect: (content: string) => void;
   selectedVariableName: string;
   onVariableSelect: (name: string) => void;
 }) {
@@ -1254,6 +1410,8 @@ function NodeInspector({
     executionState.response.error?.phase === "document_globals";
   const extensions = useMemo(() => [
     python(),
+    EditorView.contentAttributes.of({ "aria-label": "Step Python code" }),
+    EditorView.lineWrapping,
     keymap.of([
       {
         key: "Shift-Enter",
@@ -1268,71 +1426,367 @@ function NodeInspector({
       },
     ]),
   ], [actionsDisabled, onRunToNode, selectedNode.id]);
-  if (mode === "results") {
-    return (
-      <NodeResults
-        selectedNode={selectedNode}
-        executionState={executionState}
-        runStatus={runStatus}
-        runSummary={runSummary}
-        onViewError={isBlockedByDocumentGlobals
-          ? onShowDocumentGlobals
-          : undefined}
-        traceEnabled={traceEnabled}
-        onTraceEnabledChange={onTraceEnabledChange}
-        selectedVariableName={selectedVariableName}
-        onVariableSelect={onVariableSelect}
-      />
-    );
-  }
-
+  const [runtimeFocus, setRuntimeFocus] = useState<
+    { target: PythonEditorErrorTarget; requestId: number } | null
+  >(null);
+  const currentResult = getNodeResult(executionState, selectedNode.id);
+  const snapshot = currentResult?.ok
+    ? currentResult
+    : selectedNode.lastSuccessfulResult;
+  const latestResult =
+    executionState?.status === "completed" && executionState.latestFailure
+      ? executionState.latestFailure.resultsByNode[selectedNode.id]
+      : currentResult;
+  const items = [
+    ...(latestResult?.error ? [{ id: "error", label: "Error" }] : []),
+    ...(latestResult?.displays ?? []).map((display, index) => ({
+      id: `display:${index}`,
+      label: display.name,
+    })),
+    ...(latestResult?.stdout || latestResult?.stderr ||
+        latestResult?.warnings.length
+      ? [{ id: "console", label: "Console" }]
+      : []),
+    ...(executionState?.status === "completed" &&
+        (executionState.latestFailure ?? executionState.response).trace
+      ? [{ id: "trace", label: "Trace" }]
+      : []),
+  ];
+  const codeError = pythonEditorError?.editor === "node" &&
+      pythonEditorError.nodeId === selectedNode.id
+    ? pythonEditorError
+    : runStatus === "failed" && latestResult?.errorLocation
+    ? {
+      ...latestResult.errorLocation,
+      editor: "node" as const,
+      nodeId: selectedNode.id,
+      message: latestResult.error ?? "Run failed",
+    }
+    : undefined;
+  const failureNodeId = executionState?.status === "completed"
+    ? (executionState.latestFailure ?? executionState.response).error?.nodeId
+    : undefined;
+  const codeSummary: NodeRunSummary = codeError
+    ? {
+      variant: "danger",
+      title: pythonEditorError ? "Code error" : runSummary.title,
+      detail: codeError.message,
+    }
+    : runSummary;
+  const openFailureCode = () => {
+    if (codeError) {
+      setRuntimeFocus({
+        target: codeError,
+        requestId: Date.now(),
+      });
+    }
+    onOpenCode();
+  };
+  const content = selectedContent === "variables" ||
+      items.some((item) => item.id === selectedContent)
+    ? selectedContent
+    : "variables";
   return (
-    <NodeCode
-      themeMode={themeMode}
-      selectedNode={selectedNode}
-      metadataReadOnly={metadataReadOnly}
-      codeReadOnly={codeReadOnly}
-      actionsDisabled={actionsDisabled}
-      extensions={extensions}
-      onCodeChange={onCodeChange}
-      onNodeMetadataChange={onNodeMetadataChange}
-      onDeleteNode={onDeleteNode}
-      pythonEditorError={pythonEditorError}
-      errorFocusRequestId={errorFocusRequestId}
-    />
+    <div className="inspector-body">
+      <nav className="inspector-nav" aria-label="Inspector navigation">
+        <button
+          type="button"
+          className={latestResult?.error || pythonEditorError?.editor === "node"
+            ? "code-tab-error"
+            : undefined}
+          title={latestResult?.error
+            ? "This step failed — open Code to fix it"
+            : undefined}
+          aria-pressed={mode === "code"}
+          onClick={() => onModeChange("code")}
+        >
+          Code
+        </button>
+        <button
+          type="button"
+          aria-pressed={mode === "results"}
+          onClick={() => onModeChange("results")}
+        >
+          Results
+        </button>
+        {mode === "results" && (
+          <div className="result-nav-children">
+            {selectedNode.variables.map((variable) => (
+              <button
+                type="button"
+                className="result-nav-item"
+                title={variable.name}
+                key={variable.name}
+                aria-pressed={content === "variables" &&
+                  selectedVariableName === variable.name}
+                onClick={() => {
+                  onContentSelect("variables");
+                  onVariableSelect(variable.name);
+                }}
+              >
+                <span className="truncate font-mono">{variable.name}</span>
+              </button>
+            ))}
+            {items.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className="result-nav-item"
+                title={item.label}
+                aria-label={item.id.startsWith("display:")
+                  ? `${item.label} display`
+                  : item.label}
+                aria-pressed={content === item.id}
+                onClick={() => onContentSelect(item.id)}
+              >
+                {item.id.startsWith("display:")
+                  ? (
+                    <>
+                      <span className="truncate font-mono">{item.label}</span>
+                      <Presentation
+                        aria-hidden="true"
+                        className="h-3 w-3 shrink-0 opacity-60"
+                      />
+                    </>
+                  )
+                  : item.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          aria-pressed={mode === "details"}
+          onClick={() => onModeChange("details")}
+        >
+          Details
+        </button>
+      </nav>
+      <div className="min-w-0 min-h-0 flex-1">
+        <div
+          hidden={mode !== "details"}
+          className="h-full overflow-y-auto px-5 py-3"
+        >
+          {nameEditor}
+          <div className="mt-4 text-xs text-zinc-500">Function name</div>
+          <p className="mt-1 font-mono text-sm">
+            {selectedNode.functionName ?? "Custom Python"}
+          </p>
+          <div className="space-y-4 py-3">
+            <section>
+              <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+                Description
+              </label>
+              <textarea
+                aria-label="Step description"
+                className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                value={selectedNode.description}
+                placeholder="What does this step do?"
+                readOnly={metadataReadOnly}
+                onChange={(event) =>
+                  onNodeMetadataChange(selectedNode.id, {
+                    description: event.currentTarget.value,
+                  })}
+              />
+            </section>
+
+            {onDeleteNode && (
+              <DeleteNodeAction
+                selectedNode={selectedNode}
+                disabled={actionsDisabled}
+                onDeleteNode={onDeleteNode}
+              />
+            )}
+          </div>
+        </div>
+        <div hidden={mode !== "results"} className="h-full">
+          <NodeResults
+            snapshot={snapshot}
+            selectedNode={selectedNode}
+            executionState={executionState}
+            runStatus={runStatus}
+            runSummary={runSummary}
+            onViewError={isBlockedByDocumentGlobals
+              ? onShowDocumentGlobals
+              : undefined}
+            onOpenCode={runStatus === "failed" ? openFailureCode : undefined}
+            selectedVariableName={selectedVariableName}
+            selectedContent={content}
+          />
+        </div>
+        <div hidden={mode !== "code"} className="h-full">
+          <div className="flex h-full min-h-0 flex-col">
+            {codeSummary.variant === "danger" && (
+              <NodeRunBanner
+                summary={codeSummary}
+                onLocate={codeError
+                  ? openFailureCode
+                  : failureNodeId && failureNodeId !== selectedNode.id
+                  ? () => onNodeSelect(failureNodeId)
+                  : undefined}
+                inputStatus={snapshot
+                  ? "Previous variable values are preserved."
+                  : undefined}
+                onViewError={isBlockedByDocumentGlobals
+                  ? onShowDocumentGlobals
+                  : undefined}
+              />
+            )}
+            <div className="min-h-0 flex-1">
+              <CodeWorkspace
+                snapshot={snapshot}
+                selectedNode={selectedNode}
+                runStatus={runStatus}
+              >
+                <NodeCode
+                  themeMode={themeMode}
+                  selectedNode={selectedNode}
+                  codeReadOnly={codeReadOnly}
+                  extensions={extensions}
+                  onCodeChange={onCodeChange}
+                  pythonEditorError={codeError}
+                  errorFocusRequestId={errorFocusRequestId ??
+                    runtimeFocus?.requestId}
+                />
+              </CodeWorkspace>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CodeWorkspace(
+  { snapshot, selectedNode, runStatus, children }: {
+    snapshot?: NodeRunResult;
+    selectedNode: NodeInspectorSelection;
+    runStatus: NodeRunVisualStatus;
+    children: ReactNode;
+  },
+) {
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  const inputs = snapshot?.inputs ?? {};
+  const outputs = snapshot?.outputs ?? {};
+  const pane = (
+    kind: "Input" | "Output",
+    values: Record<string, ValuePreview>,
+    selection: string,
+    choose: (name: string) => void,
+  ) => {
+    const names = Object.keys(values);
+    const name = names.includes(selection) ? selection : names[0];
+    const header = (
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="text-xs text-zinc-500">
+          {kind}s · {names.length}
+        </span>
+        {names.length > 0 && (
+          <select
+            aria-label={`Select ${kind.toLowerCase()} variable`}
+            className="min-w-0 max-w-48 truncate"
+            title={selectedNode.inputSources?.[name]}
+            value={name}
+            onChange={(event) => choose(event.target.value)}
+          >
+            {names.map((name) => (
+              <option key={name} value={name}>
+                {name}
+                {kind === "Input" && selectedNode.inputSources?.[name]
+                  ? ` · ${selectedNode.inputSources[name]}`
+                  : ""}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
+    return (
+      <section className="preview-pane" aria-label={`${kind} preview`}>
+        {name
+          ? (
+            <FlatPreview
+              preview={values[name]}
+              header={header}
+              previous={runStatus !== "completed"}
+              runStatus={runStatus}
+              provenance={kind === "Input"
+                ? `Captured before this step · from ${
+                  selectedNode.inputSources?.[name] ?? "upstream"
+                }`
+                : "Latest successful run"}
+              imageExpandable
+            />
+          )
+          : (
+            <div>
+              {header}
+              <p className="mt-6 text-sm text-zinc-500">
+                {snapshot
+                  ? `No ${kind.toLowerCase()} variables.`
+                  : "Run this step to preview its input and output values."}
+              </p>
+            </div>
+          )}
+      </section>
+    );
+  };
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1">
+        <WorkspaceSplit
+          storageKey="code-width"
+          initial={54}
+          label="Resize code and previews"
+          first={children}
+          second={
+            <WorkspaceSplit
+              vertical
+              storageKey="input-height"
+              label="Resize input and output previews"
+              first={pane("Input", inputs, input, setInput)}
+              second={pane("Output", outputs, output, setOutput)}
+            />
+          }
+        />
+      </div>
+    </div>
   );
 }
 
 function NodeCode({
   themeMode,
   selectedNode,
-  metadataReadOnly,
   codeReadOnly,
-  actionsDisabled,
   extensions,
   onCodeChange,
-  onNodeMetadataChange,
-  onDeleteNode,
   pythonEditorError,
   errorFocusRequestId,
 }: {
   themeMode: ThemeMode;
   selectedNode: NodeInspectorSelection;
-  metadataReadOnly: boolean;
   codeReadOnly: boolean;
-  actionsDisabled: boolean;
   extensions: Array<
     ReturnType<typeof python> | ReturnType<typeof keymap.of>
   >;
   onCodeChange: (nodeId: string, code: string) => void;
-  onNodeMetadataChange: (
-    nodeId: string,
-    metadata: { description?: string },
-  ) => void;
-  onDeleteNode?: (nodeId: string) => void;
   pythonEditorError?: PythonEditorErrorTarget;
   errorFocusRequestId?: number;
 }) {
+  const errorDecorations = useMemo(
+    () => pythonEditorError ? errorLineExtension(pythonEditorError.line) : [],
+    [
+      pythonEditorError?.line,
+      pythonEditorError?.message,
+      selectedNode.id,
+      errorFocusRequestId,
+    ],
+  );
+  const editorExtensions = useMemo(() => [...extensions, errorDecorations], [
+    extensions,
+    errorDecorations,
+  ]);
   const codeEditorRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
@@ -1347,29 +1801,14 @@ function NodeCode({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white dark:bg-zinc-900">
-      <section className="flex min-h-60 flex-1 flex-col border-b border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-zinc-500 dark:text-zinc-400">
-            Code
-          </h3>
-          <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-            Shift ↵ run
-          </span>
-          {pythonEditorError?.editor === "node" &&
-            pythonEditorError.nodeId === selectedNode.id && (
-            <span className="ml-auto font-mono text-[10px] font-medium text-red-700 dark:text-red-300">
-              Line {pythonEditorError.line}, column {pythonEditorError.column}:
-              {"  "}{pythonEditorError.message}
-            </span>
-          )}
-        </div>
+      <section className="flex min-h-60 flex-1 flex-col bg-white dark:bg-zinc-900">
         <div className="min-h-0 flex-1 overflow-hidden bg-zinc-50 dark:bg-zinc-950 [&_.cm-editor]:h-full [&_.cm-editor]:text-xs [&_.cm-scroller]:font-mono">
           <div data-shortcut-scope="editor" className="h-full">
             <CodeMirror
               className="inspector-code-editor h-full"
               value={selectedNode.code}
               height="100%"
-              extensions={extensions}
+              extensions={editorExtensions}
               readOnly={codeReadOnly}
               onCreateEditor={(view) => {
                 codeEditorRef.current = view;
@@ -1388,31 +1827,6 @@ function NodeCode({
           </div>
         </div>
       </section>
-      <div className="shrink-0 space-y-5 px-5 py-5">
-        <section>
-          <label className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-            Description
-          </label>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-y rounded border border-zinc-200 bg-white p-3 text-sm leading-5 text-zinc-800 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-            value={selectedNode.description}
-            placeholder="What does this step do?"
-            readOnly={metadataReadOnly}
-            onChange={(event) =>
-              onNodeMetadataChange(selectedNode.id, {
-                description: event.currentTarget.value,
-              })}
-          />
-        </section>
-
-        {onDeleteNode && (
-          <DeleteNodeAction
-            selectedNode={selectedNode}
-            disabled={actionsDisabled}
-            onDeleteNode={onDeleteNode}
-          />
-        )}
-      </div>
     </div>
   );
 }
@@ -1456,25 +1870,25 @@ function getPreviewState(
 }
 
 function NodeResults({
+  snapshot,
+  selectedContent,
   selectedNode,
   executionState,
   runStatus,
   runSummary,
   onViewError,
-  traceEnabled,
-  onTraceEnabledChange,
+  onOpenCode,
   selectedVariableName,
-  onVariableSelect,
 }: {
+  snapshot?: NodeRunResult;
+  selectedContent: string;
   selectedNode: NodeInspectorSelection;
   executionState: ExecutionDisplayState | null;
   runStatus: NodeRunVisualStatus;
   runSummary: NodeRunSummary;
   onViewError?: () => void;
-  traceEnabled: boolean;
-  onTraceEnabledChange: (value: boolean) => void;
+  onOpenCode?: () => void;
   selectedVariableName: string;
-  onVariableSelect: (name: string) => void;
 }) {
   const baseResult = getNodeResult(executionState, selectedNode.id);
   const latestFailure = executionState?.status === "completed" &&
@@ -1484,6 +1898,9 @@ function NodeResults({
   const latestAttemptResult = latestFailure?.resultsByNode[selectedNode.id] ??
     baseResult;
   const displays = latestAttemptResult?.displays ?? [];
+  const selectedDisplay = selectedContent.startsWith("display:")
+    ? displays[Number(selectedContent.slice(8))]
+    : undefined;
   const stdout = latestAttemptResult?.stdout ?? "";
   const stderr = latestAttemptResult?.stderr ?? "";
   const warnings = latestAttemptResult?.warnings ?? [];
@@ -1492,7 +1909,9 @@ function NodeResults({
       variable.name === selectedVariableName
     ) ?? selectedNode.variables[0] ?? null;
   const selectedPreview = selectedVariable
-    ? selectedNode.variablePreviews[selectedVariable.name] ?? null
+    ? selectedNode.variablePreviews[selectedVariable.name] ??
+      snapshot?.variables[selectedVariable.name] ??
+      snapshot?.outputs[selectedVariable.name] ?? null
     : null;
   const interactiveTable = selectedVariable && selectedPreview?.table &&
       selectedNode.routedOutputs.includes(selectedVariable.name) &&
@@ -1511,77 +1930,92 @@ function NodeResults({
       step.nodeId === selectedNode.id
     ) ?? null
     : null;
-  const valuesAreStale = runStatus === "stale" ||
+  const valuesAreStale = runStatus !== "completed" ||
     (executionState?.status === "completed" &&
       executionState.freshness !== "fresh");
 
   return (
-    <div className="h-full overflow-y-auto px-5 py-4">
+    <div className="node-results h-full overflow-y-auto px-5 py-3">
       <div className="space-y-4">
-        <NodeRunBanner
-          summary={runSummary}
-          onViewError={onViewError}
-        />
-        {executionState?.status === "completed" &&
-          executionState.freshness === "failed_run" && (
-          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-            <p className="text-sm font-medium">Showing previous values</p>
-            <p className="mt-1 text-xs">
-              The latest attempt failed. No partial variable values were kept.
-            </p>
+        {runSummary.variant === "danger" && (
+          <div className="result-banner">
+            <NodeRunBanner
+              summary={runSummary}
+              inputStatus={snapshot
+                ? "Previous variable values are preserved."
+                : undefined}
+              onViewError={onViewError}
+              onOpenCode={onOpenCode}
+            />
           </div>
         )}
 
-        <DisplayResults displays={displays} />
+        {(selectedContent.startsWith("display:") ||
+          selectedContent === "console" ||
+          selectedContent === "error") && (
+          <p className="text-xs text-zinc-500">
+            Latest execution attempt{latestAttemptResult?.ok === false
+              ? " · stopped before completion"
+              : ""}
+          </p>
+        )}
+        {selectedDisplay && (
+          <FlatPreview preview={selectedDisplay} showName imageExpandable />
+        )}
 
-        <VariableResults
-          variables={selectedNode.variables}
-          routedOutputs={selectedNode.routedOutputs}
-          previews={selectedNode.variablePreviews}
-          selectedName={selectedVariable?.name ?? ""}
-          runStatus={runStatus}
-          valuesAreStale={valuesAreStale}
-          onSelect={onVariableSelect}
-        >
-          {selectedVariable && selectedPreview
-            ? (
-              <FlatPreview
-                preview={{ ...selectedPreview, name: selectedVariable.name }}
-                metadataSuffix={selectedNode.routedOutputs.includes(
-                    selectedVariable.name,
-                  )
-                  ? <span>routed output</span>
-                  : <span>bounded preview</span>}
-                interactiveTable={interactiveTable}
-              />
-            )
-            : (
-              <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                {getMissingVariablePreviewMessage(
-                  selectedVariable,
-                  runStatus,
-                )}
+        {selectedContent === "variables" && (
+          <div>
+            {selectedVariable && selectedPreview
+              ? (
+                <FlatPreview
+                  showName
+                  previous={!!snapshot && valuesAreStale}
+                  runStatus={runStatus}
+                  preview={{ ...selectedPreview, name: selectedVariable.name }}
+                  interactiveTable={interactiveTable}
+                />
+              )
+              : (
+                <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  {getMissingVariablePreviewMessage(
+                    selectedVariable,
+                    runStatus,
+                  )}
+                </p>
+              )}
+          </div>
+        )}
+
+        {selectedContent === "error" && (
+          <div>
+            {latestAttemptResult?.errorLocation && (
+              <p className="mb-3 font-mono text-xs text-zinc-500">
+                {selectedNode.functionName} · line{" "}
+                {latestAttemptResult.errorLocation.line}
               </p>
             )}
-        </VariableResults>
+            <TextOutputBlock
+              title="Error"
+              value={latestAttemptResult?.error ?? "No error details."}
+              variant="danger"
+            />
+          </div>
+        )}
+        {selectedContent === "console" && (
+          <div className="space-y-4">
+            <TextOutputBlock title="Stdout" value={stdout} />
+            <WarningList warnings={warnings} />
+            <TextOutputBlock title="Stderr" value={stderr} variant="danger" />
+          </div>
+        )}
 
-        <div className="space-y-4">
-          <TextOutputBlock title="Stdout" value={stdout} />
-          <WarningList warnings={warnings} />
-          <TextOutputBlock title="Stderr" value={stderr} variant="danger" />
-        </div>
-
-        {traceStep && (
+        {selectedContent === "trace" && traceStep && (
           <NodeTraceResult
             step={traceStep}
             label={selectedNode.displayName}
             nodeLabelsById={selectedNode.nodeLabelsById}
           />
         )}
-        <TraceToggle
-          traceEnabled={traceEnabled}
-          onTraceEnabledChange={onTraceEnabledChange}
-        />
       </div>
     </div>
   );
@@ -1604,117 +2038,6 @@ function getNodeResult(
     return executionState.result;
   }
   return executionState.response.resultsByNode[nodeId] ?? null;
-}
-
-function VariableResults({
-  variables,
-  routedOutputs,
-  previews,
-  selectedName,
-  runStatus,
-  valuesAreStale,
-  onSelect,
-  children,
-}: {
-  variables: NodeInspectorSelection["variables"];
-  routedOutputs: string[];
-  previews: Record<string, ValuePreview>;
-  selectedName: string;
-  runStatus: NodeRunVisualStatus;
-  valuesAreStale: boolean;
-  onSelect: (name: string) => void;
-  children: ReactNode;
-}) {
-  return (
-    <section>
-      <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-        Variables
-      </h3>
-      {variables.length === 0
-        ? (
-          <p className="mt-2 rounded border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-            This step has no variables to inspect.
-          </p>
-        )
-        : (
-          <div className="mt-2 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700">
-            <div className="grid min-h-64 grid-cols-[minmax(140px,0.36fr)_minmax(0,1fr)]">
-              <div className="border-r border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
-                {variables.map((variable) => {
-                  const preview = previews[variable.name];
-                  const state = getVariablePreviewState(
-                    variable.source,
-                    runStatus,
-                    Boolean(preview),
-                    valuesAreStale,
-                  );
-                  const selected = variable.name === selectedName;
-                  return (
-                    <button
-                      key={variable.name}
-                      type="button"
-                      title={`${variable.name}: ${state.label}`}
-                      className={[
-                        "flex w-full items-center gap-2 border-b border-zinc-200 px-3 py-2 text-left font-mono text-xs last:border-b-0 dark:border-zinc-700",
-                        selected
-                          ? "bg-white font-semibold text-zinc-950 dark:bg-zinc-800 dark:text-zinc-100"
-                          : "text-zinc-600 hover:bg-white dark:text-zinc-300 dark:hover:bg-zinc-800/70",
-                      ].join(" ")}
-                      onClick={() => onSelect(variable.name)}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={`h-2 w-2 shrink-0 rounded-full ${state.dotClassName}`}
-                      />
-                      <span className="min-w-0 flex-1 truncate">
-                        {variable.name}
-                      </span>
-                      {routedOutputs.includes(variable.name) && (
-                        <span className="rounded bg-blue-100 px-1 py-0.5 font-sans text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                          output
-                        </span>
-                      )}
-                      <span className="sr-only">{state.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div
-                className={valuesAreStale
-                  ? "min-w-0 p-4 opacity-65"
-                  : "min-w-0 p-4"}
-              >
-                {children}
-              </div>
-            </div>
-          </div>
-        )}
-    </section>
-  );
-}
-
-function getVariablePreviewState(
-  source: NodeInspectorSelection["variables"][number]["source"],
-  runStatus: NodeRunVisualStatus,
-  hasPreview: boolean,
-  valuesAreStale: boolean,
-): { label: string; dotClassName: string } {
-  if (source === "missing") {
-    return { label: "Missing from code", dotClassName: "bg-red-500" };
-  }
-  if (runStatus === "running" || runStatus === "queued") {
-    return {
-      label: runStatus === "running" ? "Running" : "Queued",
-      dotClassName: "bg-blue-500",
-    };
-  }
-  if (valuesAreStale) {
-    return { label: "Stale", dotClassName: "bg-amber-500" };
-  }
-  if (hasPreview) {
-    return { label: "Fresh", dotClassName: "bg-emerald-500" };
-  }
-  return { label: "Unavailable", dotClassName: "bg-zinc-300" };
 }
 
 function getMissingVariablePreviewMessage(
@@ -1744,27 +2067,77 @@ type NodeRunSummary = {
 };
 
 function NodeRunBanner({
+  onLocate,
   summary,
   inputStatus,
   onViewError,
+  onOpenCode,
 }: {
+  onLocate?: () => void;
   summary: NodeRunSummary;
   inputStatus?: string;
   onViewError?: () => void;
+  onOpenCode?: () => void;
 }) {
   const variant = summary.variant;
   const styles = {
-    neutral: "border-zinc-200 bg-white text-zinc-700",
-    success: "border-emerald-200 bg-emerald-50 text-emerald-900",
-    warning: "border-amber-200 bg-amber-50 text-amber-900",
-    danger: "border-red-200 bg-red-50 text-red-900",
-    info: "border-blue-200 bg-blue-50 text-blue-900",
+    neutral: "text-zinc-600 dark:text-zinc-400",
+    success: "text-emerald-700 dark:text-emerald-400",
+    warning:
+      "bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200",
+    danger: "bg-red-50 text-red-900 dark:bg-red-950/30 dark:text-red-200",
+    info: "text-blue-700 dark:text-blue-300",
   }[variant];
 
+  if (variant === "danger") {
+    return (
+      <div className="run-failure-strip" role="alert">
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+          <p className="shrink-0 font-semibold">{summary.title}</p>
+          <div className="min-w-0 flex-1 break-words font-mono text-xs opacity-80">
+            {onLocate
+              ? (
+                <button
+                  type="button"
+                  className="text-left"
+                  title="Go to error source"
+                  onClick={onLocate}
+                >
+                  {summary.detail}
+                </button>
+              )
+              : summary.detail}
+          </div>
+          {onOpenCode && (
+            <button
+              type="button"
+              className="shrink-0 text-xs font-medium underline decoration-current/40 underline-offset-4"
+              onClick={onOpenCode}
+            >
+              Open Code
+            </button>
+          )}
+          {onViewError && (
+            <button
+              type="button"
+              className="shrink-0 text-xs font-medium underline decoration-current/40 underline-offset-4"
+              onClick={onViewError}
+            >
+              View Document Globals
+            </button>
+          )}
+        </div>
+        {inputStatus && (
+          <p className="mt-1 text-xs opacity-60">{inputStatus}</p>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className={`rounded border px-3 py-2 text-sm ${styles}`}>
+    <div className={`px-3 py-2 text-sm ${styles}`}>
       <div className="flex items-start gap-2">
-        {(variant === "warning" || variant === "danger") && (
+        {variant === "warning" && (
           <AlertTriangle
             aria-hidden="true"
             className="mt-0.5 h-4 w-4 shrink-0"
@@ -1784,6 +2157,15 @@ function NodeRunBanner({
               onClick={onViewError}
             >
               View Document Globals
+            </button>
+          )}
+          {onOpenCode && (
+            <button
+              type="button"
+              className="mt-2 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
+              onClick={onOpenCode}
+            >
+              Open Code
             </button>
           )}
         </div>
@@ -1958,29 +2340,6 @@ function getNodeRunSummary(
   };
 }
 
-function TraceToggle({
-  traceEnabled,
-  onTraceEnabledChange,
-}: {
-  traceEnabled: boolean;
-  onTraceEnabledChange: (value: boolean) => void;
-}) {
-  return (
-    <section className="border-t border-zinc-200 pt-4">
-      <label className="flex items-center gap-2 text-sm text-zinc-700">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-zinc-300"
-          checked={traceEnabled}
-          onChange={(event) =>
-            onTraceEnabledChange(event.currentTarget.checked)}
-        />
-        Trace
-      </label>
-    </section>
-  );
-}
-
 function DeleteNodeAction({
   selectedNode,
   disabled,
@@ -1991,10 +2350,10 @@ function DeleteNodeAction({
   onDeleteNode: (nodeId: string) => void;
 }) {
   return (
-    <section className="border-t border-zinc-200 pt-4">
+    <section>
       <button
         type="button"
-        className="inline-flex w-full items-center justify-center gap-2 rounded border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
+        className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-40"
         disabled={disabled}
         onClick={() => onDeleteNode(selectedNode.id)}
       >
@@ -2005,83 +2364,9 @@ function DeleteNodeAction({
   );
 }
 
-function GraphInspectorTabs({
-  mode,
-  onModeChange,
-}: {
-  mode: GraphInspectorMode;
-  onModeChange: (mode: GraphInspectorMode) => void;
-}) {
-  const tabs: Array<{ id: GraphInspectorMode; label: string }> = [
-    { id: "overview", label: "Overview" },
-    { id: "results", label: "Results" },
-  ];
-
-  return (
-    <div className="flex h-11 shrink-0 items-end gap-6 border-b border-zinc-200 px-5 dark:border-zinc-800">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={`border-b-2 pb-2.5 text-sm font-medium ${
-            tab.id === mode
-              ? "border-blue-600 text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
-              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-          }`}
-          onClick={() => onModeChange(tab.id)}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function NodeInspectorTabs({
-  mode,
-  runStatus,
-  onModeChange,
-}: {
-  mode: NodeInspectorMode;
-  runStatus: NodeRunVisualStatus;
-  onModeChange: (mode: NodeInspectorMode) => void;
-}) {
-  const state = getPreviewState(runStatus, runStatus === "completed");
-  const tabs: Array<{ id: NodeInspectorMode; label: string }> = [
-    { id: "code", label: "Code" },
-    { id: "results", label: "Results" },
-  ];
-
-  return (
-    <div className="flex h-11 shrink-0 items-end gap-6 border-b border-zinc-200 px-5 dark:border-zinc-800">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={`border-b-2 pb-2.5 text-sm font-medium ${
-            tab.id === mode
-              ? "border-blue-600 text-zinc-950 dark:border-blue-400 dark:text-zinc-100"
-              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-          }`}
-          onClick={() => onModeChange(tab.id)}
-        >
-          {tab.label}
-        </button>
-      ))}
-      <div className="flex-1" />
-      {state && state.label !== "Fresh" && (
-        <span
-          className={`mb-3 inline-flex items-center gap-1.5 text-[11px] font-medium ${state.className}`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${state.dotClassName}`} />
-          {state.label}
-        </span>
-      )}
-    </div>
-  );
-}
-
 export function InspectorPanel({
+  focused,
+  onToggleFocus,
   themeMode,
   selectedNode,
   graph,
@@ -2089,14 +2374,12 @@ export function InspectorPanel({
   selectedNodeRunStatus,
   graphExecutionState,
   isRunActive,
-  traceEnabled,
   readOnly,
   onNodeSelect,
   onCodeChange,
   onNodeNameChange,
   onNodeMetadataChange,
   onGlobalsCodeChange,
-  onTraceEnabledChange,
   onDeleteNode,
   onRunToNode,
   onSelectionClear,
@@ -2113,29 +2396,33 @@ export function InspectorPanel({
     isSelectedNodeRunning;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const handledNavigationRequestIdRef = useRef<number | null>(null);
-  const dragStartXRef = useRef(0);
-  const dragStartWidthRef = useRef(0);
-  const [inspectorWidth, setInspectorWidth] = useState(
-    getDefaultInspectorWidth,
+  const [inspectorMode, setMode] = useState<NodeInspectorMode>(() =>
+    readPreference("inspector-mode", "results") === "details"
+      ? "details"
+      : readPreference("inspector-mode", "results") === "code"
+      ? "code"
+      : "results"
   );
-  const [isResizing, setIsResizing] = useState(false);
-  const [inspectorMode, setInspectorMode] = useState<NodeInspectorMode>(
-    "code",
-  );
+  const setInspectorMode = (mode: NodeInspectorMode) => {
+    setMode(mode);
+    savePreference("inspector-mode", mode);
+  };
   const [graphInspectorMode, setGraphInspectorMode] = useState<
     GraphInspectorMode
   >("overview");
   const [selectedGraphOutputKey, setSelectedGraphOutputKey] = useState("");
+  const [selectedContent, setSelectedContent] = useState("variables");
   const [nodeNameDraft, setNodeNameDraft] = useState(
     selectedNode?.displayName ?? "",
   );
   const [nodeNameError, setNodeNameError] = useState<string | null>(null);
   const [selectedVariableName, setSelectedVariableName] = useState(
-    selectedNode?.variables[0]?.name ?? "",
+    selectedNode?.routedOutputs[0] ?? selectedNode?.variables[0]?.name ?? "",
   );
 
   useEffect(() => {
     scrollContainerRef.current?.scrollTo({ top: 0 });
+    if (!selectedNode) setSelectedContent("variables");
   }, [selectedNode?.id]);
 
   useEffect(() => {
@@ -2162,6 +2449,7 @@ export function InspectorPanel({
         navigationRequest.variableName
       ) {
         setSelectedVariableName(navigationRequest.variableName);
+        setSelectedContent("variables");
       }
       scrollContainerRef.current?.scrollTo({ top: 0 });
       return;
@@ -2202,114 +2490,64 @@ export function InspectorPanel({
       ) {
         return current;
       }
-      return selectedNode?.variables.find((variable) =>
-        selectedNode.variablePreviews[variable.name]?.image
-      )?.name ?? selectedNode?.variables.find((variable) =>
-        selectedNode.variablePreviews[variable.name]?.table
-      )?.name ?? selectedNode?.variables[0]?.name ?? "";
+      return selectedNode?.routedOutputs[0] ??
+        selectedNode?.variables.find((variable) =>
+          selectedNode.variablePreviews[variable.name]?.image
+        )?.name ?? selectedNode?.variables.find((variable) =>
+          selectedNode.variablePreviews[variable.name]?.table
+        )?.name ?? selectedNode?.variables[0]?.name ?? "";
     });
   }, [selectedNode]);
 
-  useEffect(() => {
-    const handleWindowResize = () => {
-      setInspectorWidth((currentWidth) => clampInspectorWidth(currentWidth));
-    };
-
-    window.addEventListener("resize", handleWindowResize);
-    return () => window.removeEventListener("resize", handleWindowResize);
-  }, []);
-
-  useEffect(() => {
-    if (!isResizing) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const dragDelta = dragStartXRef.current - event.clientX;
-      setInspectorWidth(
-        clampInspectorWidth(dragStartWidthRef.current + dragDelta),
-      );
-    };
-    const stopResizing = () => setIsResizing(false);
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", stopResizing);
-    window.addEventListener("pointercancel", stopResizing);
-
-    return () => {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", stopResizing);
-      window.removeEventListener("pointercancel", stopResizing);
-    };
-  }, [isResizing]);
+  const graphOptions = graphExecutionState?.status === "completed" &&
+      graphExecutionState.response.ok
+    ? graphOutputOptions(graphExecutionState.response, graph.nodeLabelsById)
+    : [];
+  const resolvedGraphKey = resolveGraphOutputSelection(
+    selectedGraphOutputKey,
+    graphOptions.map((option) => option.key),
+  );
+  const headerSummary = selectedNode
+    ? getNodeRunSummary(
+      selectedNode,
+      selectedNodeExecutionState,
+      selectedNodeRunStatus,
+    )
+    : null;
 
   return (
     <JsonPreviewThemeScope
       themeMode={themeMode}
-      className="relative flex h-full shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
-      style={{ width: inspectorWidth }}
+      className="inspector-workspace relative flex h-full min-h-0 w-full flex-col bg-white dark:bg-zinc-900"
     >
-      <button
-        type="button"
-        aria-label="Resize inspector"
-        aria-orientation="vertical"
-        className="absolute inset-y-0 left-0 z-10 w-2 -translate-x-1 cursor-col-resize touch-none border-l border-transparent transition-colors hover:border-zinc-400 focus:border-zinc-500 focus:outline-none dark:hover:border-zinc-500 dark:focus:border-zinc-400"
-        onPointerDown={(event) => {
-          event.preventDefault();
-          dragStartXRef.current = event.clientX;
-          dragStartWidthRef.current = inspectorWidth;
-          setIsResizing(true);
-        }}
-      />
-      <div className="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+      <div className="inspector-heading border-b border-zinc-200 px-5 py-2 dark:border-zinc-800">
         {selectedNode
           ? (
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                <input
-                  className={[
-                    "w-full truncate rounded border bg-transparent px-0 py-0.5 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:bg-zinc-800",
-                    nodeNameError
-                      ? "border-red-300 focus:border-red-400 dark:border-red-800 dark:focus:border-red-700"
-                      : "border-transparent focus:border-zinc-300 dark:focus:border-zinc-700",
-                  ].join(" ")}
-                  value={nodeNameDraft}
-                  placeholder={selectedNode.displayName}
-                  readOnly={isNodeNameReadOnly || inspectorMode !== "code"}
-                  onChange={(event) => {
-                    if (isNodeNameReadOnly) {
-                      return;
-                    }
-                    const nextName = event.currentTarget.value;
-                    setNodeNameDraft(nextName);
-                    const result = onNodeNameChange(
-                      selectedNode.id,
-                      nextName,
-                    );
-                    setNodeNameError(result.ok ? null : result.message);
-                  }}
-                />
-                {nodeNameError && (
-                  <p className="mt-1 text-xs font-medium text-red-700 dark:text-red-400">
-                    {nodeNameError}
-                  </p>
-                )}
+                <h2 className="truncate text-xl font-semibold">
+                  {selectedNode.displayName}
+                </h2>
                 <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span
-                    className="truncate font-mono text-zinc-400 dark:text-zinc-500"
-                    title={selectedNode.functionName ?? ""}
+                    role="status"
+                    title={headerSummary?.detail}
+                    className={headerSummary?.variant === "success"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : ""}
                   >
-                    {selectedNode.functionName ?? "custom Python"}
+                    {headerSummary?.title}
                   </span>
-                  <span className="h-0.5 w-0.5 shrink-0 rounded-full bg-zinc-400" />
-                  <span className="shrink-0">Python</span>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <button
+                  className="inspector-focus"
+                  type="button"
+                  onClick={onToggleFocus}
+                >
+                  {focused ? "Show graph" : "Focus inspector"}
+                </button>
                 <button
                   type="button"
                   title="Run through step (Shift+Enter)"
@@ -2324,6 +2562,10 @@ export function InspectorPanel({
                   />
                   {isAnyRunBlockingNodeActions ? "Running…" : "Run"}
                 </button>
+                <RunMenu
+                  disabled={areNodeActionsDisabled}
+                  onTrace={() => onRunToNode(selectedNode.id, { trace: true })}
+                />
                 <button
                   type="button"
                   aria-label="Show graph overview"
@@ -2340,10 +2582,24 @@ export function InspectorPanel({
             </div>
           )
           : (
-            <div className="flex min-h-8 items-center">
+            <div className="flex min-h-8 items-center justify-between">
               <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">
                 Graph overview
+                {graphExecutionState?.status === "completed" &&
+                  graphExecutionState.freshness === "fresh" &&
+                  graphExecutionState.response.ok && (
+                  <span className="ml-3 normal-case text-emerald-600 dark:text-emerald-400">
+                    Fresh
+                  </span>
+                )}
               </p>
+              <button
+                className="inspector-focus"
+                type="button"
+                onClick={onToggleFocus}
+              >
+                {focused ? "Show graph" : "Focus inspector"}
+              </button>
             </div>
           )}
       </div>
@@ -2351,47 +2607,118 @@ export function InspectorPanel({
       {selectedNode
         ? (
           <>
-            <NodeInspectorTabs
-              mode={inspectorMode}
-              runStatus={selectedNodeRunStatus}
-              onModeChange={setInspectorMode}
-            />
-            <div className="min-h-0 flex-1 overflow-auto">
+            <div className="min-h-0 flex-1 overflow-hidden">
               <NodeInspector
+                nameEditor={
+                  <section>
+                    <label className="text-xs text-zinc-500">Step name</label>
+                    {" "}
+                    <input
+                      className={[
+                        "w-full truncate rounded border bg-transparent px-0 py-0.5 text-xl font-semibold text-zinc-950 outline-none placeholder:text-zinc-400 focus:bg-white focus:px-2 dark:text-zinc-100 dark:placeholder:text-zinc-600 dark:focus:bg-zinc-800",
+                        nodeNameError
+                          ? "border-red-300 focus:border-red-400 dark:border-red-800 dark:focus:border-red-700"
+                          : "border-transparent focus:border-zinc-300 dark:focus:border-zinc-700",
+                      ].join(" ")}
+                      value={nodeNameDraft}
+                      placeholder={selectedNode.displayName}
+                      aria-label="Step name"
+                      readOnly={isNodeNameReadOnly}
+                      onChange={(event) => {
+                        if (isNodeNameReadOnly) {
+                          return;
+                        }
+                        const nextName = event.currentTarget.value;
+                        setNodeNameDraft(nextName);
+                        const result = onNodeNameChange(
+                          selectedNode.id,
+                          nextName,
+                        );
+                        setNodeNameError(result.ok ? null : result.message);
+                      }}
+                    />
+                    {nodeNameError && (
+                      <p className="mt-1 text-xs font-medium text-red-700 dark:text-red-400">
+                        {nodeNameError}
+                      </p>
+                    )}
+                  </section>
+                }
                 themeMode={themeMode}
                 selectedNode={selectedNode}
                 executionState={selectedNodeExecutionState}
                 runStatus={selectedNodeRunStatus}
                 mode={inspectorMode}
+                onModeChange={setInspectorMode}
                 readOnly={readOnly}
                 actionsDisabled={areNodeActionsDisabled}
                 onCodeChange={onCodeChange}
                 onNodeMetadataChange={onNodeMetadataChange}
                 onNodeSelect={onNodeSelect}
                 onRunToNode={onRunToNode}
-                traceEnabled={traceEnabled}
-                onTraceEnabledChange={onTraceEnabledChange}
                 onDeleteNode={onDeleteNode}
                 onShowDocumentGlobals={onShowDocumentGlobals}
+                onOpenCode={() => setInspectorMode("code")}
                 pythonEditorError={pythonEditorError}
                 errorFocusRequestId={navigationRequest?.target === "node_code"
                   ? navigationRequest.requestId
                   : undefined}
                 selectedVariableName={selectedVariableName}
+                selectedContent={selectedContent}
+                onContentSelect={setSelectedContent}
                 onVariableSelect={setSelectedVariableName}
               />
             </div>
           </>
         )
         : (
-          <>
-            <GraphInspectorTabs
-              mode={graphInspectorMode}
-              onModeChange={setGraphInspectorMode}
-            />
+          <div className="inspector-body min-h-0 flex-1">
+            <nav
+              className="inspector-nav"
+              aria-label="Graph inspector navigation"
+            >
+              <button
+                type="button"
+                aria-pressed={graphInspectorMode === "overview"}
+                onClick={() => setGraphInspectorMode("overview")}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                aria-pressed={graphInspectorMode === "results"}
+                onClick={() => setGraphInspectorMode("results")}
+              >
+                Results
+              </button>
+              {graphInspectorMode === "results" && (
+                <div className="result-nav-children">
+                  {graphOptions.map((option) => (
+                    <button
+                      type="button"
+                      key={option.key}
+                      aria-pressed={resolvedGraphKey === option.key}
+                      className="result-nav-item"
+                      title={`${option.name} · ${option.nodeLabel}`}
+                      onClick={() => setSelectedGraphOutputKey(option.key)}
+                    >
+                      <span className="block truncate font-mono">
+                        {option.name}
+                      </span>
+                      {option.kind === "display" && (
+                        <Presentation
+                          aria-hidden="true"
+                          className="h-3 w-3 shrink-0 opacity-60"
+                        />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </nav>
             <div
               ref={scrollContainerRef}
-              className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4"
+              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-5 py-3"
             >
               <div className="min-h-0 flex-1">
                 <GraphInspector
@@ -2412,16 +2739,8 @@ export function InspectorPanel({
                     : undefined}
                 />
               </div>
-              {graphInspectorMode === "results" && (
-                <div className="mt-4">
-                  <TraceToggle
-                    traceEnabled={traceEnabled}
-                    onTraceEnabledChange={onTraceEnabledChange}
-                  />
-                </div>
-              )}
             </div>
-          </>
+          </div>
         )}
     </JsonPreviewThemeScope>
   );

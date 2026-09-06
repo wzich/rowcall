@@ -20,18 +20,11 @@ Deno.test("Python worker bootstrap creates a POSIX process group", () => {
 
 Deno.test("Python worker protocol declares document and run operations", () => {
   assertEquals([...pythonWorkerOperations], [
-    "validate_source",
     "inspect_source",
-    "render_source",
-    "validate_candidate_source",
-    "plan_run",
     "run_graph",
     "run_to_node",
-    "run_node",
     "query_table",
-    "load_document",
     "apply_operations",
-    "clear_session_cache",
     "shutdown",
   ]);
 });
@@ -79,7 +72,7 @@ for await (const chunk of Deno.stdin.readable) {
     await pending;
   }
 
-  console.log(JSON.stringify({ type: "validate_source_completed", ok: true }));
+  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
 }
 `,
     );
@@ -106,11 +99,11 @@ exec deno run --allow-read '${workerPath}' "$@"
 
       await stream.return(undefined);
 
-      const finalEvent = await client.requestFinalEvent("validate_source", {
+      const finalEvent = await client.requestFinalEvent("inspect_source", {
         source: "",
         documentPath: "/tmp/cancel.py",
       });
-      assertEquals(finalEvent.type, "validate_source_completed");
+      assertEquals(finalEvent.type, "inspect_source_completed");
     } finally {
       await client.shutdown();
       configurePythonRuntime({});
@@ -208,7 +201,7 @@ if request["operation"] == "run_graph":
     time.sleep(60)
 else:
     time.sleep(3)
-    print(json.dumps({"type": "validate_source_completed", "ok": True}), flush=True)
+    print(json.dumps({"type": "inspect_source_completed", "ok": True}), flush=True)
 `,
     );
     const wrapper = `${directory}/python-worker-generation-test`;
@@ -232,11 +225,11 @@ else:
       assertEquals((await stream.next()).value?.type, "run_started");
       await stream.return(undefined);
 
-      const replacement = await client.requestFinalEvent("validate_source", {
+      const replacement = await client.requestFinalEvent("inspect_source", {
         source: "",
         documentPath: "/tmp/replacement.py",
       });
-      assertEquals(replacement.type, "validate_source_completed");
+      assertEquals(replacement.type, "inspect_source_completed");
     } finally {
       await client.shutdown();
       configurePythonRuntime({});
@@ -309,7 +302,7 @@ for await (const chunk of Deno.stdin.readable) {
     await pending;
   }
 
-  console.log(JSON.stringify({ type: "validate_source_completed", ok: true }));
+  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
 }
 `,
     );
@@ -344,12 +337,89 @@ exec deno run --allow-read '${workerPath}' "$@"
         "Python worker operation was canceled",
       );
 
-      const finalEvent = await client.requestFinalEvent("validate_source", {
+      const finalEvent = await client.requestFinalEvent("inspect_source", {
         source: "",
         documentPath: "/tmp/cancel.py",
       });
-      assertEquals(finalEvent.type, "validate_source_completed");
+      assertEquals(finalEvent.type, "inspect_source_completed");
     } finally {
+      await client.shutdown();
+      configurePythonRuntime({});
+    }
+  },
+);
+
+Deno.test(
+  "PythonWorkerClient keeps requests queued while maintenance holds the stopped worker",
+  async () => {
+    const directory = await Deno.makeTempDir();
+    const workerPath = `${directory}/fake_worker.ts`;
+    const commandPath = `${directory}/fake_python_worker`;
+
+    await Deno.writeTextFile(
+      workerPath,
+      `
+const decoder = new TextDecoder();
+let buffer = "";
+
+for await (const chunk of Deno.stdin.readable) {
+  buffer += decoder.decode(chunk, { stream: true });
+  const lineEnd = buffer.indexOf("\\n");
+  if (lineEnd < 0) continue;
+  buffer = buffer.slice(lineEnd + 1);
+  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
+}
+`,
+    );
+    await Deno.writeTextFile(
+      commandPath,
+      `#!/bin/sh
+exec deno run --allow-read '${workerPath}' "$@"
+`,
+    );
+    await Deno.chmod(commandPath, 0o755);
+
+    configurePythonRuntime({ command: commandPath });
+    const client = new PythonWorkerClient();
+    let releaseMaintenance!: () => void;
+    const maintenanceReleased = new Promise<void>((resolve) => {
+      releaseMaintenance = resolve;
+    });
+    let maintenanceStarted!: () => void;
+    const maintenanceStart = new Promise<void>((resolve) => {
+      maintenanceStarted = resolve;
+    });
+
+    try {
+      await client.requestFinalEvent("inspect_source", {
+        source: "",
+        documentPath: "/tmp/before-maintenance.py",
+      });
+
+      const maintenance = client.withWorkerStopped(async () => {
+        maintenanceStarted();
+        await maintenanceReleased;
+      });
+      await maintenanceStart;
+
+      let requestSettled = false;
+      const queuedRequest = client.requestFinalEvent("inspect_source", {
+        source: "",
+        documentPath: "/tmp/after-maintenance.py",
+      }).finally(() => {
+        requestSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertEquals(requestSettled, false);
+
+      releaseMaintenance();
+      await maintenance;
+      assertEquals(
+        (await queuedRequest).type,
+        "inspect_source_completed",
+      );
+    } finally {
+      releaseMaintenance();
       await client.shutdown();
       configurePythonRuntime({});
     }

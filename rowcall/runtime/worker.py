@@ -74,23 +74,13 @@ def handle_request(
         return [_event("shutdown", request_id, {"ok": True})], True
 
     if operation not in {
-        "load_document",
-        "validate_source",
         "inspect_source",
-        "render_source",
-        "validate_candidate_source",
         "apply_operations",
-        "plan_run",
         "run_graph",
         "run_to_node",
-        "run_node",
         "query_table",
-        "clear_session_cache",
     }:
         return [_error_event(request_id, "unknown_operation", f"Unknown operation: {operation}")], False
-
-    if operation == "clear_session_cache":
-        return [_event("session_cache_cleared", request_id, session.clear_session_cache())], False
 
     if operation == "query_table":
         for field in ("runId", "documentRevision", "nodeId", "outputName"):
@@ -132,32 +122,14 @@ def handle_request(
 
     document_path = payload["documentPath"]
 
-    if operation == "load_document":
-        return [_event("load_document_completed", request_id, session.load_document(document_path))], False
-
     source_error = _require_text(payload, "source")
     if source_error:
         return [_error_event(request_id, "invalid_request", source_error)], False
 
     source = payload["source"]
 
-    if operation == "validate_source":
-        return [_event("validate_source_completed", request_id, session.validate_source(source, document_path))], False
-
     if operation == "inspect_source":
         return [_event("inspect_source_completed", request_id, session.inspect_source(source, document_path))], False
-
-    if operation == "render_source":
-        return [_event("render_source_completed", request_id, session.render_source(source, document_path))], False
-
-    if operation == "validate_candidate_source":
-        return [
-            _event(
-                "validate_candidate_source_completed",
-                request_id,
-                session.validate_candidate_source(source, document_path),
-            )
-        ], False
 
     if operation == "apply_operations":
         operations = payload.get("operations")
@@ -176,12 +148,6 @@ def handle_request(
             )
         ], False
 
-    if operation == "plan_run":
-        target = payload.get("target")
-        if target is not None and not isinstance(target, str):
-            return [_error_event(request_id, "invalid_request", "Request field 'target' must be a string")], False
-        return [_event("plan_run_completed", request_id, session.plan_run(source, document_path, target=target))], False
-
     if operation == "run_graph":
         return _run_events(request_id, "run_graph", source, document_path, None, payload, session, emit_event), False
 
@@ -190,12 +156,6 @@ def handle_request(
         if not isinstance(target, str) or not target:
             return [_error_event(request_id, "invalid_request", "Request field 'target' must be a non-empty string")], False
         return _run_events(request_id, "run_to_node", source, document_path, target, payload, session, emit_event), False
-
-    if operation == "run_node":
-        target = payload.get("target")
-        if not isinstance(target, str) or not target:
-            return [_error_event(request_id, "invalid_request", "Request field 'target' must be a non-empty string")], False
-        return _run_events(request_id, "run_node", source, document_path, target, payload, session, emit_event), False
 
     raise AssertionError(f"Unhandled operation: {operation}")
 
@@ -243,15 +203,7 @@ def _run_events(
         **({"run_id": run_id} if run_id is not None else {}),
     }
 
-    if run_type == "run_node":
-        assert target is not None
-        run_result = session.run_node(
-            source,
-            document_path,
-            target,
-            **run_options,
-        )
-    elif target is not None:
+    if target is not None:
         run_result = session.run_to_node(
             source,
             document_path,

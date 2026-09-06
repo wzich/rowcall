@@ -15,16 +15,21 @@ import {
   readPythonDocumentSourceAtRevision,
 } from "./python_document.ts";
 import {
-  clearSourceRuntimeSessionCache,
   getPythonEnvironmentInfo,
   querySourceRuntimeTable,
+  resolvePythonCommand,
   runSourceGraph,
-  runSourceSingleNode,
   runSourceToNode,
+  shutdownSourceRuntimeSession,
   streamSourceRunGraph,
-  streamSourceRunSingleNode,
   streamSourceRunToNode,
+  withStoppedSourceRuntimeSession,
 } from "./executor.ts";
+import {
+  inspectProjectEnvironment,
+  ProjectEnvironmentSyncError,
+  syncProjectEnvironment,
+} from "./project_environment.ts";
 import { configurePythonRuntime } from "./runtime_config.ts";
 import { hasExplicitRunInputs } from "./run_inputs.ts";
 import { parseStartupOptions } from "./startup_args.ts";
@@ -32,11 +37,14 @@ import { parseStartupOptions } from "./startup_args.ts";
 export const app = new Hono();
 let uiDistPath: string | URL = "app/ui/dist";
 let activeDocumentPath = "";
+let activeEnvironmentDocumentPath = "";
+let activeEnvironmentSync: Promise<unknown> | null = null;
 let serverSecurity: RowcallServerSecurity = {
   hostname: "127.0.0.1",
   port: 8000,
   authToken: "secret-token",
 };
+export const maxImportedFileBytes = 100 * 1024 * 1024;
 // Padded SSE comments keep small fetch-stream chunks moving through browsers
 // and intermediaries while a long-running node is not producing real events.
 const executionStreamInitialPaddingBytes = 2048;
@@ -51,8 +59,12 @@ def start():
     return {}
 `;
 
-export function setActiveDocumentPathForTests(path: string): void {
+export function setActiveDocumentPathForTests(
+  path: string,
+  environmentPath = path,
+): void {
   activeDocumentPath = path;
+  activeEnvironmentDocumentPath = environmentPath;
 }
 export type RowcallServerOptions = {
   uiDistPath?: string | URL;
@@ -97,6 +109,9 @@ export async function startRowcallServer(
   await ensureActiveDocumentExists(startupOptions.documentPath, {
     createIfMissing: createActiveDocumentIfMissing,
   });
+  activeEnvironmentDocumentPath = await resolveDocumentLaunchPath(
+    startupOptions.documentPath,
+  );
   activeDocumentPath = await Deno.realPath(startupOptions.documentPath);
   console.info(`Rowcall document: ${activeDocumentPath}`);
   console.info(
@@ -136,9 +151,15 @@ type ApiError = {
     | "invalid_json"
     | "invalid_request"
     | "node_not_found"
+    | "environment_not_managed"
+    | "environment_sync_error"
+    | "environment_sync_in_progress"
+    | "runtime_restart_error"
     | "runtime_inspection_error"
     | "document_decode_error"
     | "document_write_error"
+    | "file_too_large"
+    | "file_write_error"
     | "stale_document"
     | "validation_error";
   message: string;
@@ -237,12 +258,11 @@ function requiresAuthToken(method: string, pathname: string): boolean {
 
   return [
     "/document",
-    "/run-node",
     "/run-to-node",
     "/run-graph",
     "/results",
     "/runtime/python",
-    "/runtime-session/clear-cache",
+    "/runtime/environment",
   ].some((apiPath) =>
     pathname === apiPath || pathname.startsWith(`${apiPath}/`)
   );
@@ -393,6 +413,14 @@ function graphPayloadWithoutSourceError(): ApiErrorResponse {
   });
 }
 
+function environmentSyncInProgressError(): ApiErrorResponse {
+  return errorResponse({
+    kind: "environment_sync_in_progress",
+    message:
+      "The project environment is being updated. Try again when the update finishes.",
+  });
+}
+
 function hasGraphPayloadWithoutSource(body: unknown): boolean {
   if (!body || typeof body !== "object") {
     return false;
@@ -412,6 +440,136 @@ function getParentDirectory(path: string): string | undefined {
     return "/";
   }
   return path.slice(0, separatorIndex);
+}
+
+export function sanitizeImportedFileName(name: string): string {
+  const basename = name
+    .normalize("NFC")
+    .replaceAll("\\", "/")
+    .split("/")
+    .at(-1) ?? "";
+  const sanitized = Array.from(basename, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ||
+        '<>:"|?*'.includes(character)
+      ? "_"
+      : character;
+  }).join("")
+    .replace(/[. ]+$/gu, "")
+    .trim();
+  const fallback = sanitized === "" || sanitized === "." || sanitized === ".."
+    ? "imported-file"
+    : sanitized;
+  const characters = Array.from(fallback);
+  if (characters.length <= 180) {
+    return fallback;
+  }
+
+  const extensionIndex = fallback.lastIndexOf(".");
+  const extension = extensionIndex > 0 && fallback.length - extensionIndex <= 20
+    ? fallback.slice(extensionIndex)
+    : "";
+  const maximumStemLength = Math.max(1, 180 - Array.from(extension).length);
+  const stem = extension ? fallback.slice(0, extensionIndex) : fallback;
+  return `${Array.from(stem).slice(0, maximumStemLength).join("")}${extension}`;
+}
+
+class ImportedFileTooLargeError extends Error {
+  constructor() {
+    super("Imported file exceeds the 100 MiB limit.");
+    this.name = "ImportedFileTooLargeError";
+  }
+}
+
+async function readImportedFileBytes(request: Request): Promise<Uint8Array> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredLength) && declaredLength > maxImportedFileBytes
+  ) {
+    throw new ImportedFileTooLargeError();
+  }
+
+  if (!request.body) {
+    return new Uint8Array();
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxImportedFileBytes) {
+      await reader.cancel();
+      throw new ImportedFileTooLargeError();
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function writeImportedFile(
+  requestedName: string,
+  bytes: Uint8Array,
+): Promise<{ storedName: string; relativePath: string }> {
+  const documentDirectory = getParentDirectory(activeDocumentPath) ?? ".";
+  const dataDirectory = `${documentDirectory}/data`;
+  await Deno.mkdir(dataDirectory, { recursive: true });
+
+  const sanitizedName = sanitizeImportedFileName(requestedName);
+  const extensionIndex = sanitizedName.lastIndexOf(".");
+  const stem = extensionIndex > 0
+    ? sanitizedName.slice(0, extensionIndex)
+    : sanitizedName;
+  const extension = extensionIndex > 0
+    ? sanitizedName.slice(extensionIndex)
+    : "";
+
+  for (let index = 1; index <= 10_000; index += 1) {
+    const storedName = index === 1
+      ? sanitizedName
+      : `${stem}-${index}${extension}`;
+    const targetPath = `${dataDirectory}/${storedName}`;
+    try {
+      await Deno.writeFile(targetPath, bytes, { createNew: true });
+      return {
+        storedName,
+        relativePath: `data/${storedName}`,
+      };
+    } catch (error) {
+      if (error instanceof Deno.errors.AlreadyExists) {
+        continue;
+      }
+      try {
+        await Deno.remove(targetPath);
+      } catch {
+        // The failed write may not have created a partial file.
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("Unable to find an available imported filename.");
+}
+
+export async function resolveDocumentLaunchPath(path: string): Promise<string> {
+  const normalizedPath = path.replaceAll("\\", "/");
+  const filename = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1);
+  const parent = getParentDirectory(path) ?? ".";
+  const parentPath = /^[A-Za-z]:$/u.test(parent) ? `${parent}/` : parent;
+  const resolvedParent = (await Deno.realPath(parentPath)).replace(
+    /[\\/]+$/u,
+    "",
+  );
+  return `${resolvedParent}/${filename}`;
 }
 
 function wantsExecutionStream(
@@ -698,6 +856,7 @@ app.get("/document", async (c) => {
     return c.json({
       ok: true,
       document: formatDocument(decoded.document),
+      sourceRevision: decoded.sourceRevision,
       path: activeDocumentPath,
     });
   } catch (_error) {
@@ -732,6 +891,67 @@ app.get("/document/status", async (c) => {
   }
 });
 
+app.post("/document/files", async (c) => {
+  const requestedName = c.req.query("name");
+  if (!requestedName?.trim()) {
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "File imports require a filename.",
+      }),
+      422,
+    );
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await readImportedFileBytes(c.req.raw);
+  } catch (error) {
+    if (error instanceof ImportedFileTooLargeError) {
+      return c.json(
+        errorResponse({
+          kind: "file_too_large",
+          message: error.message,
+        }),
+        413,
+      );
+    }
+    return c.json(
+      errorResponse({
+        kind: "invalid_request",
+        message: "Unable to read the imported file upload.",
+      }),
+      400,
+    );
+  }
+
+  try {
+    const stored = await writeImportedFile(requestedName, bytes);
+    return c.json({
+      ok: true,
+      file: {
+        originalName: requestedName,
+        storedName: stored.storedName,
+        relativePath: stored.relativePath,
+        size: bytes.byteLength,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `Failed to import ${requestedName} beside ${activeDocumentPath}:`,
+    );
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "file_write_error",
+        message:
+          `Unable to copy ${requestedName} into the project's data folder.`,
+      }),
+      500,
+    );
+  }
+});
+
 app.get("/runtime/python", async (c) => {
   try {
     return c.json({
@@ -745,6 +965,109 @@ app.get("/runtime/python", async (c) => {
       errorResponse({
         kind: "runtime_inspection_error",
         message: "Unable to inspect the Python runtime Rowcall will use.",
+      }),
+      500,
+    );
+  }
+});
+
+app.get("/runtime/environment", async (c) => {
+  try {
+    const environment = await inspectProjectEnvironment(
+      activeEnvironmentDocumentPath,
+      await resolvePythonCommand(),
+    );
+    return c.json({
+      ok: true,
+      environment,
+    });
+  } catch (error) {
+    console.error("Failed to inspect the project environment:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "runtime_inspection_error",
+        message: "Unable to inspect the project Python environment.",
+      }),
+      500,
+    );
+  }
+});
+
+app.post("/runtime/environment/sync", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
+
+  const sync = (async () => {
+    const pythonCommand = await resolvePythonCommand();
+    const environment = await inspectProjectEnvironment(
+      activeEnvironmentDocumentPath,
+      pythonCommand,
+    );
+    if (!environment.canSync) {
+      throw new ProjectEnvironmentSyncError(
+        "not_managed",
+        "Rowcall only installs dependencies into project environments it created.",
+      );
+    }
+    if (environment.requirementsStatus === "current") {
+      return { environment, updated: false };
+    }
+
+    return await withStoppedSourceRuntimeSession(() =>
+      syncProjectEnvironment(activeEnvironmentDocumentPath, pythonCommand)
+    );
+  })();
+  activeEnvironmentSync = sync;
+  try {
+    const result = await sync;
+    return c.json({
+      ok: true,
+      environment: result.environment,
+    });
+  } catch (error) {
+    if (error instanceof ProjectEnvironmentSyncError) {
+      return c.json(
+        errorResponse({
+          kind: error.kind === "install_failed"
+            ? "environment_sync_error"
+            : "environment_not_managed",
+          message: [error.message, error.output].filter(Boolean).join("\n\n"),
+        }),
+        error.kind === "install_failed" ? 422 : 409,
+      );
+    }
+    console.error("Failed to update the project environment:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "environment_sync_error",
+        message: "Unable to update the project Python environment.",
+      }),
+      500,
+    );
+  } finally {
+    if (activeEnvironmentSync === sync) {
+      activeEnvironmentSync = null;
+    }
+  }
+});
+
+app.post("/runtime/python/restart", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
+  try {
+    await shutdownSourceRuntimeSession();
+    return c.json({ ok: true });
+  } catch (error) {
+    console.error("Failed to restart the Python runtime:");
+    console.error(error);
+    return c.json(
+      errorResponse({
+        kind: "runtime_restart_error",
+        message: "Unable to restart the Python runtime.",
       }),
       500,
     );
@@ -815,6 +1138,7 @@ app.post("/document/operations", async (c) => {
     return c.json({
       ok: true,
       document: formatDocument(saved.document),
+      sourceRevision: saved.sourceRevision,
       path: activeDocumentPath,
     });
   } catch (error) {
@@ -832,72 +1156,10 @@ app.post("/document/operations", async (c) => {
   }
 });
 
-app.post("/run-node", async (c) => {
-  const body = await c.req.json();
-  if (hasGraphPayloadWithoutSource(body)) {
-    return c.json(graphPayloadWithoutSourceError(), 422);
-  }
-
-  const nodeId = body.nodeId;
-
-  if (typeof nodeId !== "string") {
-    return c.json(
-      errorResponse({
-        kind: "invalid_request",
-        message: "Run-node requests require a string nodeId.",
-      }),
-      422,
-    );
-  }
-
-  const inputs = body.inputs || {};
-  const trace = body.trace || false;
-  if (hasExplicitRunInputs(body.inputs)) {
-    return c.json(sourceBackedInputsError(), 422);
-  }
-
-  // TODO: Add scoped API-level concurrency and resource controls once the
-  // product has a runtime/session/document model. The UI keeps one active run
-  // at a time for now, but direct API callers can still start concurrent runs.
-  if (wantsExecutionStream(c)) {
-    const runId = crypto.randomUUID();
-    const sourceResult = await getRunRequestSource(body);
-    if (!sourceResult.ok) {
-      return c.json(sourceResult, runSourceErrorStatus(sourceResult));
-    }
-    return streamExecutionEvents(
-      runId,
-      "run_node",
-      (signal) =>
-        streamSourceRunSingleNode(
-          runId,
-          sourceResult.source,
-          activeDocumentPath,
-          nodeId,
-          inputs,
-          trace,
-          signal,
-        ),
-      nodeId,
-    );
-  }
-
-  const sourceResult = await getRunRequestSource(body);
-  if (!sourceResult.ok) {
-    return c.json(sourceResult, runSourceErrorStatus(sourceResult));
-  }
-  const result = await runSourceSingleNode(
-    sourceResult.source,
-    activeDocumentPath,
-    nodeId,
-    inputs,
-    trace,
-  );
-
-  return c.json(result);
-});
-
 app.post("/run-to-node", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   const body = await c.req.json();
   if (hasGraphPayloadWithoutSource(body)) {
     return c.json(graphPayloadWithoutSourceError(), 422);
@@ -960,6 +1222,9 @@ app.post("/run-to-node", async (c) => {
 });
 
 app.post("/run-graph", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   const body = await c.req.json();
   if (hasGraphPayloadWithoutSource(body)) {
     return c.json(graphPayloadWithoutSourceError(), 422);
@@ -1007,6 +1272,9 @@ app.post("/run-graph", async (c) => {
 });
 
 app.post("/results/table", async (c) => {
+  if (activeEnvironmentSync) {
+    return c.json(environmentSyncInProgressError(), 409);
+  }
   let body: unknown;
   try {
     body = await c.req.json();
@@ -1062,10 +1330,6 @@ app.post("/results/table", async (c) => {
       },
     }, 500);
   }
-});
-
-app.post("/runtime-session/clear-cache", async (c) => {
-  return c.json(await clearSourceRuntimeSessionCache());
 });
 
 function decodeTableQueryRequest(value: unknown): TableQueryRequest | null {

@@ -1,4 +1,9 @@
-import { assertEquals, assertExists } from "@std/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertStringIncludes,
+} from "@std/assert";
 import {
   applyPythonDocumentOperations,
   loadPythonDocument,
@@ -9,34 +14,24 @@ import {
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
 import {
-  clearSourceRuntimeSessionCache,
   runSourceGraph,
-  runSourceSingleNode,
+  runSourceToNode,
   shutdownSourceRuntimeSession,
 } from "./executor.ts";
-import {
-  decodeDocumentOperationsRequest,
-  decodeRowcallDocument,
-} from "./document.ts";
+import { decodeDocumentOperationsRequest } from "./document.ts";
 
-Deno.test("document gateways preserve named route fields", () => {
+Deno.test("document operations preserve named route fields", () => {
   const edge = {
     fromNode: "split",
     fromOutput: "train",
     toNode: "fit",
     toInput: "training_data",
   };
-  const decodedDocument = decodeRowcallDocument({
-    version: 1,
-    nodes: [],
-    edges: [edge],
-  });
   const decodedOperations = decodeDocumentOperationsRequest({
     baseRevision: "revision",
     operations: [{ type: "add_edge", ...edge }],
   });
 
-  assertEquals(decodedDocument.ok && decodedDocument.document.edges, [edge]);
   assertEquals(
     decodedOperations.ok && decodedOperations.request.operations,
     [{ type: "add_edge", ...edge }],
@@ -99,7 +94,6 @@ Deno.test("Python document source executes through worker runtime", async () => 
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(source, path);
     assertEquals(response.ok, true);
@@ -116,9 +110,8 @@ Deno.test("Python document source-backed node run executes fresh upstream", asyn
   const path = "examples/hello_world.py";
   const source = await Deno.readTextFile(path);
 
-  await clearSourceRuntimeSessionCache();
   try {
-    const single = await runSourceSingleNode(source, path, "n_shout");
+    const single = await runSourceToNode(source, path, "n_shout");
 
     assertEquals(single.ok, true);
     assertEquals(single.executedNodeIds, ["n_load", "n_shout"]);
@@ -176,7 +169,6 @@ Deno.test("edited Python document nodes execute with document globals", async ()
   }
   const editedSource = await Deno.readTextFile(documentPath);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(editedSource, documentPath);
     assertEquals(response.ok, true);
@@ -264,7 +256,6 @@ Deno.test("Python document runtime inputs follow direct upstream outputs", async
 
   const source = await Deno.readTextFile(documentPath);
 
-  await clearSourceRuntimeSessionCache();
   try {
     const response = await runSourceGraph(source, documentPath);
     assertEquals(response.ok, true);
@@ -740,7 +731,11 @@ Deno.test("applyPythonDocumentOperations removes deleted node incident edges", a
   }
 
   assertEquals(applied.document.nodes.map((node) => node.id), ["n_a"]);
+  assertEquals(applied.document.nodes[0].outputs, []);
   assertEquals(applied.document.edges, []);
+  const rewrittenSource = await Deno.readTextFile(documentPath);
+  assertStringIncludes(rewrittenSource, '@node(id="n_a", outputs=[])');
+  assertStringIncludes(rewrittenSource, "    return {}");
 });
 
 Deno.test("applyPythonDocumentOperations appends added Python node blocks", async () => {
@@ -853,6 +848,8 @@ Deno.test("applyPythonDocumentOperations writes sidecar metadata", async () => {
   assertEquals(applied.document.nodes[0].position, { x: 30, y: 40 });
   assertEquals(applied.document.nodes[0].title, "Make X");
   assertEquals(applied.document.nodes[0].description, "Create a value.");
+  assertEquals(applied.sourceRevision, loaded.sourceRevision);
+  assertNotEquals(applied.document.revision, loaded.document.revision);
 
   const sidecar = JSON.parse(
     await Deno.readTextFile(sidecarPathForPythonDocument(documentPath)),

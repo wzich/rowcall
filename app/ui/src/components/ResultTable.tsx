@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -196,7 +197,7 @@ export function ResultTable({
           <thead className="sticky top-0 z-10 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header, columnPosition) => {
+                {headerGroup.headers.map((header) => {
                   const sorted = header.column.getIsSorted();
                   const isIndex =
                     header.column.id === RESULT_TABLE_INDEX_COLUMN_ID;
@@ -208,6 +209,11 @@ export function ResultTable({
                   return (
                     <th
                       key={header.id}
+                      aria-sort={sorted === "asc"
+                        ? "ascending"
+                        : sorted === "desc"
+                        ? "descending"
+                        : "none"}
                       className={[
                         "whitespace-nowrap border-b border-r border-zinc-200 bg-zinc-100 last:border-r-0 dark:border-zinc-700 dark:bg-zinc-800",
                         isIndex ? "sticky left-0 z-20" : "",
@@ -218,7 +224,8 @@ export function ResultTable({
                         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left font-medium hover:text-zinc-950 dark:hover:text-zinc-100"
                         onClick={header.column.getToggleSortingHandler()}
                         title={"Sort by " +
-                          String(header.column.columnDef.header)}
+                          String(header.column.columnDef.header) +
+                          (dtype ? ` · ${String(dtype)}` : "")}
                       >
                         <span className="max-w-44 truncate">
                           {flexRender(
@@ -228,17 +235,12 @@ export function ResultTable({
                         </span>
                         <span aria-hidden="true" className="text-[10px]">
                           {sorted === "asc"
-                            ? "↑"
+                            ? <ArrowUp className="h-3 w-3" />
                             : sorted === "desc"
-                            ? "↓"
-                            : "↕"}
+                            ? <ArrowDown className="h-3 w-3" />
+                            : <ArrowUpDown className="h-3 w-3 opacity-50" />}
                         </span>
                       </button>
-                      {dtype && columnPosition > 0 && (
-                        <div className="max-w-44 truncate px-2 pb-1 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                          {String(dtype)}
-                        </div>
-                      )}
                     </th>
                   );
                 })}

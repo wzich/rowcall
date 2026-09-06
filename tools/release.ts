@@ -86,6 +86,7 @@ async function prepareRelease() {
   await requireCleanSourceCommit();
   await run("deno", ["task", "check"]);
   await run("deno", ["task", "test"]);
+  await run("deno", ["task", "test:browser"]);
   await buildReleaseBinaries();
   await run("sh", ["packaging/smoke-installed-release.sh"]);
   await assembleReleaseSite();

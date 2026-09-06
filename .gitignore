@@ -15,3 +15,5 @@ tmp/
 **/.rowcall-source-*
 **/.rowcall-sidecar-*
 **/.rowcall-marker-*
+
+/output/playwright/

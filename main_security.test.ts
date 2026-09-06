@@ -2,7 +2,10 @@ import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import {
   app,
   buildRowcallUrl,
+  maxImportedFileBytes,
+  resolveDocumentLaunchPath,
   type RowcallServerSecurity,
+  sanitizeImportedFileName,
   setActiveDocumentPathForTests,
   validateLocalRequest,
 } from "./main.ts";
@@ -11,6 +14,8 @@ import {
   setBeforeDocumentWriteForTests,
   sidecarPathForPythonDocument,
 } from "./python_document.ts";
+import { getVenvPythonPath } from "./launcher_paths.ts";
+import { configurePythonRuntime } from "./runtime_config.ts";
 
 const security: RowcallServerSecurity = {
   hostname: "127.0.0.1",
@@ -84,6 +89,80 @@ Deno.test("validateLocalRequest requires a token for document operations", () =>
   );
 });
 
+Deno.test("sanitizeImportedFileName keeps a safe basename and extension", () => {
+  assertEquals(
+    sanitizeImportedFileName("../../Customer Orders.CSV"),
+    "Customer Orders.CSV",
+  );
+  assertEquals(
+    sanitizeImportedFileName("survey:final?.csv"),
+    "survey_final_.csv",
+  );
+  assertEquals(sanitizeImportedFileName(".."), "imported-file");
+});
+
+Deno.test("POST /document/files creates data and never overwrites", async () => {
+  const documentPath = await writeRouteTestDocument("file_import.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const firstResponse = await app.fetch(
+    fileRequest("Customer Orders.csv", "customer_id,total\n1,12.50\n"),
+  );
+  assertEquals(firstResponse.status, 200);
+  const first = await firstResponse.json();
+  assertEquals(first.file, {
+    originalName: "Customer Orders.csv",
+    storedName: "Customer Orders.csv",
+    relativePath: "data/Customer Orders.csv",
+    size: 26,
+  });
+  assertEquals(
+    await Deno.readTextFile(
+      `${
+        documentPath.slice(0, documentPath.lastIndexOf("/"))
+      }/${first.file.relativePath}`,
+    ),
+    "customer_id,total\n1,12.50\n",
+  );
+
+  const secondResponse = await app.fetch(
+    fileRequest("Customer Orders.csv", "replacement\n"),
+  );
+  assertEquals(secondResponse.status, 200);
+  const second = await secondResponse.json();
+  assertEquals(second.file.storedName, "Customer Orders-2.csv");
+  assertEquals(second.file.relativePath, "data/Customer Orders-2.csv");
+});
+
+Deno.test("POST /document/files rejects missing names and oversized files", async () => {
+  const documentPath = await writeRouteTestDocument("file_import_errors.py");
+  setActiveDocumentPathForTests(documentPath);
+
+  const missingNameResponse = await app.fetch(
+    request("/document/files", {
+      method: "POST",
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+  assertEquals(missingNameResponse.status, 422);
+
+  const oversizedResponse = await app.fetch(
+    new Request("http://127.0.0.1:8000/document/files?name=large.csv", {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:8000",
+        "content-length": String(maxImportedFileBytes + 1),
+        "content-type": "application/octet-stream",
+        "x-rowcall-token": "secret-token",
+      },
+      body: new Uint8Array(),
+    }),
+  );
+  assertEquals(oversizedResponse.status, 413);
+  assertEquals((await oversizedResponse.json()).error.kind, "file_too_large");
+});
+
 Deno.test("validateLocalRequest requires a token for result queries", () => {
   assertEquals(
     validateLocalRequest(
@@ -112,6 +191,23 @@ Deno.test("validateLocalRequest requires a token for result queries", () => {
   );
 });
 
+Deno.test("validateLocalRequest requires a token for environment updates", () => {
+  assertEquals(
+    validateLocalRequest(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+      }),
+      security,
+    ),
+    {
+      ok: false,
+      status: 401,
+      message: "Missing or invalid Rowcall authorization token.",
+    },
+  );
+});
+
 Deno.test("PUT /document is no longer a document write route", async () => {
   const response = await app.fetch(
     request("/document", {
@@ -124,9 +220,9 @@ Deno.test("PUT /document is no longer a document write route", async () => {
   assertEquals(response.status === 404 || response.status === 405, true);
 });
 
-Deno.test("cache compatibility route explicitly reports caching disabled", async () => {
+Deno.test("runtime restart route replaces the Python worker independently", async () => {
   const response = await app.fetch(
-    request("/runtime-session/clear-cache", {
+    request("/runtime/python/restart", {
       method: "POST",
       host: "127.0.0.1:8000",
       token: "secret-token",
@@ -134,11 +230,28 @@ Deno.test("cache compatibility route explicitly reports caching disabled", async
   );
 
   assertEquals(response.status, 200);
-  assertEquals(await response.json(), {
-    ok: true,
-    clearedEntries: 0,
-    cachingDisabled: true,
-  });
+  assertEquals(await response.json(), { ok: true });
+});
+
+Deno.test("GET /document reports the executable source revision separately", async () => {
+  const documentPath = await writeRouteTestDocument("document_revision.py");
+  setActiveDocumentPathForTests(documentPath);
+  const loaded = await loadPythonDocument(documentPath);
+  if (!loaded.ok) {
+    throw new Error(loaded.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const response = await app.fetch(
+    request("/document", {
+      host: "127.0.0.1:8000",
+      token: "secret-token",
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.sourceRevision, loaded.sourceRevision);
+  assertEquals(body.document.revision, loaded.document.revision);
 });
 
 Deno.test("GET /document/status returns document status revisions", async () => {
@@ -343,6 +456,7 @@ Deno.test("POST /document/operations applies operations", async () => {
   assertEquals(body.document.nodes[0].code, "x = 2");
   assertEquals(body.document.nodes[0].position, { x: 12, y: 34 });
   assertExists(body.document.revision);
+  assertExists(body.sourceRevision);
 
   assertEquals(
     await Deno.readTextFile(documentPath),
@@ -510,7 +624,7 @@ Deno.test("HTTP run routes reject graph-only payloads", async () => {
     edges: [],
   };
 
-  for (const route of ["/run-node", "/run-to-node", "/run-graph"]) {
+  for (const route of ["/run-to-node", "/run-graph"]) {
     const response = await app.fetch(
       jsonRequest(route, {
         graph,
@@ -584,6 +698,140 @@ Deno.test("validateLocalRequest allows loopback dev-server origins", () => {
   );
 });
 
+Deno.test("environment sync is exclusive and current syncs are no-ops", async () => {
+  const directory = await Deno.makeTempDir();
+  const documentPath = `${directory}/graph.py`;
+  const venvDirectory = `${directory}/.venv`;
+  const pythonPath = getVenvPythonPath(venvDirectory);
+  await Deno.mkdir(
+    Deno.build.os === "windows"
+      ? `${venvDirectory}/Scripts`
+      : `${venvDirectory}/bin`,
+    { recursive: true },
+  );
+  await Deno.writeTextFile(documentPath, "print('rowcall')\n");
+  await Deno.writeTextFile(
+    `${venvDirectory}/.rowcall-setup`,
+    "complete\nrequirements-sha256=outdated\n",
+  );
+  setActiveDocumentPathForTests(documentPath);
+  configurePythonRuntime({ command: pythonPath });
+
+  try {
+    const syncResponsePromise = app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    const overlappingSyncResponse = await app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(overlappingSyncResponse.status, 409);
+
+    const runDuringSyncResponse = await app.fetch(
+      jsonRequest("/run-graph", {}),
+    );
+    assertEquals(runDuringSyncResponse.status, 409);
+    assertEquals(
+      (await runDuringSyncResponse.json()).error.kind,
+      "environment_sync_in_progress",
+    );
+
+    const syncResponse = await syncResponsePromise;
+    assertEquals(syncResponse.status, 200);
+    assertEquals(
+      (await syncResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+
+    const statusResponse = await app.fetch(
+      request("/runtime/environment", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(
+      (await statusResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+
+    const noOpSyncResponse = await app.fetch(
+      request("/runtime/environment/sync", {
+        method: "POST",
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(noOpSyncResponse.status, 200);
+    assertEquals(
+      (await noOpSyncResponse.json()).environment.requirementsStatus,
+      "current",
+    );
+  } finally {
+    configurePythonRuntime({});
+  }
+});
+
+Deno.test("environment inspection keeps the project beside a document symlink", async () => {
+  const directory = await Deno.makeTempDir();
+  const projectDirectory = `${directory}/project`;
+  const sourceDirectory = `${directory}/source`;
+  await Deno.mkdir(projectDirectory);
+  await Deno.mkdir(sourceDirectory);
+  const targetPath = `${sourceDirectory}/graph.py`;
+  const launchPath = `${projectDirectory}/graph.py`;
+  await Deno.writeTextFile(targetPath, "print('rowcall')\n");
+  await Deno.symlink(targetPath, launchPath, { type: "file" });
+  await Deno.writeTextFile(`${projectDirectory}/requirements.txt`, "");
+
+  const venvDirectory = `${projectDirectory}/.venv`;
+  const pythonPath = getVenvPythonPath(venvDirectory);
+  await Deno.mkdir(
+    Deno.build.os === "windows"
+      ? `${venvDirectory}/Scripts`
+      : `${venvDirectory}/bin`,
+    { recursive: true },
+  );
+  await Deno.writeTextFile(
+    `${venvDirectory}/.rowcall-setup`,
+    "complete\nrequirements-sha256=outdated\n",
+  );
+
+  const preservedLaunchPath = await resolveDocumentLaunchPath(launchPath);
+  const resolvedProjectDirectory = await Deno.realPath(projectDirectory);
+  assertEquals(preservedLaunchPath, `${resolvedProjectDirectory}/graph.py`);
+  setActiveDocumentPathForTests(
+    await Deno.realPath(launchPath),
+    preservedLaunchPath,
+  );
+  configurePythonRuntime({ command: pythonPath });
+
+  try {
+    const response = await app.fetch(
+      request("/runtime/environment", {
+        host: "127.0.0.1:8000",
+        token: "secret-token",
+      }),
+    );
+    assertEquals(response.status, 200);
+    const environment = (await response.json()).environment;
+    assertEquals(environment.ownership, "rowcall");
+    assertEquals(environment.requirementsStatus, "changed");
+    assertEquals(
+      environment.requirementsPath,
+      `${resolvedProjectDirectory}/requirements.txt`,
+    );
+  } finally {
+    configurePythonRuntime({});
+  }
+});
+
 function statusOf(
   result: ReturnType<typeof validateLocalRequest>,
 ): number | null {
@@ -619,6 +867,21 @@ function jsonRequest(path: string, body: unknown): Request {
     headers,
     body: JSON.stringify(body),
   });
+}
+
+function fileRequest(filename: string, contents: string): Request {
+  return new Request(
+    `http://127.0.0.1:8000/document/files?name=${encodeURIComponent(filename)}`,
+    {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:8000",
+        "content-type": "application/octet-stream",
+        "x-rowcall-token": "secret-token",
+      },
+      body: contents,
+    },
+  );
 }
 
 async function writeRouteTestDocument(filename: string): Promise<string> {
