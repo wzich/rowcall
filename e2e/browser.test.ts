@@ -401,7 +401,12 @@ test("paired previews preserve inputs and results while edits and failed runs re
   await expect(output.getByRole("table")).toContainText("64.99");
 
   await page.getByRole("button", { name: /^Results/ }).click();
-  await expect(page.getByRole("button", { name: "large_orders", exact: true }))
+  await expect(
+    page.getByLabel("Inspector navigation").getByRole("button", {
+      name: "large_orders",
+      exact: true,
+    }),
+  )
     .toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("table").first()).toContainText("64.99");
   await page.getByRole("button", { name: "Console", exact: true }).click();

@@ -54,6 +54,9 @@ export function createImportedFileNode(options: {
   const baseIdentifier = identifierFromStoredName(options.storedName, kind);
   const outputName = kind === "unsupported"
     ? `${baseIdentifier}_file`
+    // A local named pl would shadow the shared Polars import in the reader.
+    : baseIdentifier === "pl"
+    ? "pl_data"
     : baseIdentifier;
   const functionName = uniqueFunctionName(
     `load_${outputName}`,
