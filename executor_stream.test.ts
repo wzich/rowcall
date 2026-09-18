@@ -315,3 +315,24 @@ sourceRuntimeTest(
     }
   },
 );
+
+sourceRuntimeTest(
+  "worker preserves Unicode source and document paths under a legacy code page",
+  async () => {
+    const directory = await Deno.makeTempDir({ prefix: "rowcall café " });
+    const previous = Deno.env.get("PYTHONIOENCODING");
+    try {
+      Deno.env.set("PYTHONIOENCODING", "cp1252");
+      const source =
+        'from rowcall import node\n@node(id="a", outputs=["value"])\ndef make_value():\n    value = "café 🚀"\n    return {"value": value}\n';
+      const response = await runSourceGraph(source, `${directory}/graph.py`);
+      assertEquals(response.ok, true);
+      assertEquals(response.finalOutputsByNode.a.value.jsonValue, "café 🚀");
+    } finally {
+      if (previous === undefined) Deno.env.delete("PYTHONIOENCODING");
+      else Deno.env.set("PYTHONIOENCODING", previous);
+      await shutdownSourceRuntimeSession();
+      await Deno.remove(directory, { recursive: true });
+    }
+  },
+);
