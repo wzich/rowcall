@@ -1600,6 +1600,18 @@ function unregisterSignalHandlers(
 }
 
 function stopChild(child: Deno.ChildProcess): void {
+  if (Deno.build.os === "windows") {
+    try {
+      const result = new Deno.Command("taskkill.exe", {
+        args: ["/PID", String(child.pid), "/T", "/F"],
+        stdout: "null",
+        stderr: "null",
+      }).outputSync();
+      if (result.success) return;
+    } catch {
+      // Fall back to terminating the immediate child if taskkill is unavailable.
+    }
+  }
   try {
     child.kill("SIGTERM");
   } catch {

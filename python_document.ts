@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import {
   type DocumentOperation,
   type GraphPosition,
@@ -1143,7 +1144,7 @@ async function captureDocumentAliasBindings(
 }
 
 async function capturePathAlias(path: string): Promise<PathAliasIdentity> {
-  const requestedPath = path.startsWith("/") ? path : `${Deno.cwd()}/${path}`;
+  const requestedPath = isAbsolute(path) ? path : `${Deno.cwd()}/${path}`;
   try {
     return {
       requestedPath,

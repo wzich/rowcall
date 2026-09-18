@@ -19,7 +19,7 @@ Deno.test("project environment status detects changed requirements", async () =>
     await inspectProjectEnvironment(project.documentPath, project.pythonPath),
     {
       ownership: "rowcall",
-      requirementsPath: project.requirementsPath,
+      requirementsPath: project.requirementsPath.replaceAll("\\", "/"),
       requirementsPresent: true,
       requirementsStatus: "current",
       canSync: true,
@@ -100,7 +100,7 @@ Deno.test("sync skips pip when the requirements fingerprint is current", async (
     {
       environment: {
         ownership: "rowcall",
-        requirementsPath: project.requirementsPath,
+        requirementsPath: project.requirementsPath.replaceAll("\\", "/"),
         requirementsPresent: true,
         requirementsStatus: "current",
         canSync: true,

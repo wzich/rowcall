@@ -825,7 +825,7 @@ Deno.test("environment inspection keeps the project beside a document symlink", 
     assertEquals(environment.requirementsStatus, "changed");
     assertEquals(
       environment.requirementsPath,
-      `${resolvedProjectDirectory}/requirements.txt`,
+      `${resolvedProjectDirectory.replaceAll("\\", "/")}/requirements.txt`,
     );
   } finally {
     configurePythonRuntime({});

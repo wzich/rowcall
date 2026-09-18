@@ -256,7 +256,7 @@ sourceRuntimeTest(
       streamSourceRunToNode(
         "source-run-failure",
         source,
-        "/tmp/failure.py",
+        `${Deno.cwd()}/failure.py`,
         "b",
       ),
     );
