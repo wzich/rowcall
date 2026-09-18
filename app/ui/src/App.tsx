@@ -1,3 +1,4 @@
+import { getUpstreamInputPreviews } from "./query/upstreamInputPreviews.ts";
 import { DismissibleDetails } from "./components/DismissibleDetails.tsx";
 import { ActionMenu, RunMenu } from "./components/RunMenu.tsx";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -500,6 +501,13 @@ export default function App() {
         executionStateByNodeId,
       ),
       lastSuccessfulResult: successfulResultsByNodeId[node.id],
+      upstreamInputPreviews: getUpstreamInputPreviews(
+        node.id,
+        editableGraph.edges,
+        successfulResultsByNodeId,
+        getNodeLabelsById(editableGraph),
+        nodeRunStatuses,
+      ),
       inputSources: Object.fromEntries(
         editableGraph.edges.filter((edge) => edge.toNode === node.id).map((
           edge,
@@ -518,6 +526,7 @@ export default function App() {
     executionStateByNodeId,
     graphNodeDetails,
     successfulResultsByNodeId,
+    nodeRunStatuses,
     selectedNodeId,
   ]);
 

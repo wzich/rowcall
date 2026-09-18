@@ -1,3 +1,4 @@
+import type { UpstreamInputPreview } from "../query/upstreamInputPreviews.ts";
 import { RunMenu } from "./RunMenu.tsx";
 import type {
   ExecutionResponse,
@@ -60,6 +61,7 @@ export type NodeInspectorSelection = {
   }>;
   variablePreviews: Record<string, ValuePreview>;
   inputSources?: Record<string, string>;
+  upstreamInputPreviews?: Record<string, UpstreamInputPreview>;
   upstreamDependencies: string[];
   downstreamDependencies: string[];
   nodeLabelsById: Record<string, string>;
@@ -1667,16 +1669,28 @@ function CodeWorkspace(
 ) {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
-  const inputs = snapshot?.inputs ?? {};
+  const upstreamInputs = !snapshot
+    ? selectedNode.upstreamInputPreviews
+    : undefined;
+  const inputs = snapshot?.inputs ?? Object.fromEntries(
+    Object.entries(upstreamInputs ?? {}).map((
+      [name, input],
+    ) => [name, input.preview]),
+  );
   const outputs = snapshot?.outputs ?? {};
   const pane = (
     kind: "Input" | "Output",
-    values: Record<string, ValuePreview>,
+    values: Record<string, ValuePreview | undefined>,
     selection: string,
     choose: (name: string) => void,
   ) => {
     const names = Object.keys(values);
     const name = names.includes(selection) ? selection : names[0];
+    const preview = values[name];
+    const upstream = kind === "Input" ? upstreamInputs?.[name] : undefined;
+    const provenance = upstream
+      ? `From ${upstream.source}’s last successful run`
+      : undefined;
     const header = (
       <div className="flex min-w-0 items-center gap-3">
         <span className="text-xs text-zinc-500">
@@ -1704,18 +1718,21 @@ function CodeWorkspace(
     );
     return (
       <section className="preview-pane" aria-label={`${kind} preview`}>
-        {name
+        {preview
           ? (
             <FlatPreview
-              preview={values[name]}
+              preview={preview}
               header={header}
-              previous={runStatus !== "completed"}
-              runStatus={runStatus}
-              provenance={kind === "Input"
+              previous={(upstream?.status ?? runStatus) !== "completed"}
+              runStatus={upstream?.status ?? runStatus}
+              metadataSuffix={provenance
+                ? <span>{provenance}</span>
+                : undefined}
+              provenance={provenance ?? (kind === "Input"
                 ? `Captured before this step · from ${
                   selectedNode.inputSources?.[name] ?? "upstream"
                 }`
-                : "Latest successful run"}
+                : "Latest successful run")}
               imageExpandable
             />
           )
@@ -1723,9 +1740,11 @@ function CodeWorkspace(
             <div>
               {header}
               <p className="mt-6 text-sm text-zinc-500">
-                {snapshot
+                {upstream
+                  ? `No saved preview for ${name} from ${upstream.source}. Run the upstream step to preview it.`
+                  : snapshot
                   ? `No ${kind.toLowerCase()} variables.`
-                  : "Run this step to preview its input and output values."}
+                  : `Run this step to preview its ${kind.toLowerCase()} values.`}
               </p>
             </div>
           )}
