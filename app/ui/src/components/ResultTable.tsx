@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -223,7 +224,8 @@ export function ResultTable({
                         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left font-medium hover:text-zinc-950 dark:hover:text-zinc-100"
                         onClick={header.column.getToggleSortingHandler()}
                         title={"Sort by " +
-                          String(header.column.columnDef.header)}
+                          String(header.column.columnDef.header) +
+                          (dtype ? ` · ${String(dtype)}` : "")}
                       >
                         <span className="max-w-44 truncate">
                           {flexRender(
@@ -233,17 +235,12 @@ export function ResultTable({
                         </span>
                         <span aria-hidden="true" className="text-[10px]">
                           {sorted === "asc"
-                            ? "↑"
+                            ? <ArrowUp className="h-3 w-3" />
                             : sorted === "desc"
-                            ? "↓"
-                            : "↕"}
+                            ? <ArrowDown className="h-3 w-3" />
+                            : <ArrowUpDown className="h-3 w-3 opacity-50" />}
                         </span>
                       </button>
-                      {dtype && (
-                        <div className="max-w-44 truncate px-2 pb-1 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                          {String(dtype)}
-                        </div>
-                      )}
                     </th>
                   );
                 })}

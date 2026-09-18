@@ -1,3 +1,5 @@
+import { DismissibleDetails } from "./components/DismissibleDetails.tsx";
+import { ActionMenu, RunMenu } from "./components/RunMenu.tsx";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { SyntaxNode } from "@lezer/common";
 import { parser as pythonParser } from "@lezer/python";
@@ -5,10 +7,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   FileUp,
-  Moon,
   Play,
   Save,
-  Sun,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +25,7 @@ import {
   restartPythonRuntime,
   syncProjectEnvironment,
 } from "./api/runtime.ts";
+import { WorkspaceSplit } from "./components/WorkspaceSplit.tsx";
 import { Canvas } from "./components/Canvas.tsx";
 import {
   deriveRoutedOutputs,
@@ -130,6 +131,7 @@ function getInitialThemeMode(): ThemeMode {
 }
 
 export default function App() {
+  const [inspectorFocused, setInspectorFocused] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pendingNodeDeletion, setPendingNodeDeletion] = useState<
@@ -145,7 +147,6 @@ export default function App() {
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<
     { nodeId: string; requestId: number } | null
   >(null);
-  const [traceEnabled, setTraceEnabled] = useState(false);
   const [connectionWarning, setConnectionWarning] = useState<
     ConnectionWarning | null
   >(null);
@@ -185,6 +186,7 @@ export default function App() {
     return sourceValue;
   }, []);
   const {
+    successfulResultsByNodeId,
     executionStateByNodeId,
     graphExecutionState,
     activeRunType,
@@ -224,7 +226,7 @@ export default function App() {
     getSnapshot: getDocumentSnapshot,
     waitForActiveSave,
     prepareForWrite,
-    saveDocument: handleSaveDocument,
+    saveDocument,
     reloadDocument: handleReloadDocumentFromDisk,
   } = useDocumentSession({
     onLoaded: (document, preserveExecutionSession) => {
@@ -497,6 +499,15 @@ export default function App() {
         node.id,
         executionStateByNodeId,
       ),
+      lastSuccessfulResult: successfulResultsByNodeId[node.id],
+      inputSources: Object.fromEntries(
+        editableGraph.edges.filter((edge) => edge.toNode === node.id).map((
+          edge,
+        ) => [
+          edge.toInput,
+          getNodeLabelsById(editableGraph)[edge.fromNode] ?? edge.fromNode,
+        ]),
+      ),
       upstreamDependencies: detail?.upstreamDependencies ?? [],
       downstreamDependencies: detail?.downstreamDependencies ?? [],
       nodeLabelsById: getNodeLabelsById(editableGraph),
@@ -506,6 +517,7 @@ export default function App() {
     editableGraph,
     executionStateByNodeId,
     graphNodeDetails,
+    successfulResultsByNodeId,
     selectedNodeId,
   ]);
 
@@ -1303,7 +1315,7 @@ export default function App() {
 
   async function handleRunToNode(
     nodeId: string,
-    options: { allowDuringImport?: boolean } = {},
+    options: { allowDuringImport?: boolean; trace?: boolean } = {},
   ) {
     const importBlocksRun = () =>
       importInFlightRef.current && !options.allowDuringImport;
@@ -1323,7 +1335,7 @@ export default function App() {
       nodeId,
       source: getCurrentPythonSourceForRun(),
       expectedRevision: getDocumentSnapshot().revision,
-      trace: traceEnabled,
+      trace: options.trace ?? false,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
@@ -1331,7 +1343,7 @@ export default function App() {
     });
   }
 
-  async function handleRunGraph() {
+  async function handleRunGraph(trace = false) {
     if (isRuntimeMaintenanceActive || importInFlightRef.current) return;
     if (
       !editableGraph || !(await prepareForWrite({ savePending: true }))
@@ -1350,7 +1362,7 @@ export default function App() {
     runGraphMutation.mutate({
       source: getCurrentPythonSourceForRun(),
       expectedRevision: getDocumentSnapshot().revision,
-      trace: traceEnabled,
+      trace,
       onEvent: (event) => applyExecutionStreamEvent(event, runSourceValue),
       signal: abortController.signal,
       abortController,
@@ -1367,7 +1379,7 @@ export default function App() {
         requestId: (current?.requestId ?? 0) + 1,
       }));
       setInspectorNavigationRequest((current) => ({
-        target: "node_results",
+        target: notification.tone === "danger" ? "node_code" : "node_results",
         nodeId: destination.nodeId,
         requestId: (current?.requestId ?? 0) + 1,
       }));
@@ -1381,6 +1393,24 @@ export default function App() {
         ? "document_globals"
         : "run_result",
     );
+  }
+
+  const [saveAcknowledged, setSaveAcknowledged] = useState(false);
+  const saveFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (saveFeedbackTimer.current) clearTimeout(saveFeedbackTimer.current);
+  }, []);
+
+  async function handleSaveDocument() {
+    setSaveAcknowledged(false);
+    if (saveFeedbackTimer.current) clearTimeout(saveFeedbackTimer.current);
+    if (await saveDocument()) {
+      setSaveAcknowledged(true);
+      saveFeedbackTimer.current = setTimeout(
+        () => setSaveAcknowledged(false),
+        1600,
+      );
+    }
   }
 
   function showImportNotification(
@@ -1419,15 +1449,19 @@ export default function App() {
       ].join(" ")}
     >
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <h1 className="text-lg font-semibold">Rowcall</h1>
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <h1 className="shrink-0 text-sm font-semibold">Rowcall</h1>
+          <span aria-hidden="true" className="text-zinc-400 dark:text-zinc-600">
+            /
+          </span>
+
           {externalDocumentNotice.kind === "updated" && (
             <span className="hidden shrink-0 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200 md:inline-flex">
               Updated from disk
             </span>
           )}
           <span
-            className="hidden max-w-[34vw] truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline"
+            className="min-w-0 max-w-[30vw] truncate text-xs text-zinc-600 dark:text-zinc-400"
             title={documentPath}
           >
             {compactDocumentPath(documentPath)}
@@ -1443,78 +1477,42 @@ export default function App() {
             restartError={restartRuntimeMutation.error}
             onRestart={() => restartRuntimeMutation.mutate()}
           />
-          {saveStatus === "saved" && (
-            <span className="text-xs font-medium text-emerald-700">Saved</span>
-          )}
-          {saveStatus === "idle" && pendingOperationCount > 0 && (
-            <span className="text-xs font-medium text-amber-700">
-              Unsaved changes
-            </span>
-          )}
-          {saveStatus === "saving" && (
-            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Saving...
-            </span>
-          )}
-          {saveStatus === "error" && saveError && (
-            <span
-              className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700"
-              title={saveError.detail}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              title={saveStatus === "outcome_unknown"
+                ? "Save outcome unknown; reload from disk before running"
+                : isRuntimeMaintenanceActive
+                ? "Wait for Python environment maintenance to finish"
+                : importingFileName
+                ? "Wait for the file import to finish"
+                : isRunActive
+                ? "A run is already in progress"
+                : "Run the full graph"}
+              className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+              disabled={!editableGraph || isRunActive ||
+                isRuntimeMaintenanceActive ||
+                importingFileName !== null ||
+                saveStatus === "outcome_unknown"}
+              onClick={() => void handleRunGraph()}
             >
-              {saveError.title}
-            </span>
-          )}
-          <button
-            type="button"
-            title={saveStatus === "outcome_unknown"
-              ? "Save outcome unknown; reload from disk before running"
-              : isRuntimeMaintenanceActive
-              ? "Wait for Python environment maintenance to finish"
-              : importingFileName
-              ? "Wait for the file import to finish"
-              : isRunActive
-              ? "A run is already in progress"
-              : "Run the full graph"}
-            className="inline-flex h-8 items-center gap-1.5 rounded bg-zinc-900 px-3 text-sm font-medium text-white shadow-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-            disabled={!editableGraph || isRunActive ||
-              isRuntimeMaintenanceActive ||
-              importingFileName !== null ||
-              saveStatus === "outcome_unknown"}
-            onClick={() => void handleRunGraph()}
-          >
-            <Play
-              aria-hidden="true"
-              className="h-4 w-4"
-              strokeWidth={2.25}
+              <Play
+                aria-hidden="true"
+                className="h-4 w-4"
+                strokeWidth={2.25}
+              />
+              {isRunActive ? "Running…" : "Run graph"}
+            </button>
+            <RunMenu
+              chevron
+              disabled={!editableGraph || isRunActive ||
+                isRuntimeMaintenanceActive || importingFileName !== null ||
+                saveStatus === "outcome_unknown"}
+              onTrace={() => void handleRunGraph(true)}
             />
-            {isRunActive ? "Running…" : "Run graph"}
-          </button>
-          <button
-            type="button"
-            aria-label={themeMode === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"}
-            title={themeMode === "dark" ? "Light mode" : "Dark mode"}
-            className="flex h-8 w-8 items-center justify-center rounded border border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            onClick={() =>
-              setThemeMode((current) => current === "dark" ? "light" : "dark")}
-          >
-            {themeMode === "dark"
-              ? (
-                <Sun
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  strokeWidth={2.25}
-                />
-              )
-              : (
-                <Moon
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  strokeWidth={2.25}
-                />
-              )}
-          </button>
+          </div>
           <button
             type="button"
             title={isReadOnlyDocument
@@ -1522,20 +1520,42 @@ export default function App() {
               : saveStatus === "outcome_unknown"
               ? "Save outcome unknown; reload from disk before saving again"
               : "Save (Ctrl+S)"}
-            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+            className="inline-flex h-8 min-w-24 justify-center items-center gap-1.5 rounded px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 active:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
             disabled={!editableDocument || saveStatus === "saving" ||
               saveStatus === "outcome_unknown"}
+            aria-label={isReadOnlyDocument ? "Read-only" : "Save"}
             onClick={handleSaveDocument}
           >
             {!isReadOnlyDocument && (
-              <Save aria-hidden="true" className="h-4 w-4" strokeWidth={2.25} />
+              saveAcknowledged && pendingOperationCount === 0
+                ? <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+                : (
+                  <Save
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    strokeWidth={2.25}
+                  />
+                )
             )}
             {isReadOnlyDocument
               ? "Read-only"
               : saveStatus === "saving"
               ? "Saving..."
+              : pendingOperationCount > 0
+              ? "Save •"
+              : saveAcknowledged
+              ? "Saved"
               : "Save"}
           </button>
+          <ActionMenu
+            label="More options"
+            actionLabel={themeMode === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"}
+            disabled={false}
+            onAction={() =>
+              setThemeMode((current) => current === "dark" ? "light" : "dark")}
+          />
         </div>
       </header>
       {(runNotification || importNotification) && (
@@ -1736,80 +1756,99 @@ export default function App() {
         )}
         {documentQuery.isSuccess && editableGraph &&
           graphInspectorDetails && (
-          <div className="flex h-full min-h-0">
-            <div className="min-h-0 min-w-0 flex-1">
-              <Canvas
-                key={documentCanvasKey}
-                graph={editableGraph}
-                selectedNodeId={selectedNodeId}
-                focusNodeRequest={canvasFocusRequest}
-                nodeRunStatuses={nodeRunStatuses}
-                nodePreviews={nodePreviews}
-                nodeInputPreviews={nodeInputPreviews}
-                nodeOutputOptions={nodeOutputOptions}
-                onAddNode={canEditStructure ? handleAddNode : undefined}
-                onImportFiles={handleImportFiles}
-                onImportDirectoryRejected={handleImportDirectoryRejected}
-                importingFileName={importingFileName}
-                onAutoLayout={canEditStructure ? handleAutoLayout : undefined}
-                onAddChildNode={canEditStructure
-                  ? handleAddChildNode
-                  : undefined}
-                onConnectNodes={canEditStructure
-                  ? handleConnectNodes
-                  : undefined}
-                onDeleteEdges={canEditStructure ? handleDeleteEdges : undefined}
-                onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-                onNodePositionChange={editingBlocked
-                  ? undefined
-                  : handleNodePositionChange}
-                onNodeSelect={setSelectedNodeId}
-                onOutputsChange={canEditOutputs
-                  ? handleOutputsChange
-                  : undefined}
-                onRunToNode={handleRunToNode}
-                onVariableSelect={showNodeVariable}
-                onSaveDocument={handleSaveDocument}
-                outputsReadOnly={!canEditOutputs}
-                runToNodeDisabled={isRunActive || isRuntimeMaintenanceActive ||
-                  importingFileName !== null ||
-                  isSelectedNodeRunning ||
-                  saveStatus === "outcome_unknown"}
-                onSelectionClear={() => setSelectedNodeId(null)}
-                themeMode={themeMode}
-              />
-            </div>
-            <InspectorPanel
-              themeMode={themeMode}
-              selectedNode={selectedNodeDetails}
-              graph={graphInspectorDetails}
-              selectedNodeExecutionState={selectedNodeId
-                ? executionStateByNodeId[selectedNodeId] ?? null
-                : null}
-              selectedNodeRunStatus={selectedNodeId
-                ? nodeRunStatuses[selectedNodeId] ?? "idle"
-                : "idle"}
-              graphExecutionState={graphExecutionState}
-              isRunActive={isRunActive || isRuntimeMaintenanceActive ||
-                importingFileName !== null}
-              traceEnabled={traceEnabled}
-              readOnly={!canEditOutputs}
-              onNodeSelect={setSelectedNodeId}
-              onCodeChange={handleCodeChange}
-              onNodeNameChange={handleNodeNameChange}
-              onNodeMetadataChange={handleNodeMetadataChange}
-              onGlobalsCodeChange={handleGlobalsCodeChange}
-              onTraceEnabledChange={setTraceEnabled}
-              onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
-              onRunToNode={handleRunToNode}
-              onSelectionClear={() => setSelectedNodeId(null)}
-              actionsBlocked={saveStatus === "outcome_unknown"}
-              navigationRequest={inspectorNavigationRequest}
-              pythonEditorError={saveError?.target}
-              onShowDocumentGlobals={() =>
-                showInspectorTarget("document_globals")}
+          <div className="h-full min-h-0">
+            <WorkspaceSplit
+              vertical
+              storageKey="graph-height"
+              initial={36}
+              label="Resize inspector"
+              focused={inspectorFocused}
+              first={
+                <div className="relative h-full min-h-0 min-w-0">
+                  <Canvas
+                    key={documentCanvasKey}
+                    graph={editableGraph}
+                    selectedNodeId={selectedNodeId}
+                    focusNodeRequest={canvasFocusRequest}
+                    nodeRunStatuses={nodeRunStatuses}
+                    nodePreviews={nodePreviews}
+                    nodeInputPreviews={nodeInputPreviews}
+                    nodeOutputOptions={nodeOutputOptions}
+                    onAddNode={canEditStructure ? handleAddNode : undefined}
+                    onImportFiles={handleImportFiles}
+                    onImportDirectoryRejected={handleImportDirectoryRejected}
+                    importingFileName={importingFileName}
+                    onAutoLayout={canEditStructure
+                      ? handleAutoLayout
+                      : undefined}
+                    onAddChildNode={canEditStructure
+                      ? handleAddChildNode
+                      : undefined}
+                    onConnectNodes={canEditStructure
+                      ? handleConnectNodes
+                      : undefined}
+                    onDeleteEdges={canEditStructure
+                      ? handleDeleteEdges
+                      : undefined}
+                    onDeleteNode={canEditStructure
+                      ? handleDeleteNode
+                      : undefined}
+                    onNodePositionChange={editingBlocked
+                      ? undefined
+                      : handleNodePositionChange}
+                    onNodeSelect={setSelectedNodeId}
+                    onOutputsChange={canEditOutputs
+                      ? handleOutputsChange
+                      : undefined}
+                    onRunToNode={handleRunToNode}
+                    onVariableSelect={showNodeVariable}
+                    onSaveDocument={handleSaveDocument}
+                    outputsReadOnly={!canEditOutputs}
+                    runToNodeDisabled={isRunActive ||
+                      isRuntimeMaintenanceActive ||
+                      importingFileName !== null ||
+                      isSelectedNodeRunning ||
+                      saveStatus === "outcome_unknown"}
+                    onSelectionClear={() => setSelectedNodeId(null)}
+                    themeMode={themeMode}
+                  />
+                  <ShortcutHintPanel />
+                </div>
+              }
+              second={
+                <InspectorPanel
+                  focused={inspectorFocused}
+                  onToggleFocus={() =>
+                    setInspectorFocused((current) => !current)}
+                  themeMode={themeMode}
+                  selectedNode={selectedNodeDetails}
+                  graph={graphInspectorDetails}
+                  selectedNodeExecutionState={selectedNodeId
+                    ? executionStateByNodeId[selectedNodeId] ?? null
+                    : null}
+                  selectedNodeRunStatus={selectedNodeId
+                    ? nodeRunStatuses[selectedNodeId] ?? "idle"
+                    : "idle"}
+                  graphExecutionState={graphExecutionState}
+                  isRunActive={isRunActive || isRuntimeMaintenanceActive ||
+                    importingFileName !== null}
+                  readOnly={!canEditOutputs}
+                  onNodeSelect={setSelectedNodeId}
+                  onCodeChange={handleCodeChange}
+                  onNodeNameChange={handleNodeNameChange}
+                  onNodeMetadataChange={handleNodeMetadataChange}
+                  onGlobalsCodeChange={handleGlobalsCodeChange}
+                  onDeleteNode={canEditStructure ? handleDeleteNode : undefined}
+                  onRunToNode={handleRunToNode}
+                  onSelectionClear={() => setSelectedNodeId(null)}
+                  actionsBlocked={saveStatus === "outcome_unknown"}
+                  navigationRequest={inspectorNavigationRequest}
+                  pythonEditorError={saveError?.target}
+                  onShowDocumentGlobals={() =>
+                    showInspectorTarget("document_globals")}
+                />
+              }
             />
-            <ShortcutHintPanel />
           </div>
         )}
       </main>
@@ -2059,25 +2098,27 @@ function ImportNotificationCard({
 
 function ShortcutHintPanel() {
   return (
-    <aside className="pointer-events-none absolute bottom-3 left-3 hidden rounded border border-zinc-200 bg-white/90 px-3 py-2 text-[11px] text-zinc-500 shadow-sm backdrop-blur md:block">
-      <span className="mr-2 font-medium text-zinc-700">Shortcuts</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Shift+Enter
-      </kbd>
-      <span className="mx-1">run through step</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        A
-      </kbd>
-      <span className="mx-1">add nearby node</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Ctrl+S
-      </kbd>
-      <span className="mx-1">save</span>
-      <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
-        Delete
-      </kbd>
-      <span className="ml-1">delete selection</span>
-    </aside>
+    <DismissibleDetails className="absolute bottom-3 right-3 z-10 max-w-[90%] rounded bg-white/95 px-3 py-2 text-[11px] text-zinc-500 shadow-sm dark:bg-zinc-900/95 dark:text-zinc-400">
+      <summary className="cursor-pointer font-medium">Shortcuts</summary>
+      <div className="mt-2 flex flex-wrap items-center gap-y-2">
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Shift+Enter
+        </kbd>
+        <span className="mx-1">run through step</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          A
+        </kbd>
+        <span className="mx-1">add nearby node</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Ctrl+S
+        </kbd>
+        <span className="mx-1">save</span>
+        <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-700">
+          Delete
+        </kbd>
+        <span className="ml-1">delete selection</span>
+      </div>
+    </DismissibleDetails>
   );
 }
 
@@ -2092,19 +2133,13 @@ function compactDocumentPath(path: string): string {
 }
 
 function runtimeSummaryLabel(python: PythonRuntime): string {
-  return `${runtimeEnvironmentLabel(python)} - Python ${python.version}`;
-}
-
-function runtimeModeLabel(python: PythonRuntime): string {
-  return python.runtimeMode === "managed"
-    ? "Managed environment"
-    : "User environment";
+  return `${runtimeEnvironmentLabel(python)} ${python.version}`;
 }
 
 function runtimeEnvironmentLabel(python: PythonRuntime): string {
-  if (python.runtimeMode === "managed") return "Managed env";
+  if (python.runtimeMode === "managed") return "Project Python";
   if (python.condaPrefix) return `Conda ${environmentName(python.condaPrefix)}`;
-  if (python.virtualEnv) return `Venv ${environmentName(python.virtualEnv)}`;
+  if (python.virtualEnv) return "Venv Python";
   return "System Python";
 }
 
@@ -2151,74 +2186,83 @@ function PythonRuntimeBadge({
 
   const runtimeLabel = runtimeSummaryLabel(python);
   const title = [
-    `Runtime: ${runtimeModeLabel(python)}`,
     `Python: ${python.executable}`,
     `Document: ${documentPath}`,
   ].join("\n");
 
   return (
-    <details className="group relative hidden md:block">
+    <DismissibleDetails className="group relative hidden md:block">
       <summary
-        className="flex cursor-pointer list-none items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1.5 text-xs text-zinc-500 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:text-zinc-400 dark:hover:text-zinc-100 [&::-webkit-details-marker]:hidden"
         title={title}
       >
         <span>{runtimeLabel}</span>
       </summary>
-      <div className="absolute right-0 z-30 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded border border-zinc-200 bg-white p-3 text-xs text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+      <div className="absolute left-0 z-30 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded border border-zinc-200 bg-white p-3 text-xs text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
         <div className="mb-2 flex items-center justify-between gap-3 border-b border-zinc-200 pb-2 dark:border-zinc-700">
           <span className="font-semibold">Runtime Details</span>
-          <span className="text-zinc-500 dark:text-zinc-400">
-            {runtimeModeLabel(python)}
-          </span>
         </div>
         <RuntimeDetail label="Document" value={documentPath} />
         <RuntimeDetail label="Python" value={python.executable} />
         <RuntimeDetail label="Version" value={python.version} />
-        {python.condaPrefix && (
-          <RuntimeDetail label="Conda" value={python.condaPrefix} />
-        )}
-        {python.virtualEnv && (
-          <RuntimeDetail label="Venv" value={python.virtualEnv} />
-        )}
-        <RuntimeDetail
-          label="rowcall"
-          value={python.rowcallImport.ok
-            ? python.rowcallImport.path ?? "importable"
-            : python.rowcallImport.error ?? "not importable"}
-          tone={python.rowcallImport.ok ? "default" : "warning"}
-        />
         {environment && (
           <RuntimeDetail
             label="Requirements"
             value={environment.requirementsStatus === "unknown"
-              ? "Managed externally"
+              ? "Not tracked"
               : environment.requirementsStatus === "changed"
-              ? "Update available"
-              : "Up to date"}
+              ? "Sync needed"
+              : environment.requirementsPresent
+              ? "Requirements unchanged"
+              : "No requirements file"}
             tone={environment.requirementsStatus === "changed"
               ? "warning"
               : "default"}
           />
         )}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200">
+            Advanced
+          </summary>
+          <div className="mt-2">
+            {python.condaPrefix && (
+              <RuntimeDetail label="Conda" value={python.condaPrefix} />
+            )}
+            {python.virtualEnv && (
+              <RuntimeDetail label="Venv" value={python.virtualEnv} />
+            )}
+            <RuntimeDetail
+              label="rowcall"
+              value={python.rowcallImport.ok
+                ? python.rowcallImport.path ?? "importable"
+                : python.rowcallImport.error ?? "not importable"}
+              tone={python.rowcallImport.ok ? "default" : "warning"}
+            />
+          </div>
+        </details>
         <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-          <span className="min-w-0 text-zinc-500 dark:text-zinc-400">
-            {restartError?.message ??
-              "Replace the Python process without restarting Rowcall."}
-          </span>
+          {restartError && (
+            <span
+              role="alert"
+              className="min-w-0 text-red-600 dark:text-red-400"
+            >
+              {restartError.message}
+            </span>
+          )}
           <button
             type="button"
             className="shrink-0 rounded border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
             disabled={isRunActive || isRestarting}
             title={isRunActive
               ? "Wait for the active run to finish before restarting Python"
-              : "Restart the Python runtime"}
+              : "Replace the Python process without restarting Rowcall."}
             onClick={onRestart}
           >
-            {isRestarting ? "Restarting..." : "Restart Python runtime"}
+            {isRestarting ? "Restarting..." : "Restart Python"}
           </button>
         </div>
       </div>
-    </details>
+    </DismissibleDetails>
   );
 }
 

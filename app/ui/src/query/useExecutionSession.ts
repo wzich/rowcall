@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type {
   ExecutionResponse,
   ExecutionStreamEvent,
+  NodeRunResult,
   ResultStoreIdentity,
 } from "../../../../types.ts";
 import type {
@@ -23,6 +24,9 @@ export function useExecutionSession(
   selectedSourceValue: string,
   options: { getCurrentSourceValue?: () => string } = {},
 ) {
+  const [successfulResultsByNodeId, setSuccessfulResultsByNodeId] = useState<
+    Record<string, NodeRunResult>
+  >({});
   const [executionStateByNodeId, setExecutionStateByNodeId] = useState<
     Record<string, ExecutionDisplayState>
   >({});
@@ -144,6 +148,12 @@ export function useExecutionSession(
     }
 
     if (event.type === "node_completed" || event.type === "node_failed") {
+      if (event.result.ok) {
+        setSuccessfulResultsByNodeId((current) => ({
+          ...current,
+          [event.nodeId]: event.result,
+        }));
+      }
       setExecutionStateByNodeId((current) => ({
         ...current,
         [event.nodeId]: {
@@ -186,6 +196,16 @@ export function useExecutionSession(
     nodeIds: Iterable<string>,
   ) {
     const completedNodeIds = new Set(nodeIds);
+    setSuccessfulResultsByNodeId((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        [...completedNodeIds].flatMap((nodeId) =>
+          response.resultsByNode[nodeId]?.ok
+            ? [[nodeId, response.resultsByNode[nodeId]]]
+            : []
+        ),
+      ),
+    }));
 
     if (!response.ok) {
       storeFailedExecutionResponse(response, completedNodeIds);
@@ -457,6 +477,7 @@ export function useExecutionSession(
   }, []);
 
   function clearExecutionSession() {
+    setSuccessfulResultsByNodeId({});
     abortActiveRun();
     setExecutionStateByNodeId({});
     setGraphExecutionState(null);
@@ -497,6 +518,11 @@ export function useExecutionSession(
 
   function forgetNodes(nodeIds: Iterable<string>) {
     const removedNodeIds = new Set(nodeIds);
+    setSuccessfulResultsByNodeId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id]) => !removedNodeIds.has(id)),
+      )
+    );
 
     setExecutionStateByNodeId((current) =>
       Object.fromEntries(
@@ -515,6 +541,7 @@ export function useExecutionSession(
   }
 
   return {
+    successfulResultsByNodeId,
     executionStateByNodeId,
     graphExecutionState,
     activeRunType,

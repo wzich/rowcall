@@ -412,8 +412,6 @@ def make_polars_table_preview(value: Any) -> dict[str, Any] | None:
             }
             for column in sliced.columns
         ],
-        "index": list(range(len(rows))),
-        "indexLabel": "row",
         "rows": rows,
         "rowCount": row_count,
         "columnCount": column_count,
@@ -576,8 +574,6 @@ def _query_polars_table(
             }
             for column in columns
         ],
-        "index": [table_cell_preview(item) for item in page.get_column(source_row_name).to_list()],
-        "indexLabel": "row",
         "rows": rows,
         "rowCount": row_count,
         "columnCount": column_count,

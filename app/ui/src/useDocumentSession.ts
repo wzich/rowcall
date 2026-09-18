@@ -471,7 +471,7 @@ export function useDocumentSession(callbacks: DocumentSessionCallbacks) {
       !editableDocumentRef.current || flushPromiseRef.current ||
       saveOutcomeUnknownRef.current
     ) return;
-    await prepareForWrite({ savePending: true });
+    return await prepareForWrite({ savePending: true });
   }
 
   return {

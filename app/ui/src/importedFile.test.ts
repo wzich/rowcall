@@ -38,6 +38,21 @@ Deno.test("CSV imports generate a readable Polars source node", () => {
   );
 });
 
+Deno.test("reader output names cannot shadow the Polars import", () => {
+  for (const storedName of ["pl.csv", "PL.tsv", "pl.parquet"]) {
+    const { node } = createImportedFileNode({
+      id: "n_import",
+      storedName,
+      relativePath: `data/${storedName}`,
+      position: { x: 0, y: 0 },
+      existingFunctionNames: [],
+    });
+    assertEquals(node.outputs, ["pl_data"]);
+    assertEquals(node.functionName, "load_pl_data");
+    assertStringIncludes(node.code, "pl_data = pl.read_");
+  }
+});
+
 Deno.test("Polars imports are added to globals once", () => {
   assertEquals(
     ensurePolarsGlobalsImport("from pathlib import Path"),

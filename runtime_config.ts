@@ -117,7 +117,7 @@ export async function getPythonEnvironmentInfo(): Promise<
         "    'version': platform.python_version(),",
         "    'implementation': platform.python_implementation(),",
         "    'condaPrefix': os.environ.get('CONDA_PREFIX'),",
-        "    'virtualEnv': os.environ.get('VIRTUAL_ENV'),",
+        "    'virtualEnv': sys.prefix if sys.prefix != sys.base_prefix else None,",
         "    'rowcallImport': rowcall_import,",
         "}))",
       ].join("\n"),

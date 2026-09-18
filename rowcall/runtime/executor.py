@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import contextvars
 import hashlib
@@ -514,6 +515,7 @@ def execute_plan(
             outputs_by_node,
             root_inputs,
         )
+        input_previews = {name: preview_value(name, value) for name, value in inputs.items()}
         result = execute_node(
             node,
             globals_scope,
@@ -526,6 +528,7 @@ def execute_plan(
                 DISPLAY_PNG_RUN_MAX_BYTES - display_image_bytes,
             ),
         )
+        result["inputs"] = input_previews
         display_image_bytes += result.pop("_displayImageBytes", 0)
         results_by_node[node_id] = result
         executed_node_ids.append(node_id)
@@ -708,6 +711,16 @@ def execute_node(
             stderr_buffer.getvalue(),
             error_details=error_details,
         )
+        # Runtime functions retain authored body line numbers. Only expose a
+        # location when it maps to editable body code, never generated returns.
+        function = ast.parse(node.function_source).body[0]
+        if node.editable and isinstance(function, ast.FunctionDef) and function.body:
+            first_line = function.body[0].lineno
+            for frame, line in traceback.walk_tb(exc.__traceback__):
+                if frame.f_code.co_filename == filename and frame.f_code.co_name == node.function_name:
+                    body_line = line - first_line + 1
+                    if 1 <= body_line <= len(node.display_code.splitlines()):
+                        result["errorLocation"] = {"line": body_line, "column": 1}
         result["displays"] = displays
         result["_displayImageBytes"] = display_collector.image_bytes
         result["warnings"] = [*result_warnings, *_capture_warnings(stdout_buffer, stderr_buffer)]
@@ -887,7 +900,7 @@ def append_trace(
             "index": index,
             "nodeId": node_id,
             "dependsOn": list(depends_on),
-            "inputs": {name: preview_value(name, value) for name, value in inputs.items()},
+            "inputs": result.get("inputs", {}),
             "ok": result["ok"],
             "stdout": result["stdout"],
             "stderr": result["stderr"],

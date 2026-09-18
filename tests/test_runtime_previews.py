@@ -131,13 +131,13 @@ class RuntimePreviewTests(unittest.TestCase):
         self.assertEqual(table["indexLabel"], "index")
         self.assertEqual(table["index"], [previews.table_cell_preview(HUGE_TEXT)])
 
-    def test_polars_preview_adds_source_row_numbers(self) -> None:
+    def test_polars_preview_omits_synthetic_row_numbers(self) -> None:
         table = self._make_fake_polars_preview()
 
         self.assertIsNotNone(table)
         assert table is not None
-        self.assertEqual(table["indexLabel"], "row")
-        self.assertEqual(table["index"], [0])
+        self.assertNotIn("indexLabel", table)
+        self.assertNotIn("index", table)
 
     def test_preview_identity_repr_and_warning_fields_are_byte_bounded(self) -> None:
         value_type = type(

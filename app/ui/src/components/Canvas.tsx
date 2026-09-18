@@ -14,6 +14,7 @@ import {
   PanOnScrollMode,
   ReactFlow,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
@@ -612,21 +613,25 @@ function CanvasShortcutBridge({
 }
 
 function InitialFitView({ nodeCount }: { nodeCount: number }) {
-  const { fitView } = useReactFlow();
+  const { fitView, viewportInitialized } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const hasFitViewRef = useRef(false);
 
   useEffect(() => {
-    if (hasFitViewRef.current || nodeCount === 0) {
+    if (
+      hasFitViewRef.current || nodeCount === 0 || !nodesInitialized ||
+      !viewportInitialized
+    ) {
       return;
     }
 
-    hasFitViewRef.current = true;
     const frameId = requestAnimationFrame(() => {
-      fitView({ padding: 0.25 });
+      hasFitViewRef.current = true;
+      void fitView({ padding: 0.15, minZoom: minCanvasZoom, maxZoom: 1 });
     });
 
     return () => cancelAnimationFrame(frameId);
-  }, [fitView, nodeCount]);
+  }, [fitView, nodeCount, nodesInitialized, viewportInitialized]);
 
   return null;
 }

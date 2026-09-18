@@ -14,6 +14,40 @@ from rowcall.runtime.executor import invalidate_document_local_imports
 
 
 class RuntimeExecutorTests(unittest.TestCase):
+    def test_inputs_are_snapshotted_before_mutation_with_or_without_trace(self) -> None:
+        source = """
+from rowcall import node
+@node(id="source", outputs=["items"])
+def source():
+    items = [1, 2]
+    return {"items": items}
+@node(id="change", outputs=["items"])
+def change(items):
+    items.append(3)
+    return {"items": items}
+change.depends_on(source.output("items"))
+"""
+        for trace in (False, True):
+            result = run_source(source, Path("/tmp/input_snapshot.py"), trace=trace)
+            self.assertTrue(result["ok"])
+            changed = result["resultsByNode"]["change"]
+            self.assertEqual(changed["inputs"]["items"]["jsonValue"], [1, 2])
+            self.assertEqual(changed["outputs"]["items"]["jsonValue"], [1, 2, 3])
+            if trace:
+                self.assertEqual(result["trace"][1]["inputs"], changed["inputs"])
+
+    def test_runtime_error_location_maps_to_editable_body(self) -> None:
+        result = run_source("""
+from rowcall import node
+@node(id="bad", outputs=["value"])
+def bad():
+    value = 1
+    raise ValueError("failed at body line two")
+    return {"value": value}
+""", Path("/tmp/error_location.py"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["resultsByNode"]["bad"]["errorLocation"], {"line": 2, "column": 1})
+
     def test_import_freshness_preserves_packages_inside_document_venv(self) -> None:
         module_name = "rowcall_document_venv_dependency"
         module = types.ModuleType(module_name)
