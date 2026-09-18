@@ -46,6 +46,10 @@ Send the commit/artifact name, Windows version, Python version, browser, failed
 step, and relevant terminal output. Do not include the authenticated browser URL
 or private project data. Use only the disposable example for these checks.
 
-For development on Windows, use Python from `.venv\Scripts\python.exe` after
-`deno task setup`. The Python test task invokes `python3`; GitHub's setup-python
-provides it. Prepend `.venv\Scripts` to PATH when testing with a local venv.
+For development on Windows, `deno task setup` creates
+`.venv\Scripts\python.exe`. The Python test task automatically uses the
+checkout's virtualenv, with system Python as a fallback. Run `deno task check`,
+`deno task test`, and `deno task
+build`. For browser tests, set
+`$env:ROWCALL_TEST_PYTHON` to the full path of `.venv\Scripts\python.exe`, then
+run `deno task browser:install` and `deno task test:browser`.

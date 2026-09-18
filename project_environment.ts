@@ -285,5 +285,8 @@ function getParentDirectory(path: string): string | undefined {
   const separator = normalized.lastIndexOf("/");
   if (separator < 0) return undefined;
   if (separator === 0) return "/";
-  return normalized.slice(0, separator);
+  return normalized.slice(
+    0,
+    separator === 2 && /^[A-Za-z]:/u.test(path) ? 3 : separator,
+  );
 }
