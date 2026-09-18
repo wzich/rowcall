@@ -115,13 +115,13 @@ sourceRuntimeTest(
   async () => {
     const graphResponse = await runSourceGraph(
       "from rowcall import node\n",
-      "/tmp/source_inputs.py",
+      `${Deno.cwd()}/source_inputs.py`,
       { value: 1 },
       true,
     );
     const nodeResponse = await runSourceToNode(
       "from rowcall import node\n",
-      "/tmp/source_inputs.py",
+      `${Deno.cwd()}/source_inputs.py`,
       "target",
       { value: 1 },
     );
