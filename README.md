@@ -45,7 +45,7 @@ the next time it runs if the bundled Rowcall version changed.
 To run the complete release check without uploading anything:
 
 ```sh
-deno task release:prepare
+ROWCALL_WINDOWS_ARTIFACT_DIR="$PWD/tmp/windows-artifact/dist/windows-release" deno task release:prepare
 ```
 
 This checks and tests the repository, builds both macOS artifacts, exercises the
@@ -419,6 +419,7 @@ For release hosting, publish platform-specific binaries such as:
 ```text
 rowcall-darwin-arm64
 rowcall-darwin-x64
+rowcall-windows-x64.exe
 ```
 
 The installer template in `packaging/install.sh` defaults to the release asset
@@ -429,6 +430,32 @@ direct binary URL or a release base URL:
 ROWCALL_DOWNLOAD_URL=https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64 sh packaging/install.sh
 ROWCALL_RELEASE_BASE=https://releases.rowcall.io ROWCALL_VERSION=v0.1.0 sh packaging/install.sh
 ```
+
+## Windows beta
+
+Windows x64 uses the same browser canvas and Python document format. Install
+Python 3.10 or newer first (`python` or `python3` must work in your terminal).
+The PowerShell installer verifies SHA-256 before replacing the executable and
+installs to `%LOCALAPPDATA%\Rowcall\bin`. It prints PATH instructions rather
+than changing your persistent PATH. Close Rowcall before updating.
+
+After a Windows-enabled release is published:
+
+```powershell
+Invoke-WebRequest https://rowcall.io/install.ps1 -OutFile install-rowcall.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-rowcall.ps1
+& "$env:LOCALAPPDATA\Rowcall\bin\rowcall.exe" example my-work --open
+```
+
+Before publication, use the verified GitHub Actions artifact and the
+[Windows beta test checklist](docs/windows-beta-test.md). The `windows-latest`
+CI job runs the unit tests and full browser journey, then
+`deno task
+release:windows` compiles the executable and tests the PowerShell
+installer, fresh project environment, JSON CLI execution, bundled Python
+package, and UI serving outside the checkout. Only successful jobs upload the
+test artifact. Windows ARM64 and automatic Python installation are not covered
+by this beta.
 
 ## Release To rowcall.io
 
@@ -442,17 +469,20 @@ R2 bucket. The default bucket name is `rowcall-io-releases`, and the expected
 public custom domain is `https://releases.rowcall.io`.
 
 Publishing is intentionally local and manual during the invited beta. Start from
-a clean checkout and stage the release:
+a clean macOS checkout. Download `rowcall-windows-x64` from the successful CI
+run for that **exact commit**, then stage the release:
 
 ```sh
 deno task release:prepare
 ```
 
 This checks and tests the repository, builds both macOS binaries, natively
-installs and exercises the binary for the current Mac, and assembles the site
-and download directory. Inspect the staged output if desired, then authenticate
-Wrangler with the Cloudflare account that owns the Pages project and R2 bucket
-and publish those exact artifacts:
+installs and exercises the binary for the current Mac, imports the Windows
+binary and its native smoke attestation, and assembles the site and download
+directory. Missing or mismatched Windows attestations block staging and
+publication. Inspect the staged output if desired, then authenticate Wrangler
+with the Cloudflare account that owns the Pages project and R2 bucket and
+publish those exact artifacts:
 
 ```sh
 deno task release:publish
@@ -476,6 +506,7 @@ dist/site/
   favicon.svg
   index.html
   install.sh
+  install.ps1
   latest.json
   llms.txt
 

@@ -319,6 +319,7 @@ Deno.test({
 
 Deno.test({
   name: "managed environment revision invalidates legacy version-only stamps",
+  ignore: Deno.build.os === "windows", // POSIX executable fixture; native bootstrap covered by installed smoke.
   permissions: { read: true, write: true, run: true, env: true },
   async fn() {
     const home = await Deno.makeTempDir();
@@ -1096,7 +1097,7 @@ async function createPythonVenv(directory: string): Promise<void> {
 
 async function removePipFromVenv(venvPython: string): Promise<void> {
   const output = await new Deno.Command(venvPython, {
-    args: ["-c", "import site; print(site.getsitepackages()[0])"],
+    args: ["-c", 'import sysconfig; print(sysconfig.get_path("purelib"))'],
     stdout: "piped",
     stderr: "piped",
   }).output();

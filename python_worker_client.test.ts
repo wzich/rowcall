@@ -1,5 +1,8 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { configurePythonRuntime } from "./runtime_config.ts";
+import {
+  configurePythonRuntime,
+  resolvePythonCommand,
+} from "./runtime_config.ts";
 import {
   PythonWorkerClient,
   pythonWorkerCommandArgs,
@@ -48,43 +51,17 @@ Deno.test("Python worker terminal event map covers every declared operation", ()
 Deno.test(
   "PythonWorkerClient cancels a closed stream before the next operation",
   async () => {
-    const directory = await Deno.makeTempDir();
-    const workerPath = `${directory}/fake_worker.ts`;
-    const commandPath = `${directory}/fake_python_worker`;
-
-    await Deno.writeTextFile(
-      workerPath,
-      `
-const decoder = new TextDecoder();
-let buffer = "";
-const pending = new Promise(() => {});
-
-for await (const chunk of Deno.stdin.readable) {
-  buffer += decoder.decode(chunk, { stream: true });
-  const lineEnd = buffer.indexOf("\\n");
-  if (lineEnd < 0) continue;
-
-  const line = buffer.slice(0, lineEnd);
-  const request = JSON.parse(line);
-
-  if (request.operation === "run_graph") {
-    console.log(JSON.stringify({ type: "run_started" }));
-    await pending;
-  }
-
-  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
-}
-`,
-    );
-    await Deno.writeTextFile(
-      commandPath,
-      `#!/bin/sh
-exec deno run --allow-read '${workerPath}' "$@"
-`,
-    );
-    await Deno.chmod(commandPath, 0o755);
-
-    configurePythonRuntime({ command: commandPath });
+    const cleanup = await fakeWorker(`
+import json
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    if request["operation"] == "run_graph":
+        print(json.dumps({"type": "run_started"}), flush=True)
+        time.sleep(60)
+    print(json.dumps({"type": "inspect_source_completed", "ok": True}), flush=True)
+`);
     const client = new PythonWorkerClient();
 
     try {
@@ -106,7 +83,7 @@ exec deno run --allow-read '${workerPath}' "$@"
       assertEquals(finalEvent.type, "inspect_source_completed");
     } finally {
       await client.shutdown();
-      configurePythonRuntime({});
+      await cleanup();
     }
   },
 );
@@ -114,16 +91,9 @@ exec deno run --allow-read '${workerPath}' "$@"
 Deno.test({
   name:
     "PythonWorkerClient cancellation kills spawned process-group descendants",
-  ignore: Deno.build.os === "windows",
   fn: async () => {
-    const directory = await Deno.makeTempDir();
-    const packageDirectory = `${directory}/rowcall/runtime`;
-    await Deno.mkdir(packageDirectory, { recursive: true });
-    await Deno.writeTextFile(`${directory}/rowcall/__init__.py`, "");
-    await Deno.writeTextFile(`${packageDirectory}/__init__.py`, "");
-    await Deno.writeTextFile(
-      `${packageDirectory}/worker.py`,
-      `
+    const cleanup = await fakeWorker(`
+
 import json
 import subprocess
 import sys
@@ -137,20 +107,7 @@ child = subprocess.Popen([
 ])
 print(json.dumps({"type": "run_started", "childPid": child.pid}), flush=True)
 time.sleep(60)
-`,
-    );
-    const wrapper = `${directory}/python-worker-test`;
-    const quotedDirectory = directory.replaceAll("'", `'"'"'`);
-    await Deno.writeTextFile(
-      wrapper,
-      `#!/bin/sh\ncd -- '${quotedDirectory}'\nexec python3 "$@"\n`,
-      { mode: 0o700 },
-    );
-
-    configurePythonRuntime({
-      command: wrapper,
-      pythonPathEntries: [directory],
-    });
+`);
     const client = new PythonWorkerClient();
 
     try {
@@ -169,23 +126,16 @@ time.sleep(60)
       assertEquals(await waitForProcessExit(childPid), true);
     } finally {
       await client.shutdown();
-      configurePythonRuntime({});
+      await cleanup();
     }
   },
 });
 
 Deno.test({
   name: "stale worker readers cannot fail a replacement worker request",
-  ignore: Deno.build.os === "windows",
   fn: async () => {
-    const directory = await Deno.makeTempDir();
-    const packageDirectory = `${directory}/rowcall/runtime`;
-    await Deno.mkdir(packageDirectory, { recursive: true });
-    await Deno.writeTextFile(`${directory}/rowcall/__init__.py`, "");
-    await Deno.writeTextFile(`${packageDirectory}/__init__.py`, "");
-    await Deno.writeTextFile(
-      `${packageDirectory}/worker.py`,
-      `
+    const cleanup = await fakeWorker(`
+
 import json
 import subprocess
 import sys
@@ -202,20 +152,7 @@ if request["operation"] == "run_graph":
 else:
     time.sleep(3)
     print(json.dumps({"type": "inspect_source_completed", "ok": True}), flush=True)
-`,
-    );
-    const wrapper = `${directory}/python-worker-generation-test`;
-    const quotedDirectory = directory.replaceAll("'", `'"'"'`);
-    await Deno.writeTextFile(
-      wrapper,
-      `#!/bin/sh\ncd -- '${quotedDirectory}'\nexec python3 "$@"\n`,
-      { mode: 0o700 },
-    );
-
-    configurePythonRuntime({
-      command: wrapper,
-      pythonPathEntries: [directory],
-    });
+`);
     const client = new PythonWorkerClient();
     try {
       const stream = client.request("run_graph", {
@@ -232,12 +169,20 @@ else:
       assertEquals(replacement.type, "inspect_source_completed");
     } finally {
       await client.shutdown();
-      configurePythonRuntime({});
+      await cleanup();
     }
   },
 });
 
 async function processExists(pid: number): Promise<boolean> {
+  if (Deno.build.os === "windows") {
+    const result = await new Deno.Command("tasklist.exe", {
+      args: ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return new TextDecoder().decode(result.stdout).includes(`"${pid}"`);
+  }
   const status = await new Deno.Command("kill", {
     args: ["-0", String(pid)],
     stdout: "null",
@@ -278,43 +223,17 @@ async function waitForProcessExit(
 Deno.test(
   "PythonWorkerClient aborts while next event is pending",
   async () => {
-    const directory = await Deno.makeTempDir();
-    const workerPath = `${directory}/fake_worker.ts`;
-    const commandPath = `${directory}/fake_python_worker`;
-
-    await Deno.writeTextFile(
-      workerPath,
-      `
-const decoder = new TextDecoder();
-let buffer = "";
-const pending = new Promise(() => {});
-
-for await (const chunk of Deno.stdin.readable) {
-  buffer += decoder.decode(chunk, { stream: true });
-  const lineEnd = buffer.indexOf("\\n");
-  if (lineEnd < 0) continue;
-
-  const line = buffer.slice(0, lineEnd);
-  const request = JSON.parse(line);
-
-  if (request.operation === "run_graph") {
-    console.log(JSON.stringify({ type: "run_started" }));
-    await pending;
-  }
-
-  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
-}
-`,
-    );
-    await Deno.writeTextFile(
-      commandPath,
-      `#!/bin/sh
-exec deno run --allow-read '${workerPath}' "$@"
-`,
-    );
-    await Deno.chmod(commandPath, 0o755);
-
-    configurePythonRuntime({ command: commandPath });
+    const cleanup = await fakeWorker(`
+import json
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    if request["operation"] == "run_graph":
+        print(json.dumps({"type": "run_started"}), flush=True)
+        time.sleep(60)
+    print(json.dumps({"type": "inspect_source_completed", "ok": True}), flush=True)
+`);
     const client = new PythonWorkerClient();
     const abortController = new AbortController();
 
@@ -344,7 +263,7 @@ exec deno run --allow-read '${workerPath}' "$@"
       assertEquals(finalEvent.type, "inspect_source_completed");
     } finally {
       await client.shutdown();
-      configurePythonRuntime({});
+      await cleanup();
     }
   },
 );
@@ -352,34 +271,14 @@ exec deno run --allow-read '${workerPath}' "$@"
 Deno.test(
   "PythonWorkerClient keeps requests queued while maintenance holds the stopped worker",
   async () => {
-    const directory = await Deno.makeTempDir();
-    const workerPath = `${directory}/fake_worker.ts`;
-    const commandPath = `${directory}/fake_python_worker`;
-
-    await Deno.writeTextFile(
-      workerPath,
-      `
-const decoder = new TextDecoder();
-let buffer = "";
-
-for await (const chunk of Deno.stdin.readable) {
-  buffer += decoder.decode(chunk, { stream: true });
-  const lineEnd = buffer.indexOf("\\n");
-  if (lineEnd < 0) continue;
-  buffer = buffer.slice(lineEnd + 1);
-  console.log(JSON.stringify({ type: "inspect_source_completed", ok: true }));
-}
-`,
-    );
-    await Deno.writeTextFile(
-      commandPath,
-      `#!/bin/sh
-exec deno run --allow-read '${workerPath}' "$@"
-`,
-    );
-    await Deno.chmod(commandPath, 0o755);
-
-    configurePythonRuntime({ command: commandPath });
+    const cleanup = await fakeWorker(`
+import json
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({"type": "inspect_source_completed", "ok": True}), flush=True)
+`);
     const client = new PythonWorkerClient();
     let releaseMaintenance!: () => void;
     const maintenanceReleased = new Promise<void>((resolve) => {
@@ -421,7 +320,30 @@ exec deno run --allow-read '${workerPath}' "$@"
     } finally {
       releaseMaintenance();
       await client.shutdown();
-      configurePythonRuntime({});
+      await cleanup();
     }
   },
 );
+
+// Use a real Python interpreter and isolated package instead of shell wrappers.
+async function fakeWorker(source: string): Promise<() => Promise<void>> {
+  const probe = await new Deno.Command(await resolvePythonCommand(), {
+    args: ["-c", "import sys; print(sys.executable)"],
+    stdout: "piped",
+  }).output();
+  if (!probe.success) throw new Error("Cannot resolve test Python");
+  const python = new TextDecoder().decode(probe.stdout).trim();
+  const directory = await Deno.makeTempDir({ prefix: "rowcall worker ü " });
+  await Deno.mkdir(`${directory}/rowcall/runtime`, { recursive: true });
+  await Deno.writeTextFile(`${directory}/rowcall/__init__.py`, "");
+  await Deno.writeTextFile(`${directory}/rowcall/runtime/__init__.py`, "");
+  await Deno.writeTextFile(`${directory}/rowcall/runtime/worker.py`, source);
+  const previous = Deno.cwd();
+  Deno.chdir(directory);
+  configurePythonRuntime({ command: python, pythonPathEntries: [directory] });
+  return async () => {
+    configurePythonRuntime({});
+    Deno.chdir(previous);
+    await Deno.remove(directory, { recursive: true });
+  };
+}

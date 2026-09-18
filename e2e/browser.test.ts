@@ -15,7 +15,7 @@ type RowcallProject = { documentPath: string; url: string };
 const test = base.extend<{ rowcall: RowcallProject }>({
   rowcall: async ({}, use, testInfo) => {
     await mkdir(join(repository, "tmp"), { recursive: true });
-    const project = await mkdtemp(join(repository, "tmp", "browser-test-"));
+    const project = await mkdtemp(join(repository, "tmp", "browser test ü "));
     let server: ChildProcess | undefined;
     let serverLog = "";
     let fixtureReady = false;
@@ -109,6 +109,18 @@ async function availablePort(): Promise<number> {
 
 async function stopServer(server: ChildProcess): Promise<void> {
   if (!server.pid || server.exitCode !== null || server.signalCode !== null) {
+    return;
+  }
+  if (process.platform === "win32") {
+    const exited = new Promise<void>((resolve) =>
+      server.once("exit", () => resolve())
+    );
+    await run("taskkill.exe", ["/PID", String(server.pid), "/T", "/F"], {
+      timeout: 10_000,
+    }).catch((error) => {
+      if (server.exitCode === null && server.signalCode === null) throw error;
+    });
+    await exited;
     return;
   }
   await new Promise<void>((resolve) => {

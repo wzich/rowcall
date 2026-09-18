@@ -458,6 +458,18 @@ export class PythonWorkerClient {
 
 async function terminateWorkerProcess(child: Deno.ChildProcess): Promise<void> {
   const status = child.status.catch(() => null);
+  if (Deno.build.os === "windows") {
+    // Terminate the tree before the parent exits, while Windows can still
+    // discover its descendants. SIGTERM only kills the immediate child.
+    const result = await new Deno.Command("taskkill.exe", {
+      args: ["/PID", String(child.pid), "/T", "/F"],
+      stdout: "null",
+      stderr: "null",
+    }).output().catch(() => null);
+    if (!result?.success) await signalWorker(child, "SIGKILL");
+    await raceWithDelay(status, WORKER_EXIT_WAIT_MS);
+    return;
+  }
   await signalWorker(child, "SIGTERM");
 
   await raceWithDelay(status, WORKER_TERMINATION_GRACE_MS);

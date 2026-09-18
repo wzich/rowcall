@@ -27,8 +27,10 @@ Deno.test("getActiveEnvironmentPythonCandidates prefers active venv then conda",
     assertEquals(getActiveEnvironmentPythonCandidates(), [
       "/venv/bin/python",
       "/venv/Scripts/python.exe",
+      "/venv/python.exe",
       "/conda/bin/python",
       "/conda/Scripts/python.exe",
+      "/conda/python.exe",
     ]);
   } finally {
     restoreEnv("VIRTUAL_ENV", previousVirtualEnv);
@@ -46,6 +48,7 @@ Deno.test("getPythonCommandEnvironment prepends configured Python paths", () => 
     });
     assertEquals(getPythonCommandEnvironment(), {
       MPLBACKEND: "Agg",
+      PYTHONIOENCODING: "utf-8",
       PYTHONPATH: `/rowcall${Deno.build.os === "windows" ? ";" : ":"}/existing`,
     });
   } finally {
@@ -56,7 +59,10 @@ Deno.test("getPythonCommandEnvironment prepends configured Python paths", () => 
 
 Deno.test("getPythonCommandEnvironment forces a headless plotting backend", () => {
   configurePythonRuntime({});
-  assertEquals(getPythonCommandEnvironment(), { MPLBACKEND: "Agg" });
+  assertEquals(getPythonCommandEnvironment(), {
+    MPLBACKEND: "Agg",
+    PYTHONIOENCODING: "utf-8",
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined): void {
