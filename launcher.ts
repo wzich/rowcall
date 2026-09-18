@@ -1,3 +1,4 @@
+import { openBrowser } from "./browser_launcher.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { resolveExistingDocumentPath } from "./document_path.ts";
 import { buildRowcallUrl, startRowcallServer } from "./main.ts";
@@ -1735,19 +1736,6 @@ async function appendLog(paths: LauncherPaths, message: string): Promise<void> {
   });
 }
 
-async function openBrowser(url: string): Promise<void> {
-  const output = await new Deno.Command("open", {
-    args: [url],
-    stdout: "null",
-    stderr: "piped",
-  }).output().catch(() => null);
-  if (!output || output.success) return;
-  const stderr = new TextDecoder().decode(output.stderr).trim();
-  console.warn(
-    `Could not open browser automatically${stderr ? `: ${stderr}` : ""}`,
-  );
-}
-
 function bundledSource(path: string): URL {
   return new URL(path, bundledSourceRoot);
 }
@@ -1821,7 +1809,10 @@ function getParentDirectory(path: string): string | undefined {
   const separatorIndex = normalizedPath.lastIndexOf("/");
   if (separatorIndex < 0) return undefined;
   if (separatorIndex === 0) return "/";
-  return path.slice(0, separatorIndex);
+  return path.slice(
+    0,
+    separatorIndex === 2 && /^[A-Za-z]:/u.test(path) ? 3 : separatorIndex,
+  );
 }
 
 function pathContainsLocalBin(home: string): boolean {

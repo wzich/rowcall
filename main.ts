@@ -439,7 +439,10 @@ function getParentDirectory(path: string): string | undefined {
   if (separatorIndex === 0) {
     return "/";
   }
-  return path.slice(0, separatorIndex);
+  return path.slice(
+    0,
+    separatorIndex === 2 && /^[A-Za-z]:/u.test(path) ? 3 : separatorIndex,
+  );
 }
 
 export function sanitizeImportedFileName(name: string): string {

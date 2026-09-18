@@ -185,6 +185,7 @@ function getEnvironmentPythonCandidates(prefix: string): string[] {
   return [
     `${prefix}/bin/python`,
     `${prefix}/Scripts/python.exe`,
+    `${prefix}/python.exe`, // Windows Conda environments keep Python at the root.
   ];
 }
 

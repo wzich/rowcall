@@ -8,8 +8,10 @@ type CapturedOutput = {
 };
 
 async function main(): Promise<void> {
-  console.info("Building the compiled Rowcall launcher...");
-  await runChecked(Deno.execPath(), ["task", "launcher:compile"]);
+  if (!Deno.args[0]) {
+    console.info("Building the compiled Rowcall launcher...");
+    await runChecked(Deno.execPath(), ["task", "launcher:compile"]);
+  }
 
   const temporaryRoot = await Deno.makeTempDir({
     prefix: "rowcall-binary-smoke-",
@@ -36,7 +38,8 @@ def start():
     );
 
     const binaryPath = await Deno.realPath(
-      Deno.build.os === "windows" ? "dist/rowcall.exe" : "dist/rowcall",
+      Deno.args[0] ??
+        (Deno.build.os === "windows" ? "dist/rowcall.exe" : "dist/rowcall"),
     );
     const port = reserveAvailablePort();
     const origin = `http://${hostname}:${port}`;
@@ -53,6 +56,9 @@ def start():
       ],
       env: {
         HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+        VIRTUAL_ENV: "",
+        CONDA_PREFIX: "",
         PYTHONPATH: "",
       },
       cwd: temporaryRoot,
@@ -101,7 +107,7 @@ def start():
     if (
       !documentResponse.ok || documentPayload.ok !== true ||
       typeof documentPayload.path !== "string" ||
-      !documentPayload.path.endsWith("/graph.py")
+      !documentPayload.path.replaceAll("\\", "/").endsWith("/graph.py")
     ) {
       throw new Error(
         `Compiled launcher document request failed: ${
@@ -202,8 +208,17 @@ async function stopLauncher(
   launcher: Deno.ChildProcess,
   status: Promise<Deno.CommandStatus>,
 ): Promise<void> {
+  if (Deno.build.os === "windows") {
+    await new Deno.Command("taskkill.exe", {
+      args: ["/PID", String(launcher.pid), "/T", "/F"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    await status;
+    return;
+  }
   try {
-    launcher.kill(Deno.build.os === "windows" ? "SIGINT" : "SIGTERM");
+    launcher.kill("SIGTERM");
   } catch {
     return;
   }

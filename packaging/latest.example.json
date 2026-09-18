@@ -8,6 +8,10 @@
     "darwin-x64": {
       "url": "https://releases.rowcall.io/v0.1.0/rowcall-darwin-x64",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "windows-x64": {
+      "url": "https://releases.rowcall.io/v0.1.0/rowcall-windows-x64.exe",
+      "sha256": "REPLACE_WITH_SHA256"
     }
   }
 }

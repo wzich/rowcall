@@ -417,8 +417,10 @@
             <pre><code>curl -fsSL \
   https://rowcall.io/install.sh | sh</code></pre>
             <p class="requirements">
-              Invited alpha for macOS. Requires Python 3.10 or newer.
+              Invited beta for macOS and Windows x64. Requires Python 3.10 or newer.
             </p>
+            <p
+              class="requirements">Windows: <a href="/install.ps1" download>download the PowerShell installer</a>, then run <code>powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1</code>. The installer prints the installed command and PATH instructions.</p>
           </aside>
         </section>
 
@@ -488,7 +490,7 @@
             hosting system.
           </p>
           <p>
-            The macOS binary is unsigned and unnotarized. Rowcall executes Python
+            The beta binaries are unsigned; the macOS binary is also unnotarized. Rowcall executes Python
             with your user permissions, so open only code you trust.
           </p>
         </footer>

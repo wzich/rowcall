@@ -27,8 +27,10 @@ Deno.test("getActiveEnvironmentPythonCandidates prefers active venv then conda",
     assertEquals(getActiveEnvironmentPythonCandidates(), [
       "/venv/bin/python",
       "/venv/Scripts/python.exe",
+      "/venv/python.exe",
       "/conda/bin/python",
       "/conda/Scripts/python.exe",
+      "/conda/python.exe",
     ]);
   } finally {
     restoreEnv("VIRTUAL_ENV", previousVirtualEnv);

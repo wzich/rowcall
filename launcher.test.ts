@@ -319,6 +319,7 @@ Deno.test({
 
 Deno.test({
   name: "managed environment revision invalidates legacy version-only stamps",
+  ignore: Deno.build.os === "windows", // POSIX executable fixture; native bootstrap covered by installed smoke.
   permissions: { read: true, write: true, run: true, env: true },
   async fn() {
     const home = await Deno.makeTempDir();

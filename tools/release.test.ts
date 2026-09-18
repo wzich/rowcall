@@ -9,6 +9,9 @@ const commitB = "b".repeat(40);
 
 type FixtureOptions = {
   omitX64?: boolean;
+  omitWindowsSmoke?: boolean;
+  windowsCommit?: string;
+  corruptWindows?: boolean;
   sourceCommit?: string;
   sourceDirty?: boolean;
   corruptArm64AfterSmoke?: boolean;
@@ -36,6 +39,16 @@ async function withReleaseFixture(
     if (options.corruptArm64AfterSmoke) {
       await Deno.writeTextFile(arm64Path, "changed after smoke");
     }
+    const windows = `${directory}/rowcall-windows-x64.exe`;
+    await Deno.writeTextFile(windows, "binary:windows");
+    if (!options.omitWindowsSmoke) {
+      await writeSmokeAttestation(
+        windows,
+        options.windowsCommit ?? options.sourceCommit ?? commitA,
+        false,
+      );
+    }
+    if (options.corruptWindows) await Deno.writeTextFile(windows, "changed");
     await run(directory);
   } finally {
     await Deno.remove(directory, { recursive: true });
@@ -54,12 +67,14 @@ async function writeSmokeAttestation(
       JSON.stringify(
         {
           schemaVersion: 1,
-          asset: "rowcall-darwin-arm64",
+          asset: binaryPath.endsWith(".exe")
+            ? "rowcall-windows-x64.exe"
+            : "rowcall-darwin-arm64",
           sha256,
           version: "0.1.0",
           sourceCommit,
           sourceDirty,
-          nativeArchitecture: "arm64",
+          nativeArchitecture: binaryPath.endsWith(".exe") ? "x64" : "arm64",
         },
         null,
         2,
@@ -124,6 +139,7 @@ Deno.test("release gate accepts a native smoke plus both builds", async () => {
       expectedVersion: "0.1.0",
       expectedSourceCommit: commitA,
       expectedNativeArchitecture: "arm64",
+      expectedNativeOs: "darwin",
     });
     assertEquals(identity.version, "0.1.0");
     assertEquals(identity.sourceCommit, commitA);
@@ -131,6 +147,7 @@ Deno.test("release gate accepts a native smoke plus both builds", async () => {
     assertEquals(Object.keys(identity.hashes).sort(), [
       "darwin-arm64",
       "darwin-x64",
+      "windows-x64",
     ]);
   });
 });
@@ -143,6 +160,7 @@ Deno.test("release gate rejects a missing cross-build", async () => {
           directory,
           expectedVersion: "0.1.0",
           expectedNativeArchitecture: "arm64",
+          expectedNativeOs: "darwin",
         }),
       Error,
       "rowcall-darwin-x64",
@@ -159,6 +177,7 @@ Deno.test("release gate rejects artifacts from a different checkout", async () =
           expectedVersion: "0.1.0",
           expectedSourceCommit: commitA,
           expectedNativeArchitecture: "arm64",
+          expectedNativeOs: "darwin",
         }),
       Error,
       "current checkout",
@@ -174,6 +193,7 @@ Deno.test("release gate rejects a dirty native smoke", async () => {
           directory,
           expectedVersion: "0.1.0",
           expectedNativeArchitecture: "arm64",
+          expectedNativeOs: "darwin",
         }),
       Error,
       "dirty source tree",
@@ -191,6 +211,7 @@ Deno.test("release gate rejects an artifact changed after smoke", async () => {
             directory,
             expectedVersion: "0.1.0",
             expectedNativeArchitecture: "arm64",
+            expectedNativeOs: "darwin",
           }),
         Error,
         "hash does not match",
@@ -204,6 +225,10 @@ Deno.test("release manifest accepts the prepared binary hashes", () => {
     {
       version: "0.1.0",
       downloads: {
+        "windows-x64": {
+          url: "https://releases.rowcall.io/v0.1.0/rowcall-windows-x64.exe",
+          sha256: "d".repeat(64),
+        },
         "darwin-arm64": {
           url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64",
           sha256: "a".repeat(64),
@@ -223,6 +248,7 @@ Deno.test("release manifest accepts the prepared binary hashes", () => {
         hashes: {
           "darwin-arm64": "a".repeat(64),
           "darwin-x64": "b".repeat(64),
+          "windows-x64": "d".repeat(64),
         },
       },
     },
@@ -236,6 +262,10 @@ Deno.test("release manifest rejects a stale binary hash", () => {
         {
           version: "0.1.0",
           downloads: {
+            "windows-x64": {
+              url: "https://releases.rowcall.io/v0.1.0/rowcall-windows-x64.exe",
+              sha256: "d".repeat(64),
+            },
             "darwin-arm64": {
               url: "https://releases.rowcall.io/v0.1.0/rowcall-darwin-arm64",
               sha256: "c".repeat(64),
@@ -255,6 +285,7 @@ Deno.test("release manifest rejects a stale binary hash", () => {
             hashes: {
               "darwin-arm64": "a".repeat(64),
               "darwin-x64": "b".repeat(64),
+              "windows-x64": "d".repeat(64),
             },
           },
         },
@@ -263,3 +294,40 @@ Deno.test("release manifest rejects a stale binary hash", () => {
     "does not match the prepared release",
   );
 });
+
+for (
+  const [name, options, message] of [
+    [
+      "missing Windows native smoke",
+      { omitWindowsSmoke: true },
+      "smoke-attestation",
+    ],
+    [
+      "Windows artifact from another commit",
+      { windowsCommit: commitB },
+      "current checkout",
+    ],
+    [
+      "Windows artifact changed after smoke",
+      { corruptWindows: true },
+      "hash does not match",
+    ],
+  ] as const
+) {
+  Deno.test(`release gate rejects ${name}`, async () => {
+    await withReleaseFixture(options, async (directory) => {
+      await assertRejects(
+        () =>
+          validateReleaseArtifacts({
+            directory,
+            expectedVersion: "0.1.0",
+            expectedSourceCommit: commitA,
+            expectedNativeOs: "darwin",
+            expectedNativeArchitecture: "arm64",
+          }),
+        Error,
+        message,
+      );
+    });
+  });
+}

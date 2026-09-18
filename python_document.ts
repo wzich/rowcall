@@ -1368,7 +1368,10 @@ function containingDirectory(path: string): string {
 function splitPath(path: string): { directory: string; name: string } {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator < 0 ? { directory: ".", name: path } : {
-    directory: separator === 0 ? path.slice(0, 1) : path.slice(0, separator),
+    directory: separator === 0 ? path.slice(0, 1) : path.slice(
+      0,
+      separator === 2 && /^[A-Za-z]:/u.test(path) ? 3 : separator,
+    ),
     name: path.slice(separator + 1),
   };
 }

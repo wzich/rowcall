@@ -1,13 +1,21 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +52,21 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-failure
+          name: browser-failure-${{ matrix.os }}
           path: output/playwright/
           if-no-files-found: ignore
+
+      - name: Build and verify installed Windows release
+        if: runner.os == 'Windows'
+        run: deno task release:windows
+
+      - name: Upload verified Windows beta
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rowcall-windows-x64
+          path: |
+            dist/windows-release/*
+            packaging/install.ps1
+            docs/windows-beta-test.md
+          if-no-files-found: error
