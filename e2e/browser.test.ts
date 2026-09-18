@@ -686,3 +686,96 @@ test("initial graph view fits every measured node", async ({ page, rowcall }) =>
     );
   }).toBe(true);
 });
+
+test("unrun steps show upstream previews and switch to captured inputs after running", async ({ page, rowcall }) => {
+  let runRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/run-(to-node|graph)$/.test(new URL(request.url()).pathname)
+    ) {
+      runRequests++;
+    }
+  });
+  await openLargeOrders(page, rowcall.url);
+  const input = page.getByRole("region", {
+    name: "Input preview",
+    exact: true,
+  });
+  const output = page.getByRole("region", {
+    name: "Output preview",
+    exact: true,
+  });
+  const runStep = page.getByRole("button", { name: "Run", exact: true });
+  await expect(input).toContainText("No saved preview");
+  await page.locator("article[data-node-id]").getByRole("heading", {
+    name: "Load orders",
+    exact: true,
+  })
+    .click();
+  await runStep.click();
+  await expect(output.getByRole("table")).toContainText("28.4");
+
+  await page.getByRole("heading", { name: "Find large orders", exact: true })
+    .click();
+  await expect(input.getByRole("table")).toContainText("28.4");
+  await expect(input).not.toContainText("Not updated");
+
+  // Create and connect a new step after the parent has already run.
+  await page.locator("article[data-node-id]").getByRole("heading", {
+    name: "Load orders",
+    exact: true,
+  })
+    .click();
+  await page.keyboard.press("a");
+  await page.getByRole("button", { name: "Fit View", exact: true }).click();
+  const parent = page.locator("article[data-node-id]").filter({
+    has: page.getByRole("heading", {
+      name: "Load orders",
+      exact: true,
+    }),
+  });
+  const child = page.locator('article[data-selected="true"]');
+  await parent.locator('.source[data-handleid="orders"]').dragTo(
+    child.locator(".target"),
+  );
+  await expect(input.getByRole("table")).toContainText("28.4");
+  await expect(input).toContainText(
+    "From Load orders’s last successful run",
+  );
+  await expect(output.getByRole("table")).toHaveCount(0);
+
+  await page.getByRole("heading", { name: "Find large orders", exact: true })
+    .click();
+  await expect(input.getByRole("table")).toContainText("28.4");
+  await expect(input).toContainText(
+    "From Load orders’s last successful run",
+  );
+  await expect(output.getByRole("table")).toHaveCount(0);
+  // Routing edits currently mark the source stale; retain that signal.
+  await expect(input).toContainText("Not updated");
+
+  await page.locator("article[data-node-id]").getByRole("heading", {
+    name: "Load orders",
+    exact: true,
+  })
+    .click();
+  const editor = page.getByRole("textbox", {
+    name: "Step Python code",
+    exact: true,
+  });
+  await editor.fill((await editor.innerText()) + "\n# changed upstream");
+  await page.getByRole("heading", { name: "Find large orders", exact: true })
+    .click();
+  await expect(input.getByRole("table")).toContainText("28.4");
+  await expect(input).toContainText("Not updated");
+  expect(runRequests).toBe(1);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await runStep.click();
+  await expect(output.getByRole("table")).toContainText("64.99");
+  await expect(input.getByRole("table")).toContainText("28.4");
+  expect(runRequests).toBe(2);
+  await expect(input).not.toContainText("last successful run");
+  await expect(input).not.toContainText("Not updated");
+});
