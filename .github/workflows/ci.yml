@@ -43,8 +43,14 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install browser
+      - name: Install browser and Linux dependencies
+        if: runner.os == 'Linux'
         run: deno task browser:install --with-deps
+
+      - name: Install Windows browser
+        if: runner.os == 'Windows'
+        # Chromium needs no optional Windows Server media feature for this suite.
+        run: deno task browser:install
 
       - name: Browser regression
         run: deno task test:browser
