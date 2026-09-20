@@ -169,7 +169,9 @@ test("edit, save, run, reload, and recover a branching example", async ({ page, 
       await page.getByRole("button", { name: "Code", exact: true })
         .click();
       await editor.fill(
-        (await editor.innerText()).replace(">= 50", ">= 80"),
+        "# Explore your data\n" +
+          (await editor.innerText()).replace(">= 50", ">= 80") +
+          "\n# Inspect the result",
       );
       await save.click();
       await expect.poll(() => readFile(documentPath, "utf8")).toContain(
@@ -180,6 +182,8 @@ test("edit, save, run, reload, and recover a branching example", async ({ page, 
       await page.reload();
       await selectBranch();
       await expect(editor).toContainText(">= 80");
+      await expect(editor).toContainText("# Explore your data");
+      await expect(editor).toContainText("# Inspect the result");
       await page.getByRole("button", { name: "Run", exact: true })
         .click();
       await page.getByRole("button", { name: "Results", exact: true })

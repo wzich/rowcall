@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import textwrap
+import tokenize
 from pathlib import Path
 
 from .models import (
@@ -990,7 +992,7 @@ def _build_node(node: _DecodedNode, lines: list[str], globals_code: str) -> Docu
         outputs=outputs,
         parameters=parameters,
         variables=variables,
-        source_range=_function_source_range(function_def, standard_return),
+        source_range=_function_source_range(lines, function_def, standard_return),
         function_source=function_source,
         display_code=display_code,
         runtime_code=runtime_code,
@@ -1037,9 +1039,15 @@ def _extract_function_source(lines: list[str], function_def: ast.FunctionDef) ->
 
 
 def _extract_display_code(lines: list[str], function_def: ast.FunctionDef, strip_standard_return: bool) -> str:
+    if strip_standard_return:
+        start = _editable_body_start(lines, function_def)
+        end = function_def.body[-1].lineno - 1
+        indent = lines[end][:function_def.body[-1].col_offset]
+        return "\n".join(
+            line[len(indent):] if line.startswith(indent) else line
+            for line in lines[start - 1:end]
+        ).strip("\n")
     body = function_def.body
-    if strip_standard_return and body and isinstance(body[-1], ast.Return):
-        body = body[:-1]
     if not body:
         return ""
     start = body[0].lineno
@@ -1047,7 +1055,17 @@ def _extract_display_code(lines: list[str], function_def: ast.FunctionDef, strip
     return textwrap.dedent("\n".join(lines[start - 1 : end])).strip("\n")
 
 
-def _function_source_range(function_def: ast.FunctionDef, standard_return: bool) -> SourceRange:
+def _editable_body_start(lines: list[str], function_def: ast.FunctionDef) -> int:
+    # NEWLINE ends the complete logical header, including multiline signatures.
+    # Retain the existing statement boundary for inline function suites.
+    source = "\n".join(lines[function_def.lineno - 1:function_def.end_lineno])
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.NEWLINE:
+            return min(function_def.lineno + token.end[0], function_def.body[0].lineno)
+    return function_def.body[0].lineno
+
+
+def _function_source_range(lines: list[str], function_def: ast.FunctionDef, standard_return: bool) -> SourceRange:
     start = min([function_def.lineno] + [decorator.lineno for decorator in function_def.decorator_list])
     end = function_def.end_lineno or function_def.lineno
     decorator_line = next((decorator.lineno for decorator in function_def.decorator_list if _is_node_call(decorator)), None)
@@ -1058,7 +1076,7 @@ def _function_source_range(function_def: ast.FunctionDef, standard_return: bool)
     indent = None
     if standard_return and function_def.body and isinstance(function_def.body[-1], ast.Return):
         return_statement = function_def.body[-1]
-        body_start_line = function_def.body[0].lineno
+        body_start_line = _editable_body_start(lines, function_def)
         body_end_line = return_statement.lineno - 1
         return_line = return_statement.lineno
         return_end_line = return_statement.end_lineno or return_statement.lineno
