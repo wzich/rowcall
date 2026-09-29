@@ -81,7 +81,9 @@ This writes:
 ```text
 dist/site/
   _headers
-  favicon.svg
+  ecommerce.png
+  style.css
+  site.js
   index.html
   install.sh
   latest.json

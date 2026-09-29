@@ -8,7 +8,7 @@ release_base="${ROWCALL_RELEASE_BASE:-https://releases.rowcall.io}"
 release_version="${ROWCALL_VERSION:-latest}"
 skip_checksum="${ROWCALL_SKIP_CHECKSUM:-}"
 
-echo "Rowcall is an invited beta. The macOS binary is unsigned and not notarized."
+echo "Rowcall is an early beta. The macOS binary is unsigned and not notarized."
 echo "Rowcall runs Python with your user permissions; open only documents you trust."
 echo "Close any running Rowcall process before installing or updating."
 echo ""
