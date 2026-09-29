@@ -3,7 +3,7 @@
 > Rowcall is a workspace for exploring and building with data. It turns an analysis into an inspectable, runnable graph in an ordinary Python file, so the work can be extended and rerun instead of rebuilt when it becomes important.
 
 Website: https://rowcall.io
-Status: Invited alpha for macOS
+Status: Early beta for macOS
 
 ## What Rowcall is
 
@@ -30,9 +30,13 @@ curl -fsSL https://rowcall.io/install.sh | sh
 
 Close any running Rowcall process before installing or upgrading. The installer puts `rowcall` in `~/.local/bin`. If that directory is not on `PATH`, follow the export instruction printed by the installer.
 
-The alpha binary is unsigned and unnotarized. Rowcall executes Python with the user's permissions. Only open and run code the user trusts.
+The beta binary is unsigned and unnotarized. Rowcall executes Python with the user's permissions. Only open and run code the user trusts.
 
 ## Get started
+
+For an interactive setup wizard, run `rowcall` in a terminal. It guides the user through project creation and package selection. To reopen a project, run `rowcall` inside its folder.
+
+For agent-driven, noninteractive workflows, use the explicit commands below.
 
 Check the installation:
 

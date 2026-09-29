@@ -3,496 +3,142 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta
-      name="description"
-      content="Rowcall is a workspace for exploring and building with data. Keep exploratory work inspectable, runnable, and ready to extend."
-    >
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="description"
+      content="Rowcall is a local Python workspace for exploring, transforming, and building with data. Connect steps on a canvas and keep your analysis in ordinary Python files.">
+    <meta name="theme-color" content="#18181b">
+    <meta property="og:title"
+      content="Rowcall — A Python workspace for working with data">
+    <meta property="og:description"
+      content="Interactive exploration. Explicit dependencies. Ordinary Python files. Try the open-source beta for macOS.">
+    <meta property="og:image" content="https://rowcall.io/ecommerce.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
     <link rel="alternate" type="text/plain" href="/llms.txt"
       title="Rowcall agent guide">
-    <title>Rowcall — Explore freely. Keep the work.</title>
-    <style>
-    :root {
-      color-scheme: light;
-      --ink: #1d1d1b;
-      --muted: #67655f;
-      --line: #d8d3c6;
-      --paper: #f7f4eb;
-      --panel: #fffdf7;
-      --accent: #b54a22;
-      --accent-dark: #7c2f1d;
-      --code: #20242a;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      margin: 0;
-      font-family:
-        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-        "Segoe UI", sans-serif;
-      color: var(--ink);
-      background:
-        linear-gradient(90deg, rgb(29 29 27 / 4%) 1px, transparent 1px),
-        linear-gradient(rgb(29 29 27 / 4%) 1px, transparent 1px),
-        var(--paper);
-      background-size: 32px 32px;
-    }
-
-    a {
-      color: inherit;
-      text-decoration-color: var(--accent);
-      text-decoration-thickness: 2px;
-      text-underline-offset: 4px;
-    }
-
-    a:hover {
-      color: var(--accent-dark);
-    }
-
-    code {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    }
-
-    .shell {
-      width: min(1080px, calc(100% - 40px));
-      margin: 0 auto;
-    }
-
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-height: 88px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 1.05rem;
-      font-weight: 750;
-      letter-spacing: -0.02em;
-    }
-
-    .mark {
-      width: 30px;
-      height: 30px;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 2px;
-      padding: 3px;
-      border: 1.5px solid var(--ink);
-      background: var(--panel);
-      box-shadow: 3px 3px 0 var(--accent);
-    }
-
-    .mark span {
-      border: 1px solid var(--line);
-      background: #eee9dc;
-    }
-
-    .mark span:nth-child(2),
-    .mark span:nth-child(5),
-    .mark span:nth-child(8) {
-      background: var(--accent);
-    }
-
-    .alpha {
-      padding: 4px 7px;
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 0.67rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    nav a {
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-
-    main {
-      padding-bottom: 64px;
-    }
-
-    .hero {
-      min-height: 650px;
-      display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-      align-items: center;
-      gap: clamp(48px, 8vw, 112px);
-      padding: 96px 0;
-    }
-
-    .eyebrow {
-      margin: 0 0 20px;
-      color: var(--accent-dark);
-      font-size: 0.78rem;
-      font-weight: 750;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      max-width: 720px;
-      margin: 0;
-      font-size: clamp(3.8rem, 8vw, 7.7rem);
-      font-weight: 760;
-      letter-spacing: -0.075em;
-      line-height: 0.86;
-    }
-
-    .lede {
-      max-width: 680px;
-      margin: 32px 0 0;
-      color: var(--muted);
-      font-size: clamp(1.15rem, 2vw, 1.4rem);
-      line-height: 1.55;
-    }
-
-    .install-card {
-      border: 1px solid var(--line);
-      background: rgb(255 253 247 / 88%);
-      box-shadow: 10px 10px 0 rgb(181 74 34 / 16%);
-    }
-
-    .install-card h2,
-    .install-card p {
-      margin: 0;
-    }
-
-    .install-card header {
-      min-height: auto;
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .install-card h2 {
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    pre {
-      margin: 0;
-      overflow-x: auto;
-      padding: 22px 20px;
-      background: var(--code);
-      color: #fff7df;
-      font-size: 0.9rem;
-      line-height: 1.55;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-
-    .requirements {
-      padding: 16px 20px;
-      color: var(--muted);
-      font-size: 0.84rem;
-      line-height: 1.5;
-    }
-
-    .why {
-      display: grid;
-      grid-template-columns: 0.8fr 1.2fr;
-      gap: clamp(48px, 9vw, 120px);
-      padding: 88px 0;
-      border-top: 1px solid var(--line);
-    }
-
-    .section-label {
-      margin: 0;
-      font-size: 0.78rem;
-      font-weight: 750;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    .why-copy {
-      display: grid;
-      gap: 42px;
-    }
-
-    .why-copy article {
-      display: grid;
-      grid-template-columns: 42px 1fr;
-      gap: 20px;
-    }
-
-    .number {
-      color: var(--accent);
-      font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 0.8rem;
-      padding-top: 6px;
-    }
-
-    h3 {
-      margin: 0 0 8px;
-      font-size: 1.35rem;
-      letter-spacing: -0.025em;
-    }
-
-    .why-copy p {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.65;
-    }
-
-    .start {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      border: 1px solid var(--line);
-      background: var(--panel);
-    }
-
-    .start > div {
-      padding: clamp(28px, 5vw, 54px);
-    }
-
-    .start > div + div {
-      border-left: 1px solid var(--line);
-    }
-
-    .start h2 {
-      margin: 0 0 14px;
-      font-size: clamp(1.65rem, 3vw, 2.5rem);
-      letter-spacing: -0.04em;
-    }
-
-    .start p {
-      margin: 0 0 24px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-
-    .steps {
-      display: grid;
-      gap: 12px;
-    }
-
-    .step {
-      display: grid;
-      grid-template-columns: 22px 1fr;
-      gap: 10px;
-      align-items: baseline;
-      font-size: 0.91rem;
-    }
-
-    .step span {
-      color: var(--accent);
-      font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 0.72rem;
-    }
-
-    .step code {
-      overflow-wrap: anywhere;
-    }
-
-    .agent-link {
-      display: inline-block;
-      font-weight: 700;
-    }
-
-    footer {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 32px;
-      margin-top: 28px;
-      color: var(--muted);
-      font-size: 0.79rem;
-      line-height: 1.55;
-    }
-
-    footer p {
-      margin: 0;
-    }
-
-    footer p:last-child {
-      text-align: right;
-    }
-
-    @media (max-width: 800px) {
-      .shell {
-        width: min(100% - 28px, 680px);
-      }
-
-      header {
-        min-height: 72px;
-      }
-
-      .hero {
-        min-height: auto;
-        grid-template-columns: 1fr;
-        gap: 52px;
-        padding: 72px 0 80px;
-      }
-
-      h1 {
-        font-size: clamp(3.4rem, 17vw, 6rem);
-      }
-
-      .why,
-      .start {
-        grid-template-columns: 1fr;
-      }
-
-      .why {
-        gap: 48px;
-        padding: 68px 0;
-      }
-
-      .start > div + div {
-        border-top: 1px solid var(--line);
-        border-left: 0;
-      }
-    }
-
-    @media (max-width: 480px) {
-      nav {
-        display: none;
-      }
-
-      .hero {
-        padding-top: 58px;
-      }
-
-      .why-copy article {
-        grid-template-columns: 1fr;
-        gap: 8px;
-      }
-
-      footer {
-        grid-template-columns: 1fr;
-      }
-
-      footer p:last-child {
-        text-align: left;
-      }
-    }
-    </style>
+    <script src="/site.js" defer></script>
+    <title>Rowcall — A Python workspace for working with data</title>
   </head>
   <body>
-    <div class="shell">
-      <header>
-        <div class="brand">
-          <span class="mark" aria-hidden="true">
-            <span></span><span></span><span></span>
-            <span></span><span></span><span></span>
-            <span></span><span></span><span></span>
-          </span>
-          <span>Rowcall</span>
-          <span class="alpha">Alpha</span>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="shell header">
+      <a class="wordmark" href="/"
+        aria-label="Rowcall home">Rowcall<span class="badge">Early beta</span></a>
+      <nav
+        aria-label="Primary"><a href="https://github.com/wzich/rowcall">GitHub ↗</a><a href="/llms.txt">For agents</a><a href="#install">Get started <span aria-hidden="true">↓</span></a></nav>
+    </header>
+    <main id="main">
+      <section class="shell hero">
+        <h1>A Python workspace for exploring, transforming, and building with data.</h1>
+        <div class="hero-bottom">
+          <p
+            class="lede">Rowcall combines interactive exploration with an explicit graph of Python steps. See how your analysis fits together, inspect results as you go, and keep your work in ordinary Python files.</p>
+          <div
+            class="actions"><a class="button" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a><a class="text-link" href="https://github.com/wzich/rowcall">View on GitHub ↗</a></div>
         </div>
-        <nav aria-label="Primary navigation">
-          <a href="/llms.txt">For agents</a>
-        </nav>
-      </header>
-
-      <main>
-        <section class="hero">
+      </section>
+      <section class="shell demo-section"
+        aria-label="Illustrated analysis example">
+        <div
+          class="demo-toolbar"><span><span class="status-dot"></span> An analysis, step by step</span><button id="replay" hidden>Replay <span aria-hidden="true">↻</span></button></div>
+        <div class="demo" id="demo">
+          <svg class="wires" viewBox="0 0 1120 360" preserveAspectRatio="none"
+            aria-hidden="true">
+            <path class="wire" d="M270 107 C345 107 340 180 410 180" />
+            <path class="wire" d="M270 253 C345 253 340 180 410 180" />
+            <path class="wire second" d="M650 180 H790" />
+          </svg>
+          <div class="node orders"
+            style="--delay: .1s; --done: 1.5s"><div class="node-title"><span class="node-icon">≡</span>Orders<span class="check">✓</span></div><code>pl.read_csv("orders.csv")</code><div class="ports">orders <span>●</span></div></div>
+          <div class="node customers"
+            style="--delay: .35s; --done: 1.8s"><div class="node-title"><span class="node-icon">≡</span>Customers<span class="check">✓</span></div><code>pl.read_csv("customers.csv")</code><div class="ports">customers <span>●</span></div></div>
+          <div class="node join"
+            style="--delay: .7s; --done: 2.7s"><div class="node-title"><span class="node-icon">ƒ</span>Join datasets<span class="check">✓</span></div><code>orders.join(customers,<br>  on="customer_id")</code><div class="ports"><span>●</span> joined <span>●</span></div></div>
+          <div class="node revenue"
+            style="--delay: 1s; --done: 3.6s"><div class="node-title"><span class="node-icon">ƒ</span>Revenue by segment<span class="check">✓</span></div><code>joined.group_by("segment")<br>  .agg(pl.col("revenue").sum())</code><div class="ports"><span>●</span> segment_revenue</div></div>
+        </div>
+        <div class="demo-result">
+          <div><span class="result-label">Result preview</span><p>Revenue by segment</p><span class="muted">Illustrative data · 3 rows</span></div>
+          <div class="bars">
+            <div><span>Consumer</span><i style="--width: 92%"></i><b>$48,200</b></div>
+            <div><span>Business</span><i style="--width: 65%"></i><b>$34,050</b></div>
+            <div><span>Wholesale</span><i style="--width: 38%"></i><b>$19,900</b></div>
+          </div>
+        </div>
+      </section>
+      <section class="shell story reveal">
+        <div class="story-grid">
+          <h2>A quick investigation rarely stays simple.</h2>
           <div>
-            <p
-              class="eyebrow">A workspace for exploring and building with data</p>
-            <h1>Explore freely.<br>Keep the work.</h1>
-            <p class="lede">
-              Rowcall turns an analysis into an inspectable, runnable graph in an
-              ordinary Python file—so when the work matters later, you can keep
-              going instead of starting over.
-            </p>
+            <p>You bring in another source, join datasets, try a different transformation, and build a model. Rowcall keeps those steps connected in a graph, so you can see how a result was produced and build on the work.</p>
+            <p>In a notebook, the order you run cells can differ from the order you read them. In Rowcall, connections make dependencies visible and determine which steps run.</p>
           </div>
-
-          <aside class="install-card" aria-labelledby="install-heading">
-            <header>
-              <h2 id="install-heading">Install Rowcall</h2>
-            </header>
-            <pre><code>curl -fsSL \
-  https://rowcall.io/install.sh | sh</code></pre>
-            <p class="requirements">
-              Invited alpha for macOS. Requires Python 3.10 or newer.
-            </p>
-          </aside>
-        </section>
-
-        <section class="why" aria-labelledby="why-heading">
-          <h2 class="section-label" id="why-heading">Why Rowcall</h2>
-          <div class="why-copy">
-            <article>
-              <span class="number">01</span>
-              <div>
-                <h3>See how the work fits together</h3>
-                <p>
-                  Explore each step, its code, and the data flowing through it in
-                  a visual workspace.
-                </p>
-              </div>
-            </article>
-            <article>
-              <span class="number">02</span>
-              <div>
-                <h3>Move without a rewrite</h3>
-                <p>
-                  Your exploration is already a runnable Python graph. Reopen it,
-                  extend it, or run it again from the command line.
-                </p>
-              </div>
-            </article>
-            <article>
-              <span class="number">03</span>
-              <div>
-                <h3>Work directly or delegate</h3>
-                <p>
-                  You and your coding agent work on the same ordinary files, while
-                  Rowcall keeps the computation easy to inspect.
-                </p>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section class="start" aria-label="Getting started">
-          <div>
-            <h2>Start with a project</h2>
-            <p>Create a starter analysis and open it in the Rowcall workspace.</p>
-            <div class="steps" aria-label="Quick start commands">
-              <div
-                class="step"><span>1</span><code>rowcall new my-work --open</code></div>
-              <div
-                class="step"><span>2</span><code>rowcall validate my-work</code></div>
-              <div
-                class="step"><span>3</span><code>rowcall run my-work --json</code></div>
-            </div>
-          </div>
-          <div>
-            <h2>Hand it to an agent</h2>
-            <p>
-              Give your coding agent one short guide to what Rowcall is, how to
-              install it, and how to work with a project.
-            </p>
-            <a class="agent-link" href="/llms.txt">rowcall.io/llms.txt →</a>
-          </div>
-        </section>
-
-        <footer>
-          <p>
-            Rowcall is an early alpha. It supports the beginning of the path from
-            exploration to production; it is not yet a complete orchestration or
-            hosting system.
-          </p>
-          <p>
-            The macOS binary is unsigned and unnotarized. Rowcall executes Python
-            with your user permissions, so open only code you trust.
-          </p>
-        </footer>
-      </main>
-    </div>
+        </div>
+      </section>
+      <section class="shell features reveal" aria-labelledby="features-heading">
+        <h2 id="features-heading">Features</h2>
+        <div class="feature-grid">
+          <article>
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <circle cx="6" cy="5" r="2" />
+              <circle cx="18" cy="12" r="2" />
+              <circle cx="6" cy="19" r="2" />
+              <path d="M6 7v10M8 5h2a4 4 0 0 1 4 4v0a3 3 0 0 0 3 3H16" />
+            </svg>
+            <h3>Traceable, reproducible analysis</h3>
+            <p>See which steps produce each result. Rowcall runs the required steps in dependency order, so execution follows the graph.</p>
+          </article>
+          <article>
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="13" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+            </svg>
+            <h3>Your machine.<br>Your environment.</h3>
+            <p>Work locally, with a dedicated Python environment for each project. Your analysis stays in a folder you control.</p>
+          </article>
+          <article>
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16" />
+            </svg>
+            <h3>Your tools,<br>your agents.</h3>
+            <p>Your analysis lives in ordinary Python files. Use your preferred editor or coding agent alongside Rowcall.</p>
+          </article>
+          <article>
+            <svg class="feature-icon" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 15v5h16v-5M12 3v12m-5-5 5 5 5-5" />
+            </svg>
+            <h3>Drag data<br>onto the canvas.</h3>
+            <p>Drop in CSV, TSV, or Parquet files to create Python steps that load your data. Connect them and start exploring.</p>
+          </article>
+        </div>
+      </section>
+      <section class="shell how reveal" id="how-it-works"
+        aria-labelledby="how-heading">
+        <h2 id="how-heading">How it works</h2>
+        <ol>
+          <li><span>01</span><h3>Start a project</h3><p>Run <code>rowcall</code>. The wizard guides you through naming your project, choosing a folder, and selecting Python packages.</p></li>
+          <li><span>02</span><h3>Build your analysis</h3><p>Add Python steps, connect their inputs, and inspect the results as you work.</p></li>
+          <li><span>03</span><h3>Edit and rerun</h3><p>Edit the Python files in your project folder, reopen the graph, and run it again. Share the files and requirements when you’re ready.</p></li>
+        </ol>
+        <figure
+          class="workspace"><a href="/ecommerce.png" aria-label="Open full-size Rowcall workspace screenshot"><img src="/ecommerce.png" width="1600" height="1000" loading="lazy" alt="Rowcall in dark mode: an ecommerce Python analysis on a branching canvas, with segment revenue results in the inspector below."></a><figcaption class="caption">An ecommerce analysis running in Rowcall. Select a step to inspect its code, inputs, and results.</figcaption></figure>
+      </section>
+      <section class="install-wrap" id="install">
+        <div class="shell install">
+          <div><span class="badge">Early beta</span><h2>Try Rowcall.</h2><p>For macOS, with Python 3.10 or newer.<br>Free and open source under the <a href="https://github.com/wzich/rowcall/blob/main/LICENSE">MIT license</a>.</p><p class="beta-note">Expect bugs and changes. Keep backups of important work. Found something confusing or broken? <a href="https://github.com/wzich/rowcall/issues">Send feedback on GitHub ↗</a></p></div>
+          <div
+            class="setup"><div class="command-label"><span>1. Install from your terminal</span><button class="copy" data-copy="install-command" hidden>Copy</button></div><pre><code id="install-command">curl -fsSL https://rowcall.io/install.sh | sh</code></pre><p class="path-note">Follow any PATH instruction printed by the installer.</p><div class="command-label"><span>2. Open the setup wizard</span><button class="copy" data-copy="start-command" hidden>Copy</button></div><pre><code id="start-command">rowcall</code></pre><p class="install-note">Apple Silicon and Intel supported. The binary is unsigned and not notarized. Rowcall runs Python with your permissions; only open code you trust. Unsaved browser edits are lost when the app or browser closes.</p><a href="https://github.com/wzich/rowcall/blob/main/docs/development.md">Prefer to run from source? ↗</a> · <a href="https://github.com/wzich/rowcall/blob/main/docs/README.md">Documentation ↗</a><span class="sr-only" id="copy-status" role="status"></span></div>
+        </div>
+      </section>
+    </main>
   </body>
 </html>
