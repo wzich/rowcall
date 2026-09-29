@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   validateReleaseArtifacts,
   validateReleaseManifest,
+  validateReleasePromotion,
 } from "./release.ts";
 
 const commitA = "a".repeat(40);
@@ -261,5 +262,22 @@ Deno.test("release manifest rejects a stale binary hash", () => {
       ),
     Error,
     "does not match the prepared release",
+  );
+});
+
+Deno.test("publication prevents rollback and same-version replacement, permits identical retries", () => {
+  const downloads = {
+    "darwin-arm64": { url: "", sha256: "a" },
+    "darwin-x64": { url: "", sha256: "b" },
+  };
+  const current = { version: "0.1.1", downloads };
+  validateReleasePromotion(current, current);
+  validateReleasePromotion(current, { version: "0.1.2", downloads });
+  validateReleasePromotion(current, { version: "0.2.0", downloads });
+  assertThrows(() =>
+    validateReleasePromotion(current, { version: "0.1.0", downloads })
+  );
+  assertThrows(() =>
+    validateReleasePromotion(current, { version: "0.1.1", downloads: {} })
   );
 });

@@ -66,6 +66,20 @@ async function main() {
     case "prepare":
       await prepareRelease();
       break;
+    case "build-native":
+      await requireCleanSourceCommit();
+      await buildReleaseBinaries(true);
+      await run("sh", ["packaging/smoke-installed-release.sh"]);
+      break;
+    case "assemble-ci":
+      await validateBothNativeArtifacts();
+      await assembleReleaseSite();
+      break;
+    case "publish-assets-ci":
+      await validateBothNativeArtifacts();
+      await assertReleaseCanPublish();
+      await deployReleaseAssets();
+      break;
     case "publish":
       await deployReleaseAssets();
       await deployReleaseSite();
@@ -92,11 +106,14 @@ async function prepareRelease() {
   await assembleReleaseSite();
 }
 
-async function buildReleaseBinaries() {
+async function buildReleaseBinaries(nativeOnly = false) {
   await run("deno", ["task", "build"]);
   await emptyDir(releaseDir);
 
   for (const asset of releaseAssets) {
+    if (
+      nativeOnly && asset.nativeArchitecture !== nativeArchitectureForHost()
+    ) continue;
     const outputPath = `${releaseDir}/${asset.fileName}`;
     const args = [
       "compile",
@@ -310,6 +327,63 @@ export async function validateReleaseArtifacts(options: {
     nativeSmokedAsset: nativeAsset.fileName,
     hashes,
   };
+}
+
+export function validateReleasePromotion(
+  published: ReleaseManifest,
+  candidate: ReleaseManifest,
+) {
+  const parse = (version: string) => {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      throw new Error("Invalid release version");
+    }
+    return version.split(".").map(Number);
+  };
+  const before = parse(published.version);
+  const after = parse(candidate.version);
+  for (let i = 0; i < 3; i++) {
+    if (after[i] < before[i]) {
+      throw new Error("Refusing to replace a newer published release");
+    }
+    if (after[i] > before[i]) return;
+  }
+  for (const asset of releaseAssets) {
+    if (
+      published.downloads[asset.key]?.sha256 !==
+        candidate.downloads[asset.key]?.sha256
+    ) {
+      throw new Error(
+        "Refusing to overwrite a published version with different binaries",
+      );
+    }
+  }
+}
+
+async function assertReleaseCanPublish() {
+  const response = await fetch("https://rowcall.io/latest.json", {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Cannot verify the currently published release");
+  }
+  validateReleasePromotion(
+    await response.json(),
+    JSON.parse(await Deno.readTextFile(`${siteDistDir}/latest.json`)),
+  );
+}
+
+async function validateBothNativeArtifacts() {
+  const version = await readVersion();
+  const sourceCommit = await requireCleanSourceCommit();
+  for (const architecture of ["arm64", "x64"] as const) {
+    await validateReleaseArtifacts({
+      directory: releaseDir,
+      expectedVersion: version,
+      expectedSourceCommit: sourceCommit,
+      expectedNativeArchitecture: architecture,
+      verifyArchitectures: true,
+    });
+  }
 }
 
 async function validateAssembledRelease() {

@@ -10,11 +10,11 @@ Deno.test({
 });
 
 Deno.test({
-  name: "rowcallVersion matches pyproject.toml",
+  name: "Python package derives its version from VERSION",
   permissions: { read: true },
   async fn() {
     const pyproject = await Deno.readTextFile("pyproject.toml");
-    const match = pyproject.match(/^version = "([^"]+)"$/m);
-    assertEquals(match?.[1], rowcallVersion);
+    assertEquals(pyproject.includes('dynamic = ["version"]'), true);
+    assertEquals(pyproject.includes('version = { file = "VERSION" }'), true);
   },
 });

@@ -1,1 +1,3 @@
-export const rowcallVersion = "0.1.1";
+export const rowcallVersion = Deno.readTextFileSync(
+  new URL("./VERSION", import.meta.url),
+).trim();
