@@ -17,3 +17,10 @@ tmp/
 **/.rowcall-marker-*
 
 /output/playwright/
+
+# Local internal notes and publication review artifacts
+/.local/
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
