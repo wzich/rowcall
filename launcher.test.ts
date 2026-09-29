@@ -70,7 +70,7 @@ Deno.test("occupied-port guidance prioritizes the existing window", () => {
 });
 
 Deno.test("parseLauncherCommand maps help and version utility commands", () => {
-  assertEquals(parseLauncherCommand([]), { kind: "help" });
+  assertEquals(parseLauncherCommand([]), { kind: "start" });
   assertEquals(parseLauncherCommand(["--help"]), { kind: "help" });
   assertEquals(parseLauncherCommand(["-h"]), { kind: "help" });
   assertEquals(parseLauncherCommand(["help", "format"]), {
@@ -496,7 +496,7 @@ Deno.test({
     assertEquals(source.includes("# Help: rowcall help format"), false);
     assertEquals(
       source.includes(
-        'shout_message.depends_on(load_message.output("message"))',
+        "display(df)",
       ),
       true,
     );
@@ -506,7 +506,7 @@ Deno.test({
     );
     assertEquals(
       await Deno.readTextFile(`${folder}/requirements.txt`),
-      "pandas\npolars\nmatplotlib\n",
+      "polars\n",
     );
     assertEquals((await Deno.stat(`${folder}/data`)).isDirectory, true);
     const agentInstructions = await Deno.readTextFile(`${folder}/AGENTS.md`);

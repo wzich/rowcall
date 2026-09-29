@@ -55,7 +55,28 @@ Cloudflare upload. The other architecture is cross-built but not executed.
 If the installer reports that `~/.local/bin` is not on `PATH`, add the printed
 `export PATH=...` line to your shell profile.
 
-Try the branching example:
+To create your first project, run:
+
+```sh
+rowcall
+```
+
+In an interactive terminal outside a project, this guides you through a name,
+location (defaulting to the current directory plus the project name), and a
+package checklist. Polars is selected by default; pandas, matplotlib, and
+seaborn are optional choices. Additional packages can be comma-separated,
+including constraints such as `duckdb>=1.2,<2, scipy`. Confirm before any files
+are created; answering `n` cancels without changes. The wizard creates a
+dedicated `.venv`, even with Conda or another environment active, installs your
+selections, and opens the browser. Its single **Start** node demonstrates
+`display()` with sample data you can replace with your own. If installation
+fails, the project is preserved; open its path to retry.
+
+Inside a directory containing `graph.py`, `rowcall` behaves like `rowcall .`. It
+does not search parent directories. Without an interactive terminal, bare
+`rowcall` prints help. Explicit commands never launch the wizard.
+
+To explore a branching example:
 
 ```sh
 rowcall example my-example --open
@@ -78,7 +99,8 @@ rowcall validate my-example
 rowcall run my-example --to find_large_orders --json=summary
 ```
 
-Use `rowcall --help` for commands, or start from the minimal hello graph:
+Use `rowcall --help` for commands, or create a project directly with the default
+packages:
 
 Create and open a new Rowcall folder:
 
@@ -94,6 +116,7 @@ my-work/
   AGENTS.md
   data/
   graph.py
+  graph.rowcall.json
   requirements.txt
 ```
 
