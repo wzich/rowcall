@@ -1,5 +1,7 @@
 # Rowcall
 
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Will Zich.
+
 Rowcall is a canvas-based computational notebook prototype. The current repo has
 a Python runtime for parsing, validating, planning, and executing graph-shaped
 Python notebooks, plus a Deno/Hono API and Vite/React canvas UI for editing and
