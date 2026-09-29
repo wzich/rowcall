@@ -97,4 +97,5 @@ For release artifacts, `deno task release:prepare` performs the repository and
 native installed-artifact checks and stages uploads; it does not publish. It is
 expensive and is separate from the normal patch loop. Do not claim the opposite
 Mac architecture ran merely because it cross-compiled. Publishing is a separate,
-explicit action. See `tools/release.ts` and the README for the release workflow.
+explicit action. See `tools/release.ts` and `docs/releasing.md` for the release
+workflow.
