@@ -7,6 +7,7 @@ from rowcall.document import (
     add_edge,
     apply_document_operations,
     remove_edge,
+    parse_source,
     update_node_body,
     update_node_outputs,
 )
@@ -16,6 +17,66 @@ DOCUMENT_PATH = Path("/tmp/rewrite.py")
 
 
 class DocumentRewriteTests(unittest.TestCase):
+    def test_comments_survive_repeated_body_saves(self) -> None:
+        for header in ('def start():', 'def start(\n):'):
+            for body in (
+                '# Leading\nx = 1  # Inline\n# Middle\ny = 2\n# Trailing',
+                '# Only a comment',
+                '',
+                '# Leading\nif True:\n    x = 1\n    # Nested trailing\n# Trailing',
+            ):
+                with self.subTest(header=header, body=body):
+                    prefix = 'from rowcall import node\n\n# Global comment\nGLOBAL = 3\n\n@node(id="start", outputs=[])\n'
+                    suffix = '\n\n# Other source\ndef helper():\n    return 42\n'
+                    source = prefix + header + '\n' + ''.join(
+                        '    ' + line + '\n' for line in body.splitlines()
+                    ) + '    return {}' + suffix
+                    for _ in range(3):
+                        parsed = parse_source(source, DOCUMENT_PATH)
+                        self.assertTrue(parsed.ok)
+                        node = parsed.document.nodes[0]
+                        self.assertEqual(node.display_code, body)
+                        result = update_node_body(source, DOCUMENT_PATH, 'start', body)
+                        self.assertTrue(result.ok)
+                        self.assertTrue(result.source.startswith(prefix + header))
+                        self.assertTrue(result.source.endswith(suffix))
+                        source = result.source
+                        # An empty editor intentionally saves a pass statement.
+                        if not body:
+                            body = 'pass'
+
+    def test_comment_edits_and_syntax_error_coordinates(self) -> None:
+        source = 'from rowcall import node\n@node(id="start", outputs=[])\ndef start(\n):\n    # Old hint\n    x = 1\n    # Old end\n    return {}\n'
+        result = update_node_body(source, DOCUMENT_PATH, 'start', '# New hint\nx = 2\n# New end')
+        self.assertTrue(result.ok)
+        self.assertNotIn('Old', result.source)
+        self.assertEqual(result.parse_result.document.nodes[0].display_code, '# New hint\nx = 2\n# New end')
+        invalid = update_node_body(result.source, DOCUMENT_PATH, 'start', '# New hint\nx = )')
+        self.assertFalse(invalid.ok)
+        self.assertEqual(invalid.issues[0].path, '2:5')
+
+    def test_comment_boundaries_preserve_crlf_and_output_rewrites(self) -> None:
+        source = 'from rowcall import node\n@node(id="start", outputs=[])\ndef start(\n    # Signature comment\n):  # Header comment\n    # Leading\n    x = 1\n    # Trailing\n    return {}\n'.replace('\n', '\r\n')
+        result = update_node_outputs(source, DOCUMENT_PATH, 'start', ('x',))
+        self.assertTrue(result.ok)
+        body = result.parse_result.document.nodes[0].display_code
+        self.assertEqual(body, '# Leading\nx = 1\n# Trailing')
+        saved = update_node_body(result.source, DOCUMENT_PATH, 'start', body)
+        self.assertTrue(saved.ok)
+        self.assertEqual(saved.source, result.source)
+        self.assertNotIn('\n', saved.source.replace('\r\n', ''))
+
+    def test_tab_indented_and_outdented_comments_remain_editable(self) -> None:
+        for indent in ('\t', '    '):
+            source = 'from rowcall import node\n@node(id="start", outputs=[])\ndef start():\n# Outdented hint\n' + indent + 'x = 1\n' + indent + '# End\n' + indent + 'return {}\n'
+            parsed = parse_source(source, DOCUMENT_PATH)
+            body = parsed.document.nodes[0].display_code
+            self.assertEqual(body, '# Outdented hint\nx = 1\n# End')
+            result = update_node_body(source, DOCUMENT_PATH, 'start', body)
+            self.assertTrue(result.ok)
+            self.assertEqual(result.parse_result.document.nodes[0].display_code, body)
+
+
     def test_update_body_preserves_globals_and_graph_edges(self) -> None:
         source = """
 from rowcall import node

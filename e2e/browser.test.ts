@@ -12,8 +12,9 @@ const run = promisify(execFile);
 
 type RowcallProject = { documentPath: string; url: string };
 
-const test = base.extend<{ rowcall: RowcallProject }>({
-  rowcall: async ({}, use, testInfo) => {
+const test = base.extend<{ rowcall: RowcallProject; starter: boolean }>({
+  starter: [false, { option: true }],
+  rowcall: async ({ starter }, use, testInfo) => {
     await mkdir(join(repository, "tmp"), { recursive: true });
     const project = await mkdtemp(join(repository, "tmp", "browser-test-"));
     let server: ChildProcess | undefined;
@@ -32,7 +33,13 @@ const test = base.extend<{ rowcall: RowcallProject }>({
           { cause: error },
         );
       }
-      await run("deno", ["run", "-A", "launcher.ts", "example", project], {
+      await run("deno", [
+        "run",
+        "-A",
+        "launcher.ts",
+        starter ? "new" : "example",
+        project,
+      ], {
         cwd: repository,
         timeout: 30_000,
       });
@@ -169,7 +176,9 @@ test("edit, save, run, reload, and recover a branching example", async ({ page, 
       await page.getByRole("button", { name: "Code", exact: true })
         .click();
       await editor.fill(
-        (await editor.innerText()).replace(">= 50", ">= 80"),
+        "# Explore your data\n" +
+          (await editor.innerText()).replace(">= 50", ">= 80") +
+          "\n# Inspect the result",
       );
       await save.click();
       await expect.poll(() => readFile(documentPath, "utf8")).toContain(
@@ -180,6 +189,8 @@ test("edit, save, run, reload, and recover a branching example", async ({ page, 
       await page.reload();
       await selectBranch();
       await expect(editor).toContainText(">= 80");
+      await expect(editor).toContainText("# Explore your data");
+      await expect(editor).toContainText("# Inspect the result");
       await page.getByRole("button", { name: "Run", exact: true })
         .click();
       await page.getByRole("button", { name: "Results", exact: true })
@@ -778,4 +789,43 @@ test("unrun steps show upstream previews and switch to captured inputs after run
   expect(runRequests).toBe(2);
   await expect(input).not.toContainText("last successful run");
   await expect(input).not.toContainText("Not updated");
+});
+
+test.describe("new project starter", () => {
+  test.use({ starter: true });
+  test("Start displays a table and keeps guidance after editing and saving", async ({ page, rowcall }) => {
+    await page.goto(rowcall.url);
+    await page.locator("article[data-node-id]").getByRole("heading", {
+      name: "Start",
+      exact: true,
+    }).click();
+    await page.getByRole("navigation", { name: "Inspector navigation" })
+      .getByRole("button", { name: "Code", exact: true }).click();
+    const editor = page.getByRole("textbox", {
+      name: "Step Python code",
+      exact: true,
+    });
+    await expect(editor).toContainText("display(df)");
+    await expect(editor).toContainText("Replace this sample");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await page.getByRole("button", { name: "Results", exact: true }).click();
+    await expect(page.getByRole("table").first()).toContainText("20");
+    await page.getByRole("button", { name: "Code", exact: true }).click();
+    await editor.fill(
+      (await editor.innerText()).replace("10, 20, 15", "10, 99, 15"),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await page.locator("article[data-node-id]").getByRole("heading", {
+      name: "Start",
+      exact: true,
+    }).click();
+    await page.getByRole("navigation", { name: "Inspector navigation" })
+      .getByRole("button", { name: "Code", exact: true }).click();
+    await expect(editor).toContainText("Use display()");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await page.getByRole("button", { name: "Results", exact: true }).click();
+    await expect(page.getByRole("table").first()).toContainText("99");
+  });
 });
