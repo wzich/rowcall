@@ -1,7 +1,9 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
+  validateAllNativeReleaseArtifacts,
   validateReleaseArtifacts,
   validateReleaseManifest,
+  validateReleasePromotion,
 } from "./release.ts";
 
 const commitA = "a".repeat(40);
@@ -9,6 +11,7 @@ const commitB = "b".repeat(40);
 
 type FixtureOptions = {
   omitX64?: boolean;
+  omitX64Smoke?: boolean;
   omitWindowsSmoke?: boolean;
   windowsCommit?: string;
   corruptWindows?: boolean;
@@ -29,6 +32,13 @@ async function withReleaseFixture(
       await Deno.writeTextFile(
         `${directory}/rowcall-darwin-x64`,
         "binary:rowcall-darwin-x64",
+      );
+    }
+    if (!options.omitX64 && !options.omitX64Smoke) {
+      await writeSmokeAttestation(
+        `${directory}/rowcall-darwin-x64`,
+        options.sourceCommit ?? commitA,
+        false,
       );
     }
     await writeSmokeAttestation(
@@ -67,14 +77,12 @@ async function writeSmokeAttestation(
       JSON.stringify(
         {
           schemaVersion: 1,
-          asset: binaryPath.endsWith(".exe")
-            ? "rowcall-windows-x64.exe"
-            : "rowcall-darwin-arm64",
+          asset: binaryPath.split("/").at(-1),
           sha256,
           version: "0.1.0",
           sourceCommit,
           sourceDirty,
-          nativeArchitecture: binaryPath.endsWith(".exe") ? "x64" : "arm64",
+          nativeArchitecture: binaryPath.endsWith("arm64") ? "arm64" : "x64",
         },
         null,
         2,
@@ -331,3 +339,38 @@ for (
     });
   });
 }
+Deno.test("publication prevents rollback and same-version replacement, permits identical retries", () => {
+  const downloads = {
+    "darwin-arm64": { url: "", sha256: "a" },
+    "darwin-x64": { url: "", sha256: "b" },
+  };
+  const current = { version: "0.1.1", downloads };
+  validateReleasePromotion(current, current);
+  validateReleasePromotion(current, { version: "0.1.2", downloads });
+  validateReleasePromotion(current, { version: "0.2.0", downloads });
+  assertThrows(() =>
+    validateReleasePromotion(current, { version: "0.1.0", downloads })
+  );
+  assertThrows(() =>
+    validateReleasePromotion(current, { version: "0.1.1", downloads: {} })
+  );
+});
+
+Deno.test("CI assembly requires receipts from both Macs and Windows for the same source", async () => {
+  const validate = (directory: string) =>
+    validateAllNativeReleaseArtifacts({
+      directory,
+      expectedVersion: "0.1.0",
+      expectedSourceCommit: commitA,
+    });
+  await withReleaseFixture({}, validate);
+  for (
+    const options of [{ omitX64Smoke: true }, { omitWindowsSmoke: true }, {
+      windowsCommit: commitB,
+    }, { corruptWindows: true }]
+  ) {
+    await withReleaseFixture(options, async (directory) => {
+      await assertRejects(() => validate(directory));
+    });
+  }
+});

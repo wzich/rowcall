@@ -1,0 +1,40 @@
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: [
+      "site/**",
+      ".github/workflows/website.yml",
+      "tools/stage_website.ts",
+    ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: website
+    concurrency:
+      group: production-publish
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g wrangler@4.105.0
+      - name: Preserve published download manifest and installer
+        run: deno run --allow-read --allow-write=dist --allow-net=rowcall.io tools/stage_website.ts
+      - run: wrangler pages deploy dist/website --project-name rowcall-io --branch main

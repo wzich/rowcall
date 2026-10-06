@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment
+        required: true
+        type: choice
+        options: [patch, minor]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: read
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Require configured approval gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/$GITHUB_REPOSITORY/environments/release > /tmp/environment.json
+          python3 - <<'PY'
+          import json
+          environment = json.load(open('/tmp/environment.json'))
+          assert any(rule['type'] == 'required_reviewers' and rule.get('reviewers') for rule in environment['protection_rules']), 'Configure required reviewers on the release environment before running a release.'
+          PY
+      - name: Bump authoritative version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          path = pathlib.Path('VERSION')
+          major, minor, patch = map(int, path.read_text().strip().split('.'))
+          if os.environ['BUMP'] == 'minor':
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          path.write_text(f'{major}.{minor}.{patch}\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION
+          git commit -m "Prepare release $(cat VERSION)"
+          git push origin HEAD:main
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+          - runner: windows-latest
+            arch: windows-x64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.commit }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prepare Python
+        run: |
+          python3 -m venv .venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python_dir="$(cygpath -w "$PWD/.venv/Scripts")"
+            python_exe="$python_dir/python.exe"
+          else
+            python_dir="$PWD/.venv/bin"
+            python_exe="$python_dir/python"
+          fi
+          "$python_exe" -m pip install -r requirements-alpha.txt
+          echo "$python_dir" >> "$GITHUB_PATH"
+          echo "ROWCALL_TEST_PYTHON=$python_exe" >> "$GITHUB_ENV"
+      - run: deno task check
+      - run: deno task test
+      - run: deno task browser:install
+      - run: deno task test:browser
+      - name: Build and test native installed binary
+        run: deno run -A tools/release.ts build-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: dist/release/
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-${{ matrix.arch }}
+          path: output/playwright/
+          if-no-files-found: ignore
+  stage:
+    needs: [version, build]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.commit }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/release
+      - name: Validate all three native receipts and stage uploads
+        run: deno run -A tools/release.ts assemble-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staged-release
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Review summary
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          COMMIT: ${{ needs.version.outputs.commit }}
+        run: |
+          echo "## Ready for approval: $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source commit: $COMMIT. Both Mac architectures and Windows x64 passed native checks. Review staged-release artifacts, then approve the release deployment." >> "$GITHUB_STEP_SUMMARY"
+  publish:
+    needs: [version, stage]
+    runs-on: macos-15
+    environment: release
+    concurrency:
+      group: production-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.version.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.commit }}
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g wrangler@4.105.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-release
+          path: dist
+      - name: Publish verified binaries
+        run: deno run -A tools/release.ts publish-assets-ci
+      - name: Publish website with new manifest and current website source
+        run: |
+          git fetch origin main
+          mkdir -p dist/current-site
+          git archive origin/main site | tar -x -C dist/current-site --strip-components=1
+          cp dist/site/latest.json dist/site/install.sh dist/site/install.ps1 dist/current-site/
+          wrangler pages deploy dist/current-site --project-name rowcall-io --branch main
+      - name: Publish GitHub release
+        run: |
+          tag="v$RELEASE_VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "$tag")" = "$RELEASE_COMMIT"
+          else
+            gh release create "$tag" --target "$RELEASE_COMMIT" --title "Rowcall $RELEASE_VERSION" --generate-notes --draft
+          fi
+          gh release upload "$tag" dist/r2/v"$RELEASE_VERSION"/* --clobber
+          gh release edit "$tag" --draft=false --latest

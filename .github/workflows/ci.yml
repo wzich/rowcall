@@ -65,7 +65,7 @@ jobs:
 
       - name: Build and verify installed Windows release
         if: runner.os == 'Windows'
-        run: deno task release:windows
+        run: deno run -A tools/release.ts build-native
 
       - name: Upload verified Windows beta
         if: runner.os == 'Windows'
@@ -73,7 +73,7 @@ jobs:
         with:
           name: rowcall-windows-x64
           path: |
-            dist/windows-release/*
+            dist/release/*
             packaging/install.ps1
             docs/windows-beta-test.md
           if-no-files-found: error

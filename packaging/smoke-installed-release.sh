@@ -97,12 +97,15 @@ verify_macho_architecture "$launcher" "$expected_architecture"
 # Run outside the checkout with an otherwise empty Python environment. The
 # launcher must materialize and use the Python package embedded in the asset.
 cd "$runtime_dir"
+# Exercise the dependency-free starter in the deliberately empty Python venv.
+mkdir -p "$document_dir"
+: > "$document_dir/requirements.txt"
 HOME="$smoke_home" PYTHONPATH= "$launcher" new "$document_dir"
 HOME="$smoke_home" PYTHONPATH= "$launcher" validate "$document_dir" \
   --python "$clean_python" --json \
   > "$temporary_root/validate.json"
 HOME="$smoke_home" PYTHONPATH= "$launcher" run "$document_dir" \
-  --python "$clean_python" --to n_shout --json \
+  --python "$clean_python" --to n_start --json \
   > "$temporary_root/run.json"
 
 reported_version=$(HOME="$smoke_home" PYTHONPATH= "$launcher" --version)
@@ -118,7 +121,7 @@ PYTHONPATH="$smoke_home/.rowcall/bundled/python-package" \
 
 python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "validate"' \
   "$temporary_root/validate.json"
-python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "run"; assert p["response"]["executedNodeIds"] == ["n_load", "n_shout"]; assert p["response"]["finalOutputsByNode"]["n_shout"]["shouted"]["jsonValue"] == "HELLO FROM ROWCALL"' \
+python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["ok"] and p["command"] == "run"; assert p["response"]["executedNodeIds"] == ["n_start"]; assert p["response"]["resultsByNode"]["n_start"]["displays"][0]["jsonValue"] == "Welcome to Rowcall"' \
   "$temporary_root/run.json"
 
 fixture_hash_after=$(sha256_file "$fixture")

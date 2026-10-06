@@ -5,6 +5,11 @@ changes small and preserve the current document format and fresh-run behavior.
 The beta working document is `tmp/beta-readiness.html`; update its implemented
 changes, verification, and decision log when beta preparation work changes them.
 
+Internal reviews, planning notes, and publication audits belong in ignored
+`.local/`. Keep public contracts and contributor documentation under `docs/`.
+The beta working document remains `tmp/beta-readiness.html`. Ignored files are
+local-only and need a separate backup if they must survive losing this checkout.
+
 ## Development
 
 - Use Deno 2 and Python 3.10+. `deno task setup` prepares `.venv` with the data
@@ -93,4 +98,5 @@ For release artifacts, `deno task release:prepare` performs the repository and
 native installed-artifact checks and stages uploads; it does not publish. It is
 expensive and is separate from the normal patch loop. Do not claim the opposite
 Mac architecture ran merely because it cross-compiled. Publishing is a separate,
-explicit action. See `tools/release.ts` and the README for the release workflow.
+explicit action. See `tools/release.ts` and `docs/releasing.md` for the release
+workflow.

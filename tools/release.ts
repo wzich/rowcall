@@ -76,12 +76,25 @@ async function main() {
       await prepareRelease();
       break;
     case "prepare-windows":
-      if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
-        throw new Error("prepare-windows requires a native Windows x64 runner");
+      await prepareWindowsRelease("dist/release");
+      break;
+    case "build-native":
+      if (Deno.build.os === "windows") {
+        await prepareWindowsRelease(releaseDir);
+      } else {
+        await requireCleanSourceCommit();
+        await buildReleaseBinaries("darwin", releaseDir, true);
+        await run("sh", ["packaging/smoke-installed-release.sh"]);
       }
-      await requireCleanSourceCommit();
-      await buildReleaseBinaries("windows", "dist/windows-release");
-      await run("deno", ["run", "-A", "tools/smoke_windows_release.ts"]);
+      break;
+    case "assemble-ci":
+      await validateAllNativeArtifacts();
+      await assembleReleaseSite();
+      break;
+    case "publish-assets-ci":
+      await validateAllNativeArtifacts();
+      await assertReleaseCanPublish();
+      await deployReleaseAssets();
       break;
     case "publish":
       await deployReleaseAssets();
@@ -124,11 +137,28 @@ async function prepareRelease() {
   await assembleReleaseSite();
 }
 
-async function buildReleaseBinaries(os = "darwin", directory = releaseDir) {
+async function prepareWindowsRelease(directory: string) {
+  if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
+    throw new Error(
+      "Windows release preparation requires a native Windows x64 runner",
+    );
+  }
+  await requireCleanSourceCommit();
+  await buildReleaseBinaries("windows", directory, true);
+  await run("deno", ["run", "-A", "tools/smoke_windows_release.ts", directory]);
+}
+
+async function buildReleaseBinaries(
+  os = "darwin",
+  directory = releaseDir,
+  nativeOnly = false,
+) {
   await run("deno", ["task", "build"]);
   await emptyDir(directory);
-
   for (const asset of releaseAssets.filter((asset) => asset.os === os)) {
+    if (
+      nativeOnly && asset.nativeArchitecture !== nativeArchitectureForHost()
+    ) continue;
     const outputPath = `${directory}/${asset.fileName}`;
     const args = [
       "compile",
@@ -354,6 +384,76 @@ export async function validateReleaseArtifacts(options: {
     nativeSmokedAsset: nativeAsset.fileName,
     hashes,
   };
+}
+
+export function validateReleasePromotion(
+  published: ReleaseManifest,
+  candidate: ReleaseManifest,
+) {
+  const parse = (version: string) => {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      throw new Error("Invalid release version");
+    }
+    return version.split(".").map(Number);
+  };
+  const before = parse(published.version);
+  const after = parse(candidate.version);
+  for (let i = 0; i < 3; i++) {
+    if (after[i] < before[i]) {
+      throw new Error("Refusing to replace a newer published release");
+    }
+    if (after[i] > before[i]) return;
+  }
+  for (const asset of releaseAssets) {
+    if (
+      published.downloads[asset.key]?.sha256 !==
+        candidate.downloads[asset.key]?.sha256
+    ) {
+      throw new Error(
+        "Refusing to overwrite a published version with different binaries",
+      );
+    }
+  }
+}
+
+async function assertReleaseCanPublish() {
+  const response = await fetch("https://rowcall.io/latest.json", {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Cannot verify the currently published release");
+  }
+  validateReleasePromotion(
+    await response.json(),
+    JSON.parse(await Deno.readTextFile(`${siteDistDir}/latest.json`)),
+  );
+}
+
+async function validateAllNativeArtifacts() {
+  const version = await readVersion();
+  const sourceCommit = await requireCleanSourceCommit();
+  await validateAllNativeReleaseArtifacts({
+    directory: releaseDir,
+    expectedVersion: version,
+    expectedSourceCommit: sourceCommit,
+    verifyArchitectures: true,
+  });
+}
+
+export async function validateAllNativeReleaseArtifacts(options: {
+  directory: string;
+  expectedVersion: string;
+  expectedSourceCommit: string;
+  verifyArchitectures?: boolean;
+}) {
+  // Each call also validates the mandatory native Windows receipt.
+  for (const architecture of ["arm64", "x64"] as const) {
+    await validateReleaseArtifacts({
+      ...options,
+      expectedNativeArchitecture: architecture,
+      expectedNativeOs: "darwin",
+    });
+  }
 }
 
 async function validateAssembledRelease() {

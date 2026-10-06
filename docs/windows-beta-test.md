@@ -7,15 +7,18 @@ scope.
 Before publishing, the Windows GitHub Actions job must pass unit tests, the
 browser journey, compilation, and the installed executable smoke test. Download
 its `rowcall-windows-x64` artifact from the same commit being reviewed. Unzip
-it; keep the executable and its `.sha256` file together under
-`dist/windows-release`. The artifact is a test download, not a published
-release. It includes the tested installer and native smoke attestation.
+it; keep the executable and its `.sha256` file together under `dist/release`.
+The artifact is a test download, not a published release. It includes the tested
+installer and native smoke attestation.
 
-In PowerShell, from the extracted artifact folder:
+After a Windows-enabled release is published, download
+`https://rowcall.io/install.ps1` and run it with PowerShell to install the
+published build. Before publication, in PowerShell, from the extracted CI
+artifact folder:
 
 ```powershell
 python --version
-$download = ([Uri](Resolve-Path .\dist\windows-release\rowcall-windows-x64.exe).Path).AbsoluteUri
+$download = ([Uri](Resolve-Path .\dist\release\rowcall-windows-x64.exe).Path).AbsoluteUri
 powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\install.ps1 -DownloadUrl $download
 $rowcall = "$env:LOCALAPPDATA\Rowcall\bin\rowcall.exe"
 & $rowcall --version

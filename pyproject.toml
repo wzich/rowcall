@@ -4,12 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rowcall"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Minimal Python document API for Rowcall."
 requires-python = ">=3.10"
+license = { text = "MIT" }
 
 [tool.setuptools]
 packages = ["rowcall", "rowcall.document", "rowcall.runtime"]
 
 [project.scripts]
 rowcall = "rowcall.cli:main"
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }

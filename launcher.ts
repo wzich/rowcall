@@ -1,4 +1,11 @@
 import { openBrowser } from "./browser_launcher.ts";
+import {
+  collectProjectSetup,
+  openProjectCommand,
+  starterPackages,
+  starterSource,
+  terminalWizardIO,
+} from "./launcher_wizard.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { resolveExistingDocumentPath } from "./document_path.ts";
 import { buildRowcallUrl, startRowcallServer } from "./main.ts";
@@ -22,6 +29,7 @@ export { resolveExistingDocumentPath } from "./document_path.ts";
 
 export type LauncherCommand =
   | { kind: "help"; topic?: string }
+  | { kind: "start" }
   | { kind: "version" }
   | {
     kind: "doctor";
@@ -101,24 +109,6 @@ const sourceModePermissionArgs = [
   "--allow-env",
 ];
 
-const defaultDocumentSource = `from rowcall import node
-
-
-@node(id="n_load", outputs=["message"])
-def load_message():
-    message = "hello from Rowcall"
-    return {"message": message}
-
-
-@node(id="n_shout", outputs=["shouted"])
-def shout_message(message):
-    shouted = message.upper()
-    return {"shouted": shouted}
-
-
-shout_message.depends_on(load_message.output("message"))
-`;
-
 const defaultGitignore = `.venv/
 __pycache__/
 *.py[cod]
@@ -134,10 +124,7 @@ const defaultAgentInstructions = `# Rowcall
 - Canvas metadata, when present, is in \`graph.rowcall.json\`; match it to stable node IDs in \`graph.py\`.
 `;
 
-const defaultRequirements = `pandas
-polars
-matplotlib
-`;
+const defaultRequirements = starterPackages.join("\n") + "\n";
 
 const exampleDocumentSource = `from pathlib import Path
 
@@ -189,7 +176,7 @@ const exampleOrdersCsv = `order_id,category,amount
 const helpText = `Rowcall ${rowcallVersion}
 
 Usage:
-  rowcall                         Show this help
+  rowcall                         Open this project or guide new project setup
   rowcall help [topic]            Show help for a command or topic
   rowcall <path>                  Open an existing folder or .py document
   rowcall open <path>             Open an existing folder or .py document
@@ -213,7 +200,15 @@ Paths:
   Folders resolve to graph.py inside the folder. For example, rowcall run
   my-work runs my-work/graph.py. Passing a .py path uses that exact file.
 
+Guided setup:
+  Run rowcall in an interactive terminal. If the current directory contains
+  graph.py, it opens that project. Otherwise choose a new location and packages
+  (Polars by default), then confirm to create a dedicated project
+  environment and open the browser. Answer n to cancel without creating files.
+  Without an interactive terminal, rowcall shows this help.
+
 Try:
+  rowcall
   rowcall example my-example --open
   rowcall run my-example --to find_large_orders --json=summary
   rowcall new my-work --open
@@ -322,8 +317,9 @@ const newHelpText = `Usage:
   rowcall new <folder-or-document.py> [--open] [--python <path>] [--managed-env]
 
 If the path ends with .py, Rowcall creates that file. Otherwise Rowcall
-creates graph.py, .gitignore, AGENTS.md, and requirements.txt inside the folder
-path. Existing .gitignore, AGENTS.md, and requirements.txt files are preserved.
+creates graph.py, graph.rowcall.json, .gitignore, AGENTS.md, and requirements.txt
+inside the folder path. The Start node demonstrates display(); new folder
+requirements default to Polars. Existing .gitignore, AGENTS.md, and requirements.txt files are preserved.
 Opening prefers an existing project .venv, then an active environment. If
 neither exists, it creates the project's .venv and installs requirements.txt.
 
@@ -369,7 +365,7 @@ Recreates the managed Python environment used by the launcher.
 `;
 
 export function parseLauncherCommand(args: string[]): LauncherCommand {
-  if (args.length === 0) return { kind: "help" };
+  if (args.length === 0) return { kind: "start" };
 
   if (args[0] === "__server") {
     return {
@@ -437,7 +433,9 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
     rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
     if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
       const path = kind === "new" ? "<folder-or-document.py>" : "<folder>";
-      throw new Error(`Usage: rowcall ${kind} ${path} [--open]`);
+      throw new Error(
+        `Usage: rowcall ${kind} ${path} [--open]\nFor guided setup, run rowcall with no arguments.`,
+      );
     }
     return {
       kind,
@@ -483,7 +481,9 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
   });
   rejectPythonWithManagedEnv(parsed.python, parsed["managed-env"]);
   if (parsed._.length !== 1 || typeof parsed._[0] !== "string") {
-    throw new Error("Expected exactly one folder or .py document path.");
+    throw new Error(
+      "Expected exactly one folder or .py document path.\nFor guided setup, run rowcall with no arguments.",
+    );
   }
 
   return {
@@ -501,12 +501,63 @@ export function parseLauncherCommand(args: string[]): LauncherCommand {
   };
 }
 
+export async function resolveBareCommand(
+  cwd = Deno.cwd(),
+  interactive = Deno.stdin.isTerminal() && Deno.stdout.isTerminal(),
+): Promise<LauncherCommand> {
+  if (!interactive) return { kind: "help" };
+  try {
+    await Deno.lstat(`${cwd}/graph.py`);
+    return parseLauncherCommand([cwd]);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    return { kind: "start" };
+  }
+}
+
 export async function runLauncherCommand(
   command: LauncherCommand,
   options: RunCommandOptions = {},
 ): Promise<CommandResult> {
   const paths = options.paths ?? getLauncherPaths();
   switch (command.kind) {
+    case "start": {
+      const startup = await resolveBareCommand();
+      if (startup.kind !== "start") {
+        return await runLauncherCommand(startup, options);
+      }
+      const setup = await collectProjectSetup(terminalWizardIO);
+      if (!setup) {
+        console.info("Project creation cancelled.");
+        return { code: 0 };
+      }
+      // Reserve a fresh directory: never merge guided setup into existing files.
+      const parent = getParentDirectory(setup.directory);
+      if (parent) await Deno.mkdir(parent, { recursive: true });
+      await Deno.mkdir(setup.directory);
+      const documentPath = await createNewDocument(
+        `${setup.directory}/`,
+        setup.packages,
+      );
+      console.info(
+        `To open this project again: ${openProjectCommand(setup.directory)}`,
+      );
+      try {
+        await ensureProjectEnvironment(documentPath);
+      } catch (error) {
+        throw new Error(
+          `${
+            error instanceof Error ? error.message : String(error)
+          }\nProject preserved. Retry with: ${
+            openProjectCommand(setup.directory)
+          }`,
+        );
+      }
+      return await runLauncherCommand(
+        parseLauncherCommand([documentPath]),
+        options,
+      );
+    }
     case "help":
       console.info(helpTextForTopic(command.topic));
       return { code: 0 };
@@ -661,7 +712,10 @@ export function helpTextForTopic(topic: string | undefined): string {
   }
 }
 
-export async function createNewDocument(targetPath: string): Promise<string> {
+export async function createNewDocument(
+  targetPath: string,
+  packages: string[] = starterPackages,
+): Promise<string> {
   const standaloneFile = targetPath.endsWith(".py");
   const folderPath = standaloneFile
     ? undefined
@@ -704,9 +758,37 @@ export async function createNewDocument(targetPath: string): Promise<string> {
   if (folderPath) {
     await Deno.mkdir(`${folderPath}/data`, { recursive: true });
   }
-  await Deno.writeTextFile(documentPath, defaultDocumentSource);
+  const existingRequirements = folderPath
+    ? await readOptionalTextFile(`${folderPath}/requirements.txt`)
+    : null;
+  const effectivePackages = standaloneFile
+    ? []
+    : existingRequirements === null
+    ? packages
+    : existingRequirements.split(/\r?\n/).map((line) => line.trim());
+  await Deno.writeTextFile(documentPath, starterSource(effectivePackages));
+  const sidecarPath = documentPath.replace(/\.py$/, ".rowcall.json");
+  await writeTextFileIfMissing(
+    sidecarPath,
+    JSON.stringify(
+      {
+        version: 1,
+        nodes: [{
+          id: "n_start",
+          title: "Start",
+          description:
+            "Run this step, then open Results to inspect it. Replace the sample with your own data.",
+        }],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
   if (folderPath) {
-    await writeDefaultProjectFiles(folderPath);
+    await writeDefaultProjectFiles(
+      folderPath,
+      packages.join("\n") + (packages.length ? "\n" : ""),
+    );
   }
   console.info(`Created new Rowcall document: ${documentPath}`);
   return documentPath;

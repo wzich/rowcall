@@ -5,7 +5,7 @@ if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
   throw new Error("Windows release smoke requires native Windows x64");
 }
 const asset = "rowcall-windows-x64.exe";
-const artifact = resolve("dist/windows-release", asset);
+const artifact = resolve(Deno.args[0] ?? "dist/release", asset);
 const installer = resolve("packaging/install.ps1");
 const version = (await Deno.readTextFile("VERSION")).trim();
 const commit = await run("git", ["rev-parse", "HEAD"]);
@@ -55,12 +55,13 @@ try {
   await invoke(["new", project]);
   // Exercise fresh project environment creation and dependency setup.
   const result = JSON.parse(
-    await invoke(["run", project, "--to", "n_shout", "--json"]),
+    await invoke(["run", project, "--to", "n_start", "--json"]),
   );
   if (
     !result.ok ||
-    result.response.finalOutputsByNode.n_shout.shouted.jsonValue !==
-      "HELLO FROM ROWCALL"
+    result.response.executedNodeIds.join(",") !== "n_start" ||
+    result.response.resultsByNode.n_start.displays[0].jsonValue !==
+      "Welcome to Rowcall"
   ) {
     throw new Error(`Installed run failed: ${JSON.stringify(result)}`);
   }
