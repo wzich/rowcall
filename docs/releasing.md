@@ -10,9 +10,9 @@ to the project format, CLI, or setup.
 1. Merge changes into `main`.
 2. Open **Actions → Release → Run workflow** on `main`. Choose patch or minor.
 3. The workflow commits the version bump, runs checks and browser tests on
-   native Apple Silicon and Intel runners, and tests each installed binary in a
-   clean environment. It stages the exact binaries, checksums, and native
-   receipts.
+   native Apple Silicon, Intel Mac, and Windows x64 runners, and tests each
+   installed binary in a clean environment. It stages the exact binaries,
+   checksums, and native receipts.
 4. Review the run summary and staged artifacts. Select **Review deployments →
    release → Approve and deploy**. Will Zich is the required reviewer and can
    approve a run he started.
@@ -45,12 +45,12 @@ newer release.
 ### Website-only deployments
 
 Changes under `site/` on `main` automatically deploy through **Website**. It
-reads and preserves the current public `latest.json` and installer before
+reads and preserves the current public `latest.json` and installers before
 deploying; missing or invalid metadata stops deployment. This avoids publishing
 unreleased installer changes or resetting the download version. Website and
 release publication share a concurrency group, so they cannot deploy
 simultaneously. A release deploy uses current `main` website files with its
-verified installer and manifest. Keep Pages' separate Git integration disabled.
+verified installers and manifest. Keep Pages' separate Git integration disabled.
 
 ### Recovery
 
@@ -92,6 +92,7 @@ For release hosting, publish platform-specific binaries such as:
 ```text
 rowcall-darwin-arm64
 rowcall-darwin-x64
+rowcall-windows-x64.exe
 ```
 
 The installer template in `packaging/install.sh` defaults to the release asset
@@ -114,18 +115,21 @@ the large downloads are generated into `dist/r2/` and uploaded to a Cloudflare
 R2 bucket. The default bucket name is `rowcall-io-releases`, and the expected
 public custom domain is `https://releases.rowcall.io`.
 
-Publishing is intentionally local and manual during the invited beta. Start from
-a clean checkout and stage the release:
+For local recovery, start from a clean macOS checkout. Download the Windows CI
+artifact for that exact commit (use a branch/manual run, not a temporary PR
+merge commit), then stage the release:
 
 ```sh
-deno task release:prepare
+ROWCALL_WINDOWS_ARTIFACT_DIR="$PWD/tmp/windows-artifact/dist/release" deno task release:prepare
 ```
 
 This checks and tests the repository, builds both macOS binaries, natively
 installs and exercises the binary for the current Mac, and assembles the site
-and download directory. Inspect the staged output if desired, then authenticate
-Wrangler with the Cloudflare account that owns the Pages project and R2 bucket
-and publish those exact artifacts:
+and download directory. It imports the Windows executable and requires its
+native receipt to match the binary hash, version, and checkout commit. Inspect
+the staged output if desired, then authenticate Wrangler with the Cloudflare
+account that owns the Pages project and R2 bucket and publish those exact
+artifacts:
 
 ```sh
 deno task release:publish
@@ -137,9 +141,9 @@ contacting Cloudflare. It does not rebuild, so a retry publishes the same
 artifacts.
 
 The binary for the other macOS architecture is cross-built but not run. That is
-an explicit friends-only beta tradeoff. Restore a native Intel/ARM build job,
-code signing, and notarization before treating this as a hardened public
-release.
+an explicit friends-only beta tradeoff. The normal GitHub workflow instead
+requires native receipts for all three platforms. Code signing and notarization
+remain outside this beta.
 
 This writes:
 
@@ -151,6 +155,7 @@ dist/site/
   site.js
   index.html
   install.sh
+  install.ps1
   latest.json
   llms.txt
 
@@ -165,9 +170,8 @@ dist/r2/
   v0.1.0/rowcall-darwin-x64.sha256
 ```
 
-Keep the Cloudflare Pages Git integration disabled during the invited beta.
-Publish the generated `dist/site/` explicitly with Wrangler so a push to `main`
-cannot change what testers receive.
+Keep the Cloudflare Pages Git integration disabled. Use the coordinated GitHub
+workflows described above for normal publication.
 
 Override the R2 bucket name or public download base if needed:
 

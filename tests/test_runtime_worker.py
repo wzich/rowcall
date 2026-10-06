@@ -15,7 +15,7 @@ from rowcall.runtime import RuntimeSession
 from rowcall.runtime.worker import run_worker
 
 
-DOCUMENT_PATH = str(Path("/tmp/worker_doc.py"))
+DOCUMENT_PATH = str((Path(tempfile.gettempdir()) / "worker_doc.py"))
 RESOLVED_DOCUMENT_PATH = str(Path(DOCUMENT_PATH).resolve())
 
 

@@ -1078,7 +1078,7 @@ Deno.test("loadPythonDocument completes a committed sidecar transaction", async 
   const documentPath = await Deno.realPath(requestedPath);
   const canonicalDirectory = documentPath.slice(
     0,
-    documentPath.lastIndexOf("/"),
+    Math.max(documentPath.lastIndexOf("/"), documentPath.lastIndexOf("\\")),
   );
   const sidecarPath = sidecarPathForPythonDocument(documentPath);
   await Deno.writeTextFile(sidecarPath, oldSidecar);
@@ -1136,7 +1136,7 @@ Deno.test("loadPythonDocument discards a transaction before its commit point", a
   const documentPath = await Deno.realPath(requestedPath);
   const canonicalDirectory = documentPath.slice(
     0,
-    documentPath.lastIndexOf("/"),
+    Math.max(documentPath.lastIndexOf("/"), documentPath.lastIndexOf("\\")),
   );
   const sidecarPath = sidecarPathForPythonDocument(documentPath);
   const sourceTempPath = `${canonicalDirectory}/.rowcall-source-recovery`;
@@ -1199,7 +1199,10 @@ async function sha256(text: string): Promise<string> {
 }
 
 function transactionPath(documentPath: string): string {
-  const separator = documentPath.lastIndexOf("/");
+  const separator = Math.max(
+    documentPath.lastIndexOf("/"),
+    documentPath.lastIndexOf("\\"),
+  );
   const directory = documentPath.slice(0, separator);
   const name = documentPath.slice(separator + 1);
   return `${directory}/.${name}.rowcall-transaction.json`;

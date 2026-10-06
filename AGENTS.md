@@ -13,9 +13,10 @@ local-only and need a separate backup if they must survive losing this checkout.
 ## Development
 
 - Use Deno 2 and Python 3.10+. `deno task setup` prepares `.venv` with the data
-  libraries. The test task invokes `python3` from PATH; explicitly prepend the
-  current `.venv/bin` as shown below. An activation script can retain an old
-  absolute path if the checkout was renamed.
+  libraries. The Python test task prefers the checkout’s `.venv` (including
+  `Scripts/python.exe` on Windows), then Python from PATH. Explicitly prepend
+  the current `.venv/bin` as shown below for other tools. An activation script
+  can retain an old absolute path if the checkout was renamed.
 - Create disposable projects inside ignored `tmp/`:
   `deno task launcher example tmp/my-review`.
 - Start both API and UI with

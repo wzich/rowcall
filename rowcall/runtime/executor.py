@@ -125,7 +125,7 @@ def close_open_matplotlib_figures() -> None:
 
 def run_document(path: str | Path, target: str | None = None, trace: bool = False) -> dict[str, Any]:
     document_path = Path(path).expanduser().resolve()
-    return run_source(document_path.read_text(), document_path, target=target, trace=trace)
+    return run_source(document_path.read_text(encoding="utf-8"), document_path, target=target, trace=trace)
 
 
 def run_source(

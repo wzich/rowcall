@@ -20,15 +20,24 @@ const compileIncludes = [
 
 const releaseAssets = [
   {
+    os: "darwin",
     key: "darwin-arm64",
     target: "aarch64-apple-darwin",
     fileName: "rowcall-darwin-arm64",
     nativeArchitecture: "arm64",
   },
   {
+    os: "darwin",
     key: "darwin-x64",
     target: "x86_64-apple-darwin",
     fileName: "rowcall-darwin-x64",
+    nativeArchitecture: "x64",
+  },
+  {
+    os: "windows",
+    key: "windows-x64",
+    target: "x86_64-pc-windows-msvc",
+    fileName: "rowcall-windows-x64.exe",
     nativeArchitecture: "x64",
   },
 ];
@@ -66,17 +75,24 @@ async function main() {
     case "prepare":
       await prepareRelease();
       break;
+    case "prepare-windows":
+      await prepareWindowsRelease("dist/release");
+      break;
     case "build-native":
-      await requireCleanSourceCommit();
-      await buildReleaseBinaries(true);
-      await run("sh", ["packaging/smoke-installed-release.sh"]);
+      if (Deno.build.os === "windows") {
+        await prepareWindowsRelease(releaseDir);
+      } else {
+        await requireCleanSourceCommit();
+        await buildReleaseBinaries("darwin", releaseDir, true);
+        await run("sh", ["packaging/smoke-installed-release.sh"]);
+      }
       break;
     case "assemble-ci":
-      await validateBothNativeArtifacts();
+      await validateAllNativeArtifacts();
       await assembleReleaseSite();
       break;
     case "publish-assets-ci":
-      await validateBothNativeArtifacts();
+      await validateAllNativeArtifacts();
       await assertReleaseCanPublish();
       await deployReleaseAssets();
       break;
@@ -101,20 +117,49 @@ async function prepareRelease() {
   await run("deno", ["task", "check"]);
   await run("deno", ["task", "test"]);
   await run("deno", ["task", "test:browser"]);
+  if (Deno.build.os !== "darwin") {
+    throw new Error("Release assembly requires macOS");
+  }
   await buildReleaseBinaries();
+  const windowsDirectory = Deno.env.get("ROWCALL_WINDOWS_ARTIFACT_DIR");
+  if (!windowsDirectory) {
+    throw new Error(
+      "Set ROWCALL_WINDOWS_ARTIFACT_DIR to the downloaded Windows CI artifact for this commit",
+    );
+  }
+  for (const suffix of ["", ".smoke-attestation.json"]) {
+    await Deno.copyFile(
+      `${windowsDirectory}/rowcall-windows-x64.exe${suffix}`,
+      `${releaseDir}/rowcall-windows-x64.exe${suffix}`,
+    );
+  }
   await run("sh", ["packaging/smoke-installed-release.sh"]);
   await assembleReleaseSite();
 }
 
-async function buildReleaseBinaries(nativeOnly = false) {
-  await run("deno", ["task", "build"]);
-  await emptyDir(releaseDir);
+async function prepareWindowsRelease(directory: string) {
+  if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
+    throw new Error(
+      "Windows release preparation requires a native Windows x64 runner",
+    );
+  }
+  await requireCleanSourceCommit();
+  await buildReleaseBinaries("windows", directory, true);
+  await run("deno", ["run", "-A", "tools/smoke_windows_release.ts", directory]);
+}
 
-  for (const asset of releaseAssets) {
+async function buildReleaseBinaries(
+  os = "darwin",
+  directory = releaseDir,
+  nativeOnly = false,
+) {
+  await run("deno", ["task", "build"]);
+  await emptyDir(directory);
+  for (const asset of releaseAssets.filter((asset) => asset.os === os)) {
     if (
       nativeOnly && asset.nativeArchitecture !== nativeArchitectureForHost()
     ) continue;
-    const outputPath = `${releaseDir}/${asset.fileName}`;
+    const outputPath = `${directory}/${asset.fileName}`;
     const args = [
       "compile",
       "--target",
@@ -152,6 +197,7 @@ async function assembleReleaseSite() {
   await emptyDir(r2DistDir);
   await copyDir(siteSourceDir, siteDistDir);
   await Deno.copyFile("packaging/install.sh", `${siteDistDir}/install.sh`);
+  await Deno.copyFile("packaging/install.ps1", `${siteDistDir}/install.ps1`);
   if (Deno.build.os !== "windows") {
     await Deno.chmod(`${siteDistDir}/install.sh`, 0o755);
   }
@@ -242,13 +288,15 @@ export async function validateReleaseArtifacts(options: {
   expectedVersion: string;
   expectedSourceCommit?: string;
   expectedNativeArchitecture?: "arm64" | "x64";
+  expectedNativeOs?: string;
   verifyArchitectures?: boolean;
 }): Promise<ValidatedReleaseIdentity> {
   const hashes: Record<string, string> = {};
   const nativeArchitecture = options.expectedNativeArchitecture ??
     nativeArchitectureForHost();
   const nativeAsset = releaseAssets.find((asset) =>
-    asset.nativeArchitecture === nativeArchitecture
+    asset.nativeArchitecture === nativeArchitecture &&
+    asset.os === (options.expectedNativeOs ?? Deno.build.os)
   );
   if (nativeAsset === undefined) {
     throw new Error(
@@ -259,7 +307,7 @@ export async function validateReleaseArtifacts(options: {
   for (const asset of releaseAssets) {
     const binaryPath = `${options.directory}/${asset.fileName}`;
     await assertPathExists(binaryPath);
-    if (options.verifyArchitectures) {
+    if (options.verifyArchitectures && asset.os === "darwin") {
       const architectures = (await commandOutput("/usr/bin/lipo", [
         "-archs",
         binaryPath,
@@ -276,49 +324,58 @@ export async function validateReleaseArtifacts(options: {
     hashes[asset.key] = await sha256Hex(binaryPath);
   }
 
-  const attestationPath = smokeAttestationPath(
-    `${options.directory}/${nativeAsset.fileName}`,
-  );
-  await assertPathExists(attestationPath);
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(await Deno.readTextFile(attestationPath));
-  } catch (error) {
-    throw new Error(
-      `Invalid smoke attestation ${attestationPath}: ${errorMessage(error)}`,
+  const attestation = await validateSmoke(nativeAsset);
+  // Windows bytes must have been executed on Windows, never just cross-compiled.
+  const windowsAsset = releaseAssets.find((asset) => asset.os === "windows")!;
+  if (nativeAsset !== windowsAsset) await validateSmoke(windowsAsset);
+
+  async function validateSmoke(asset: typeof releaseAssets[number]) {
+    const attestationPath = smokeAttestationPath(
+      `${options.directory}/${asset.fileName}`,
     );
-  }
-  const attestation = parseSmokeAttestation(candidate, attestationPath);
-  if (
-    attestation.asset !== nativeAsset.fileName ||
-    attestation.nativeArchitecture !== nativeAsset.nativeArchitecture
-  ) {
-    throw new Error(
-      `Smoke attestation ${attestationPath} does not match the native ${nativeAsset.fileName} artifact`,
-    );
-  }
-  if (attestation.sha256 !== hashes[nativeAsset.key]) {
-    throw new Error(
-      `Smoke attestation hash does not match ${nativeAsset.fileName}`,
-    );
-  }
-  if (attestation.version !== options.expectedVersion) {
-    throw new Error(
-      `Smoke attestation is for version ${attestation.version}; expected ${options.expectedVersion}`,
-    );
-  }
-  if (attestation.sourceDirty) {
-    throw new Error(
-      "Smoke attestation was produced from a dirty source tree",
-    );
-  }
-  if (
-    options.expectedSourceCommit !== undefined &&
-    attestation.sourceCommit !== options.expectedSourceCommit
-  ) {
-    throw new Error(
-      `Smoke attestation is for source commit ${attestation.sourceCommit}; current checkout is ${options.expectedSourceCommit}`,
-    );
+    await assertPathExists(attestationPath);
+    let candidate: unknown;
+    try {
+      candidate = JSON.parse(await Deno.readTextFile(attestationPath));
+    } catch (error) {
+      throw new Error(
+        `Invalid smoke attestation ${attestationPath}: ${errorMessage(error)}`,
+      );
+    }
+    const attestation = parseSmokeAttestation(candidate, attestationPath);
+    if (
+      attestation.asset !== asset.fileName ||
+      attestation.nativeArchitecture !== asset.nativeArchitecture
+    ) {
+      throw new Error(
+        `Smoke attestation ${attestationPath} does not match the native ${asset.fileName} artifact`,
+      );
+    }
+    if (attestation.sha256 !== hashes[asset.key]) {
+      throw new Error(
+        `Smoke attestation hash does not match ${asset.fileName}`,
+      );
+    }
+    if (attestation.version !== options.expectedVersion) {
+      throw new Error(
+        `Smoke attestation is for version ${attestation.version}; expected ${options.expectedVersion}`,
+      );
+    }
+    if (attestation.sourceDirty) {
+      throw new Error(
+        "Smoke attestation was produced from a dirty source tree",
+      );
+    }
+    if (
+      options.expectedSourceCommit !== undefined &&
+      attestation.sourceCommit !== options.expectedSourceCommit
+    ) {
+      throw new Error(
+        `Smoke attestation is for source commit ${attestation.sourceCommit}; current checkout is ${options.expectedSourceCommit}`,
+      );
+    }
+
+    return attestation;
   }
 
   return {
@@ -372,16 +429,29 @@ async function assertReleaseCanPublish() {
   );
 }
 
-async function validateBothNativeArtifacts() {
+async function validateAllNativeArtifacts() {
   const version = await readVersion();
   const sourceCommit = await requireCleanSourceCommit();
+  await validateAllNativeReleaseArtifacts({
+    directory: releaseDir,
+    expectedVersion: version,
+    expectedSourceCommit: sourceCommit,
+    verifyArchitectures: true,
+  });
+}
+
+export async function validateAllNativeReleaseArtifacts(options: {
+  directory: string;
+  expectedVersion: string;
+  expectedSourceCommit: string;
+  verifyArchitectures?: boolean;
+}) {
+  // Each call also validates the mandatory native Windows receipt.
   for (const architecture of ["arm64", "x64"] as const) {
     await validateReleaseArtifacts({
-      directory: releaseDir,
-      expectedVersion: version,
-      expectedSourceCommit: sourceCommit,
+      ...options,
       expectedNativeArchitecture: architecture,
-      verifyArchitectures: true,
+      expectedNativeOs: "darwin",
     });
   }
 }
@@ -423,7 +493,7 @@ async function validateStagedSite(options: {
   const expectedRelativeFiles = sourceFiles.map((path) =>
     path.slice(`${siteSourceDir}/`.length)
   );
-  expectedRelativeFiles.push("install.sh", "latest.json");
+  expectedRelativeFiles.push("install.sh", "install.ps1", "latest.json");
   expectedRelativeFiles.sort();
 
   const stagedRelativeFiles = (await listFiles(siteDistDir)).map((path) =>
@@ -450,6 +520,7 @@ async function validateStagedSite(options: {
     `${siteDistDir}/install.sh`,
   );
 
+  await assertFilesMatch("packaging/install.ps1", `${siteDistDir}/install.ps1`);
   let candidate: unknown;
   const manifestPath = `${siteDistDir}/latest.json`;
   try {

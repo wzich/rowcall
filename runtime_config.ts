@@ -87,6 +87,8 @@ export function getPythonCommandEnvironment(): Record<string, string> {
     // Rowcall workers are headless. Prevent plotting libraries from selecting a
     // native GUI backend that can open windows and block the worker process.
     MPLBACKEND: "Agg",
+    // The worker JSON protocol is UTF-8, regardless of the Windows code page.
+    PYTHONIOENCODING: "utf-8",
   };
   if (configuredPythonPathEntries.length === 0) return environment;
   const existingPythonPath = Deno.env.get("PYTHONPATH");
@@ -185,6 +187,7 @@ function getEnvironmentPythonCandidates(prefix: string): string[] {
   return [
     `${prefix}/bin/python`,
     `${prefix}/Scripts/python.exe`,
+    `${prefix}/python.exe`, // Windows Conda environments keep Python at the root.
   ];
 }
 

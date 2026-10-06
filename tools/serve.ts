@@ -1,3 +1,4 @@
+import { openBrowser } from "../browser_launcher.ts";
 import { buildRowcallUrl } from "../main.ts";
 import { parseStartupOptions } from "../startup_args.ts";
 
@@ -163,30 +164,6 @@ async function waitForServer(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function openBrowser(url: string): Promise<void> {
-  const output = await new Deno.Command("open", {
-    args: [url],
-    stdout: "null",
-    stderr: "piped",
-  }).output().catch((error) => {
-    console.warn(
-      `Could not open browser automatically: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return null;
-  });
-
-  if (!output || output.success) {
-    return;
-  }
-
-  const stderr = new TextDecoder().decode(output.stderr).trim();
-  console.warn(
-    `Could not open browser automatically${stderr ? `: ${stderr}` : ""}`,
-  );
 }
 
 await main();

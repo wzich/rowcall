@@ -8,14 +8,39 @@ export function validatePublishedManifest(value: unknown): void {
   if (!manifest || !/^\d+\.\d+\.\d+$/.test(manifest.version ?? "")) {
     throw new Error("Invalid published version");
   }
-  for (const platform of ["darwin-arm64", "darwin-x64"]) {
+  const platforms = ["darwin-arm64", "darwin-x64"];
+  if (manifest.downloads && "windows-x64" in manifest.downloads) {
+    platforms.push("windows-x64");
+  }
+  for (const platform of platforms) {
     const asset = manifest.downloads?.[platform];
     if (
       !asset || asset.url !==
-        `https://releases.rowcall.io/v${manifest.version}/rowcall-${platform}` ||
+        `https://releases.rowcall.io/v${manifest.version}/rowcall-${platform}${
+          platform === "windows-x64" ? ".exe" : ""
+        }` ||
       !/^[a-f0-9]{64}$/.test(asset.sha256)
     ) throw new Error(`Invalid published download: ${platform}`);
   }
+}
+
+export async function readPublishedWindowsInstaller(
+  manifest: { downloads?: Record<string, unknown> },
+  fetcher: typeof fetch = fetch,
+): Promise<string | null> {
+  // Existing Mac-only releases have no Windows installer to preserve yet.
+  if (!manifest.downloads || !("windows-x64" in manifest.downloads)) {
+    return null;
+  }
+  const response = await fetcher("https://rowcall.io/install.ps1", {
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Cannot read published Windows installer");
+  const installer = await response.text();
+  if (!installer.startsWith("[CmdletBinding()]")) {
+    throw new Error("Invalid published Windows installer");
+  }
+  return installer;
 }
 
 async function copyDirectory(source: string, destination: string) {
@@ -47,6 +72,9 @@ if (import.meta.main) {
   }
   const manifest = await manifestResponse.text();
   validatePublishedManifest(JSON.parse(manifest));
+  const windowsInstaller = await readPublishedWindowsInstaller(
+    JSON.parse(manifest),
+  );
   const installer = await installerResponse.text();
   if (!installer.startsWith("#!/bin/sh\n")) {
     throw new Error("Invalid published installer");
@@ -57,4 +85,7 @@ if (import.meta.main) {
   await copyDirectory("site", "dist/website");
   await Deno.writeTextFile("dist/website/latest.json", manifest);
   await Deno.writeTextFile("dist/website/install.sh", installer);
+  if (windowsInstaller !== null) {
+    await Deno.writeTextFile("dist/website/install.ps1", windowsInstaller);
+  }
 }

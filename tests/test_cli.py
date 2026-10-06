@@ -10,12 +10,41 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rowcall.cli import main
+from rowcall.document import load_document
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class CliTests(unittest.TestCase):
+    def test_json_preserves_unicode_on_legacy_encoded_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "café.py"
+            path.write_text(
+                'from rowcall import node\n'
+                '@node(id="hello", outputs=["value"])\n'
+                'def hello():\n'
+                '    value = "café 🚀"\n'
+                '    return {"value": value}\n',
+                encoding="utf-8",
+            )
+            for mode in ("--json", "--json=summary", "--outputs-only"):
+                with self.subTest(mode=mode):
+                    buffer = io.BytesIO()
+                    stdout = io.TextIOWrapper(buffer, encoding="cp1252")
+                    stderr = io.StringIO()
+                    read_text = Path.read_text
+                    def legacy_read_text(path, encoding=None, errors=None):
+                        return read_text(path, encoding=encoding or "cp1252", errors=errors)
+                    with patch.object(Path, "read_text", legacy_read_text):
+                        parsed = load_document(path)
+                        self.assertIn("café 🚀", parsed.document.source)
+                        code = main(["run", str(path), mode], stdout=stdout, stderr=stderr)
+                    stdout.flush()
+                    self.assertEqual(code, 0, stderr.getvalue())
+                    payload = json.loads(buffer.getvalue().decode("utf-8"))
+                    self.assertIn("café 🚀", json.dumps(payload, ensure_ascii=False))
+
     def test_help_accepts_standard_flags(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

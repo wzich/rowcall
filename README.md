@@ -41,6 +41,32 @@ To return to your project, run `rowcall` from inside its folder.
 
 To update, close running Rowcall processes and rerun the installer.
 
+## Windows beta
+
+Windows x64 uses the same browser canvas and Python document format. Install
+Python 3.10 or newer first (`python` or `python3` must work in your terminal).
+The PowerShell installer verifies SHA-256 before replacing the executable and
+installs to `%LOCALAPPDATA%\Rowcall\bin`. It prints PATH instructions rather
+than changing your persistent PATH. Close Rowcall before updating.
+
+After a Windows-enabled release is published:
+
+```powershell
+Invoke-WebRequest https://rowcall.io/install.ps1 -OutFile install-rowcall.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-rowcall.ps1
+& "$env:LOCALAPPDATA\Rowcall\bin\rowcall.exe" example my-work --open
+```
+
+Before publication, use the verified GitHub Actions artifact and the
+[Windows beta test checklist](docs/windows-beta-test.md). The `windows-latest`
+CI job runs the unit tests and full browser journey, then
+`deno task
+release:windows` compiles the executable and tests the PowerShell
+installer, fresh project environment, JSON CLI execution, bundled Python
+package, and UI serving outside the checkout. Only successful jobs upload the
+test artifact. Windows ARM64 and automatic Python installation are not covered
+by this beta.
+
 ## Run from source
 
 For developer setup and testing, see [Developing Rowcall](docs/development.md).

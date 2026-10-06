@@ -1,3 +1,4 @@
+import { openBrowser } from "../browser_launcher.ts";
 import { resolveExistingDocumentPath } from "../document_path.ts";
 import { getLauncherPaths, type LauncherPaths } from "../launcher_paths.ts";
 import { parseStartupOptions } from "../startup_args.ts";
@@ -323,6 +324,18 @@ function unregisterSignalHandlers(
 }
 
 function stopChild(child: Deno.ChildProcess): void {
+  if (Deno.build.os === "windows") {
+    try {
+      const result = new Deno.Command("taskkill.exe", {
+        args: ["/PID", String(child.pid), "/T", "/F"],
+        stdout: "null",
+        stderr: "null",
+      }).outputSync();
+      if (result.success) return;
+    } catch {
+      // Fall back to terminating the immediate child if taskkill is unavailable.
+    }
+  }
   try {
     child.kill("SIGTERM");
   } catch {
@@ -332,28 +345,6 @@ function stopChild(child: Deno.ChildProcess): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function openBrowser(url: string): Promise<void> {
-  const output = await new Deno.Command("open", {
-    args: [url],
-    stdout: "null",
-    stderr: "piped",
-  }).output().catch((error) => {
-    console.warn(
-      `Could not open browser automatically: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return null;
-  });
-
-  if (!output || output.success) return;
-
-  const stderr = new TextDecoder().decode(output.stderr).trim();
-  console.warn(
-    `Could not open browser automatically${stderr ? `: ${stderr}` : ""}`,
-  );
 }
 
 if (import.meta.main) {

@@ -47,6 +47,7 @@ Deno.test("each starter executes and displays its sample through the Python runt
       await Deno.writeTextFile(path, starterSource(packages));
       const result = await new Deno.Command("python3", {
         args: ["-m", "rowcall", "run", path, "--json=summary"],
+        env: { PYTHONIOENCODING: "cp1252" },
         stdout: "piped",
         stderr: "piped",
       }).output();

@@ -28,7 +28,7 @@ def change(items):
 change.depends_on(source.output("items"))
 """
         for trace in (False, True):
-            result = run_source(source, Path("/tmp/input_snapshot.py"), trace=trace)
+            result = run_source(source, (Path(tempfile.gettempdir()) / "input_snapshot.py"), trace=trace)
             self.assertTrue(result["ok"])
             changed = result["resultsByNode"]["change"]
             self.assertEqual(changed["inputs"]["items"]["jsonValue"], [1, 2])
@@ -44,7 +44,7 @@ def bad():
     value = 1
     raise ValueError("failed at body line two")
     return {"value": value}
-""", Path("/tmp/error_location.py"))
+""", (Path(tempfile.gettempdir()) / "error_location.py"))
         self.assertFalse(result["ok"])
         self.assertEqual(result["resultsByNode"]["bad"]["errorLocation"], {"line": 2, "column": 1})
 
@@ -323,7 +323,7 @@ def loud():
     x = 1
     return {"x": x}
 '''.lstrip()
-        result = run_source(source, Path("/tmp/loud.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "loud.py"))
 
         node = result["resultsByNode"]["loud"]
         self.assertTrue(result["ok"])
@@ -348,7 +348,7 @@ def make():
     value = Noisy()
     return {"value": value}
 '''.lstrip()
-        result = run_source(source, Path("/tmp/noisy_preview.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "noisy_preview.py"))
 
         preview = result["resultsByNode"]["make"]["outputs"]["value"]
         self.assertTrue(result["ok"])
@@ -366,7 +366,7 @@ def bad():
     return {"value": value}
 '''.lstrip()
 
-        result = run_source(source, Path("/tmp/huge_error.py"), trace=True)
+        result = run_source(source, (Path(tempfile.gettempdir()) / "huge_error.py"), trace=True)
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["kind"], "runtime_error")
@@ -394,7 +394,7 @@ def world(message):
 world.depends_on(hello.output("message"))
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/hello.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "hello.py"))
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["executedNodeIds"], ["hello", "world"])
@@ -428,7 +428,7 @@ fit_model.depends_on(split_data.output("train"))
 evaluate.depends_on(split_data.output("test"), fit_model.output("model"))
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/train_test.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "train_test.py"))
 
         self.assertTrue(result["ok"])
         self.assertEqual(
@@ -459,8 +459,8 @@ second.depends_on(first.output("x"))
 third.depends_on(second.output("y"))
 """.lstrip()
 
-        by_id = run_source(source, Path("/tmp/target.py"), target="b")
-        by_function = run_source(source, Path("/tmp/target.py"), target="second")
+        by_id = run_source(source, (Path(tempfile.gettempdir()) / "target.py"), target="b")
+        by_function = run_source(source, (Path(tempfile.gettempdir()) / "target.py"), target="second")
 
         self.assertTrue(by_id["ok"])
         self.assertEqual(by_id["runType"], "run_to_node")
@@ -581,7 +581,7 @@ def first():
     return {"x": x}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/missing_globals.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "missing_globals.py"))
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["executedNodeIds"], [])
@@ -604,7 +604,7 @@ def first():
     return {"x": x}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/missing_node.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "missing_node.py"))
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["executedNodeIds"], ["first"])
@@ -631,7 +631,7 @@ def talk():
     return {"value": value}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display.py"), trace=True)
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display.py"), trace=True)
 
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["talk"]
@@ -694,8 +694,8 @@ second.depends_on(first.output("marker"))
             },
         ):
             session = RuntimeSession()
-            first_run = session.run_graph(source, Path("/tmp/plot_cleanup.py"))
-            second_run = session.run_graph(source, Path("/tmp/plot_cleanup.py"))
+            first_run = session.run_graph(source, (Path(tempfile.gettempdir()) / "plot_cleanup.py"))
+            second_run = session.run_graph(source, (Path(tempfile.gettempdir()) / "plot_cleanup.py"))
 
         for result in (first_run, second_run):
             self.assertTrue(result["ok"])
@@ -749,7 +749,7 @@ def broken():
                 "matplotlib.pyplot": fake_pyplot,
             },
         ):
-            result = run_source(source, Path("/tmp/plot_cleanup_error.py"))
+            result = run_source(source, (Path(tempfile.gettempdir()) / "plot_cleanup_error.py"))
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["nodeId"], "broken")
@@ -778,7 +778,7 @@ def plot():
 
         result = run_source(
             source,
-            Path("/tmp/png_display.py"),
+            (Path(tempfile.gettempdir()) / "png_display.py"),
             trace=True,
         )
 
@@ -824,9 +824,9 @@ def value():
     return {"x": x}
 '''.lstrip()
 
-        stdout_result = run_source(stdout_source, Path("/tmp/surrogate_stdout.py"))
-        repr_result = run_source(repr_source, Path("/tmp/surrogate_repr.py"))
-        error_result = run_source(error_source, Path("/tmp/surrogate_error.py"))
+        stdout_result = run_source(stdout_source, (Path(tempfile.gettempdir()) / "surrogate_stdout.py"))
+        repr_result = run_source(repr_source, (Path(tempfile.gettempdir()) / "surrogate_repr.py"))
+        error_result = run_source(error_source, (Path(tempfile.gettempdir()) / "surrogate_error.py"))
 
         self.assertTrue(stdout_result["ok"])
         self.assertEqual(
@@ -858,7 +858,7 @@ def talk():
     return {"value": value}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display_alias.py"), trace=True)
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display_alias.py"), trace=True)
 
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["talk"]
@@ -878,7 +878,7 @@ def snapshot():
     return {}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display_snapshot.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display_snapshot.py"))
 
         self.assertTrue(result["ok"])
         displays = result["resultsByNode"]["snapshot"]["displays"]
@@ -895,7 +895,7 @@ def many():
     return {}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display_limit.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display_limit.py"))
 
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["many"]
@@ -917,7 +917,7 @@ def broken():
     return {}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display_error.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display_error.py"))
 
         self.assertFalse(result["ok"])
         node_result = result["resultsByNode"]["broken"]
@@ -945,7 +945,7 @@ def transform(value):
 transform.depends_on(load.output("value"))
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/all_variables.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "all_variables.py"))
 
         self.assertTrue(result["ok"])
         node_result = result["resultsByNode"]["transform"]
@@ -971,7 +971,7 @@ def helper():
     return {}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/display_helper.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "display_helper.py"))
 
         self.assertTrue(result["ok"])
         display_result = result["resultsByNode"]["helper"]["displays"][0]
@@ -987,7 +987,7 @@ def bad():
     return {}
 """.lstrip()
 
-        result = run_source(source, Path("/tmp/bad.py"))
+        result = run_source(source, (Path(tempfile.gettempdir()) / "bad.py"))
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["executedNodeIds"], [])
