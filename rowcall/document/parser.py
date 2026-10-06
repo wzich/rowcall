@@ -34,7 +34,7 @@ _WILDCARD_IMPORT_BINDING = "<wildcard import>"
 
 def load_document(path: str | Path) -> ParseResult:
     document_path = Path(path).expanduser().resolve()
-    return parse_source(document_path.read_text(), document_path)
+    return parse_source(document_path.read_text(encoding="utf-8"), document_path)
 
 
 def parse_source(
