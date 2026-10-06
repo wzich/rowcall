@@ -759,7 +759,8 @@ def write_json(value: dict[str, Any], stream: TextIO) -> None:
         json.dumps(
             omit_image_data(value),
             indent=2,
-            ensure_ascii=False,
+            # ASCII escapes preserve Unicode values on legacy Windows pipes.
+            ensure_ascii=True,
             default=str,
         )
     )
