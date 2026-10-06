@@ -60,8 +60,7 @@ try {
   if (
     !result.ok ||
     result.response.executedNodeIds.join(",") !== "n_start" ||
-    result.response.resultsByNode.n_start.displays[0].jsonValue !==
-      "Welcome to Rowcall"
+    result.response.resultsByNode.n_start.displays[0].table?.rowCount !== 3
   ) {
     throw new Error(`Installed run failed: ${JSON.stringify(result)}`);
   }
