@@ -5,132 +5,132 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Rowcall social preview — editable 1200 × 630 source</title>
     <style>
-      @font-face {
-        font-family: Inter;
-        src: url("fonts/inter-latin-wght-normal.woff2") format("woff2");
-        font-weight: 100 900;
-        font-display: block;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        background: #18181b;
-        color: #f4f4f5;
-        font-family: Inter, sans-serif;
-      }
-      .card {
-        width: 1200px;
-        height: 630px;
-        padding: 44px 56px 48px;
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .wordmark {
-        font-size: 42px;
-        font-weight: 650;
-        letter-spacing: -1.7px;
-        line-height: 1;
-      }
-      .domain {
-        color: #a1a1aa;
-        font-size: 20px;
-        letter-spacing: -0.3px;
-      }
-      h1 {
-        margin: 30px 0 34px;
-        font-size: 58px;
-        line-height: 1.13;
-        letter-spacing: -2.5px;
-        font-weight: 500;
-      }
-      .graph {
-        position: relative;
-        height: 297px;
-        border: 1px solid #3f3f46;
-        border-radius: 10px;
-        background-image: radial-gradient(#3f3f46 1px, transparent 1px);
-        background-size: 20px 20px;
-      }
-      .wires {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-      }
-      .wire {
-        fill: none;
-        stroke: #74aa8a;
-        stroke-width: 2;
-      }
-      .node {
-        position: absolute;
-        background: #27272a;
-        border: 1px solid #50785e;
-        border-radius: 7px;
-        box-shadow: 0 8px 24px #0002;
-        width: 240px;
-      }
-      .orders {
-        left: 28px;
-        top: 22px;
-      }
-      .customers {
-        left: 28px;
-        top: 167px;
-      }
-      .join {
-        left: 399px;
-        top: 86px;
-      }
-      .revenue {
-        left: 765px;
-        top: 86px;
-        width: 294px;
-      }
-      .node-title {
-        padding: 12px 11px;
-        border-bottom: 1px solid #3f3f46;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 16px;
-        line-height: 20px;
-        font-weight: 550;
-      }
-      .node-icon {
-        color: #b4b4bc;
-      }
-      .check {
-        margin-left: auto;
-        color: #86d8ac;
-      }
-      .node code {
-        display: block;
-        padding: 10px 11px;
-        color: #b9b9c3;
-        font-family: monospace;
-        font-size: 12px;
-        line-height: 1.5;
-        white-space: normal;
-      }
-      .ports {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        border-top: 1px solid #3f3f46;
-        padding: 7px 11px;
-        font-size: 11px;
-        line-height: 14px;
-        color: #b4b4bc;
-      }
-      .ports span {
-        color: #bba4ed;
-      }
+    @font-face {
+      font-family: Inter;
+      src: url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+      font-weight: 100 900;
+      font-display: block;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: #18181b;
+      color: #f4f4f5;
+      font-family: Inter, sans-serif;
+    }
+    .card {
+      width: 1200px;
+      height: 630px;
+      padding: 44px 56px 48px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .wordmark {
+      font-size: 42px;
+      font-weight: 650;
+      letter-spacing: -1.7px;
+      line-height: 1;
+    }
+    .domain {
+      color: #a1a1aa;
+      font-size: 20px;
+      letter-spacing: -0.3px;
+    }
+    h1 {
+      margin: 30px 0 34px;
+      font-size: 58px;
+      line-height: 1.13;
+      letter-spacing: -2.5px;
+      font-weight: 500;
+    }
+    .graph {
+      position: relative;
+      height: 297px;
+      border: 1px solid #3f3f46;
+      border-radius: 10px;
+      background-image: radial-gradient(#3f3f46 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+    .wires {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .wire {
+      fill: none;
+      stroke: #74aa8a;
+      stroke-width: 2;
+    }
+    .node {
+      position: absolute;
+      background: #27272a;
+      border: 1px solid #50785e;
+      border-radius: 7px;
+      box-shadow: 0 8px 24px #0002;
+      width: 240px;
+    }
+    .orders {
+      left: 28px;
+      top: 22px;
+    }
+    .customers {
+      left: 28px;
+      top: 167px;
+    }
+    .join {
+      left: 399px;
+      top: 86px;
+    }
+    .revenue {
+      left: 765px;
+      top: 86px;
+      width: 294px;
+    }
+    .node-title {
+      padding: 12px 11px;
+      border-bottom: 1px solid #3f3f46;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      line-height: 20px;
+      font-weight: 550;
+    }
+    .node-icon {
+      color: #b4b4bc;
+    }
+    .check {
+      margin-left: auto;
+      color: #86d8ac;
+    }
+    .node code {
+      display: block;
+      padding: 10px 11px;
+      color: #b9b9c3;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: normal;
+    }
+    .ports {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      border-top: 1px solid #3f3f46;
+      padding: 7px 11px;
+      font-size: 11px;
+      line-height: 14px;
+      color: #b4b4bc;
+    }
+    .ports span {
+      color: #bba4ed;
+    }
     </style>
   </head>
   <body>
